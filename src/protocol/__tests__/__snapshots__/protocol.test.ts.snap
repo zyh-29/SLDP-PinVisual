@@ -1,0 +1,10 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`message encoding prints test vectors for the firmware docs 1`] = `
+{
+  "ackOk": "01 80 01 00 02 00 01 00 ed 46",
+  "ackResetOk": "01 80 02 00 02 00 02 00 5e dd",
+  "reset": "01 02 02 00 00 00 5b e2",
+  "setPattern": "01 01 01 00 07 00 05 08 01 00 00 00 80 c4 48",
+}
+`;
