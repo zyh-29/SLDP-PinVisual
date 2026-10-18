@@ -406,3 +406,61 @@ describe('graphs whose curve has no colour (black or grey): found by the plot ar
     expect(findPlotArea(toRgb(img), img.width, img.height)).toBeNull();
   });
 });
+
+describe('tap to focus (a grid of pictures, e.g. image search results)', () => {
+  // Dark page, 3 x 2 light cards, each holding a different coloured shape.
+  const cols = [40, 250, 460];
+  const rows = [40, 250];
+  const CARD = 180;
+  type ShapeFn = (x: number, y: number) => boolean; // coordinates relative to the card
+  const shapes: { colour: C; inside: ShapeFn; box: Rect }[] = [
+    {
+      colour: [230, 197, 90],
+      inside: (x, y) => y >= 40 && y <= 140 && Math.abs(x - 90) <= ((y - 40) / 100) * 50,
+      box: { x: 40, y: 40, width: 101, height: 101 },
+    },
+    { colour: [60, 160, 90], inside: (x, y) => Math.hypot(x - 90, y - 90) < 45, box: { x: 45, y: 45, width: 91, height: 91 } },
+    { colour: [61, 90, 254], inside: (x, y) => x >= 50 && x < 130 && y >= 50 && y < 130, box: { x: 50, y: 50, width: 80, height: 80 } },
+    {
+      colour: [200, 40, 120],
+      inside: (x, y) => Math.abs(x - 90) / 50 + Math.abs(y - 90) / 50 <= 1,
+      box: { x: 40, y: 40, width: 101, height: 101 },
+    },
+    { colour: [240, 140, 30], inside: (x, y) => x >= 30 && x < 150 && y >= 70 && y < 110, box: { x: 30, y: 70, width: 120, height: 40 } },
+    { colour: [120, 60, 180], inside: (x, y) => Math.hypot(x - 90, y - 90) < 30, box: { x: 60, y: 60, width: 61, height: 61 } },
+  ];
+  const cardAt = (i: number) => ({ x: cols[i % 3], y: rows[Math.floor(i / 3)] });
+  const img = image(680, 470, (x, y) => {
+    for (let i = 0; i < 6; i++) {
+      const c = cardAt(i);
+      if (x >= c.x && x < c.x + CARD && y >= c.y && y < c.y + CARD)
+        return shapes[i].inside(x - c.x, y - c.y) ? shapes[i].colour : [240, 240, 240];
+    }
+    return [32, 33, 36];
+  });
+  const rgb = toRgb(img);
+  const expected = (i: number) => {
+    const c = cardAt(i);
+    const b = shapes[i].box;
+    return { x: c.x + b.x, y: c.y + b.y, width: b.width, height: b.height };
+  };
+
+  it.each([0, 1, 2, 3, 4, 5])("tapping card %i crops to that card's shape", (i) => {
+    const c = cardAt(i);
+    // Tap near the card's corner, on its plain background, not on the shape itself.
+    const result = smartSubject(rgb, img.width, img.height, opts, undefined, { x: c.x + 15, y: c.y + 15 });
+    expect(near(result.box, expected(i), 3)).toBe(true);
+  });
+
+  it('a tap on the page between cards picks the nearest card', () => {
+    // Just right of card 0, in the dark gap before card 1.
+    const result = smartSubject(rgb, img.width, img.height, opts, undefined, { x: 40 + CARD + 8, y: 120 });
+    expect(near(result.box, expected(0), 3)).toBe(true);
+  });
+
+  it('without a tap the usual automatic choice is unchanged', () => {
+    const a = smartSubject(rgb, img.width, img.height, opts);
+    const b = smartSubject(rgb, img.width, img.height, opts, undefined, undefined);
+    expect(a.box).toEqual(b.box);
+  });
+});

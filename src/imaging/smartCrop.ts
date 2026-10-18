@@ -270,6 +270,29 @@ function scoreCandidates(rgb: ArrayLike<number>, mask: Uint8Array, width: number
   });
 }
 
+interface Point {
+  x: number;
+  y: number;
+}
+
+function contains(r: Rect, p: Point): boolean {
+  return p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
+}
+
+/** Distance from a point to a box (0 inside). */
+function distanceTo(r: Rect, p: Point): number {
+  const dx = Math.max(r.x - p.x, 0, p.x - (r.x + r.width));
+  const dy = Math.max(r.y - p.y, 0, p.y - (r.y + r.height));
+  return Math.hypot(dx, dy);
+}
+
+/** The candidate a tap points at: the smallest one whose box contains the point, else the nearest one. */
+function pickAt(candidates: Candidate[], p: Point): Candidate {
+  const inside = candidates.filter((c) => contains(c.box, p));
+  if (inside.length) return inside.reduce((a, b) => (area(b.box) < area(a.box) ? b : a));
+  return candidates.reduce((a, b) => (distanceTo(b.box, p) < distanceTo(a.box, p) ? b : a));
+}
+
 /** Box-averaged copy, `k` times smaller in each direction. */
 function downsample(
   rgb: ArrayLike<number>,
@@ -321,18 +344,21 @@ export function smartSubject(
   height: number,
   o: SmartCropOptions,
   region: Rect = fullRect(width, height),
+  /** A point the user tapped (image pixels): the subject containing it wins, e.g. one picture in a grid of results. */
+  focus?: Point,
 ): SmartCropResult {
+  const wants = (r: Rect) => !focus || contains(expand(r, 0.05, width, height), focus);
   // Curves are found at full size: shrinking would fade a thin line below the colour threshold. They count when the
   // area around them is flat (a screen or diagram), whatever else is on screen (a photo wallpaper, other windows).
   const curves = findCurves(rgb, width, height, region);
-  if (curves) {
+  if (curves && wants(curves.box)) {
     const context = clip(expand(curves.box, 0.08, width, height), region);
     if (!isPhotoLike(rgb, width, height, context) && !enclosesFill(rgb, width, curves))
       return { box: curves.box, context, kind: 'curves', mask: curves.mask };
   }
   // Graphs whose curve has no colour (black, grey): find the plot area by its grid, then the curve inside it.
   const plot = findPlotArea(rgb, width, height, region);
-  if (plot && !isPhotoLike(rgb, width, height, plot)) {
+  if (plot && wants(plot) && !isPhotoLike(rgb, width, height, plot)) {
     // Inside the plot the background really is one colour; axes and gridlines are removed, labels dropped as small.
     const fg = findForeground(rgb, width, height, {
       tolerance: o.tolerance,
@@ -349,7 +375,8 @@ export function smartSubject(
   const small = k > 1 ? downsample(rgb, width, height, k) : { rgb, width, height };
   const smallRegion = k > 1 ? { x: region.x / k, y: region.y / k, width: region.width / k, height: region.height / k } : region;
   const isWhole = region.x <= 0 && region.y <= 0 && region.width >= width && region.height >= height;
-  const res = analyse(small.rgb, small.width, small.height, o, isWhole ? undefined : smallRegion, 0);
+  const smallFocus = focus && (k > 1 ? { x: focus.x / k, y: focus.y / k } : focus);
+  const res = analyse(small.rgb, small.width, small.height, o, isWhole ? undefined : smallRegion, 0, smallFocus);
   const up = (r: Rect) => clip(k > 1 ? scaleRect(r, k, width, height) : r, region);
   return { box: up(res.box), context: up(res.context), kind: res.kind };
 }
@@ -578,6 +605,7 @@ function analyse(
   o: SmartCropOptions,
   region: Rect | undefined,
   depth: number,
+  focus?: Point,
 ): SmartCropResult {
   const r = region ?? fullRect(width, height);
 
@@ -589,19 +617,22 @@ function analyse(
   });
   const candidates = scoreCandidates(rgb, fg.mask, width, height, r).sort((a, b) => b.score - a.score);
   if (!candidates.length) return { box: r, context: r, kind: 'none' };
-  const best = candidates[0];
+  // With a tapped point: the most specific piece containing it (a thumbnail in a grid), else the nearest piece.
+  const best = focus ? pickAt(candidates, focus) : candidates[0];
 
   // Cards: a nearly solid rectangle with something different inside it. Look inside.
   const fill = best.area / area(best.box);
   if (depth < 3 && fill >= 0.85 && best.box.width >= 12 && best.box.height >= 12 && area(best.box) < area(r) * 0.98) {
-    const inner = analyse(rgb, width, height, o, inset(best.box, 2), depth + 1);
+    const inner = analyse(rgb, width, height, o, inset(best.box, 2), depth + 1, focus);
     if (inner.kind !== 'none' && area(inner.box) <= area(best.box) * 0.8) return inner;
   }
 
-  // Nearby pieces of the same colour belong together (a broken outline, two halves of a drawing).
-  const gap = Math.hypot(r.width, r.height) * 0.06;
+  // Nearby pieces of the same colour belong together (a broken outline, two halves of a drawing). After a tap only
+  // touching pieces join, so neighbouring pictures in a grid stay out.
+  const gap = Math.hypot(r.width, r.height) * (focus ? 0.015 : 0.06);
   let box = best.box;
-  for (const c of candidates.slice(1)) {
+  for (const c of candidates) {
+    if (c === best) continue;
     const near =
       c.box.x <= box.x + box.width + gap &&
       box.x <= c.box.x + c.box.width + gap &&

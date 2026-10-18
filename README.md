@@ -18,7 +18,7 @@ boards. It runs fully offline, with no accounts and no cloud.
 | Send Pattern / Reset Physical Pins to **mock device** | ✅ Working; covered by automated tests (not tapped through in the simulator) |
 | Protocol: framing, CRC, chunking, command IDs, retries, timeouts, ACK matching | ✅ Implemented and unit-tested against the simulated firmware |
 | Image → pins (background removal, axis/grid removal for graphs, label removal, smart + manual crop, thin-line thickening, live screen sharing on web) | ✅ Unit-tested, and clicked through in the web app with a textbook-style triangle diagram; the photo picker and crop dragging still need a manual test on a phone |
-| Shape snapping (triangle … hexagon, circle/oval), filled/outline | ✅ Unit-tested and checked in the web app |
+| Shape snapping (triangle … hexagon, circle/oval), drawn filled | ✅ Unit-tested and checked in the web app |
 | Smart Cut-Out (AI subject segmentation) | ✅ Web (U²-Net) checked in Chrome. ⚠️ iOS (Apple Vision) and Android (ML Kit) written, **need a new development build** to run |
 | Letter recognition | ⏳ Planned |
 | Save / load / delete patterns on the phone | ✅ Store logic unit-tested; UI rendered in the simulator |
@@ -118,7 +118,10 @@ bucket). Configure the host so unknown paths serve `index.html`; otherwise
 - **Images on web** are read with a canvas (`src/imaging/loadImage.web.ts`).
   The conversion code is the same as in the mobile app.
 - **More ways to add an image on web** (`src/imaging/imageInput.web.ts`):
-  drag a file anywhere onto the Image tab, paste one with Cmd/Ctrl+V, or press
+  drag an image anywhere onto the Image tab (a file from Finder or the desktop,
+  or an image dragged out of another web page: those arrive as a link and an
+  `<img>` tag, not a file, and are downloaded; sites that forbid reuse (CORS)
+  get a message suggesting Copy Image + paste), paste one with Cmd/Ctrl+V, or press
   **Share Screen** (desktop browsers only). Share Screen opens the browser's
   share picker (screen, window or tab) and keeps sharing: the crop box sits on
   the live video, and each new frame is processed as soon as it arrives (at
@@ -238,14 +241,20 @@ The simulator cannot test the following:
        not touching the edge and not looking like text. If the winner is a
        card (e.g. an image thumbnail), the search repeats inside it. Decided on
        a half-size copy for speed (under 10 ms per frame).
+     - **Tap a picture** in the crop area (e.g. one result in a grid of image
+       search results, during a screen share or in a photo): the smart crop
+       focuses on what contains that point (the shape on that card, that plot),
+       or the nearest thing if you tap empty space. It stays focused as live
+       frames update; Auto Crop returns to automatic. (Clicks made directly on
+       another window can't be seen by a web page, so tap in PinVisual.)
      - Drag the box or its corners to choose yourself. The same smart logic
        then runs inside your box (curves first, then the best object), so
        stray UI caught by the box is ignored and empty margins don't waste pins.
        Auto Crop goes back to the smart crop.
   6. **Thin lines** (graphs, outlines, handwriting) are thickened to about half
      a pin, so a line running through a pin raises it. Filled shapes are left alone.
-  7. **Shapes** (not graphs): closed outlines are filled (*Filled*) or reduced to
-     their edge (*Outline*). If the subject is a clean convex shape (triangle,
+  7. **Shapes** (not graphs): closed outlines are filled in (a solid shape is
+     the easiest to feel on 40 pins). If the subject is a clean convex shape (triangle,
      square, rectangle, pentagon, hexagon, circle, oval), its exact corners
      are found (convex hull, corner simplification, edges extended to sharp
      corners) and the perfect shape is drawn on the pins, as large as the grid
@@ -261,10 +270,9 @@ The simulator cannot test the following:
      percent of it is subject.
 
   *What the pins see* shows the removed background as a checkerboard. With
-  *Remove Background* off, darkness is used instead. "Busy background" means
-  the ring of pixels used to guess the background has many different colours
-  (e.g. a photo or a screenshot with toolbars). Then **Smart Cut-Out** turns on
-  by itself (and can be switched off): an on-device AI model separates the main
+  *Remove Background* off, darkness is used instead. When a **photo** has a
+  busy background (the ring of pixels used to guess the background has many
+  different colours), **Smart Cut-Out** turns on by itself (and can be switched off): an on-device AI model separates the main
   subject, like remove.bg but free and offline (`src/imaging/segment*.ts`):
   - **iPhone/iPad (iOS 17+):** Apple Vision subject lifting, through the local
     module `modules/subject-segmentation`. Not in Expo Go or the simulator.

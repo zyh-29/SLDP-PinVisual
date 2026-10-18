@@ -3,7 +3,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { AccessibilityInfo, StyleSheet, Switch, View } from 'react-native';
+import { AccessibilityInfo, Platform, StyleSheet, Switch, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
 import { type RasterImage, toGrayscale } from '@/imaging/convert';
@@ -33,15 +33,16 @@ import {
 } from '@/imaging/imageInput';
 import { loadImagePixels } from '@/imaging/loadImage';
 import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
-import { detectShape, fillHoles, outlineOf, renderShape, type ShapeStyle } from '@/imaging/shapes';
+import { detectShape, fillHoles, renderShape } from '@/imaging/shapes';
 import { isPhotoLike, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { usePattern } from '@/state/PatternProvider';
-import { Button, Columns, Label, Screen, Section, SegmentedControl, Separator, StatusBanner } from '@/ui/components';
+import { Button, Columns, Label, Screen, Section, Separator, StatusBanner } from '@/ui/components';
 import { CropEditor } from '@/ui/CropEditor';
 import { Icon } from '@/ui/Icon';
 import { LiveVideo } from '@/ui/LiveVideo';
 import { PinGrid } from '@/ui/PinGrid';
+import { SavePatternSheet } from '@/ui/SavePatternSheet';
 import { radius, space, useTheme } from '@/ui/theme';
 
 interface Picked {
@@ -53,7 +54,7 @@ interface Picked {
   gray: Float32Array;
 }
 
-/** Above this border unevenness the background is probably a busy photo, not paper or a plain colour. */
+/** Above this edge unevenness a photo's background is busy enough to switch Smart Cut-Out on by itself. */
 const BUSY_BACKGROUND = 28;
 
 export default function ImageScreen() {
@@ -71,14 +72,16 @@ export default function ImageScreen() {
   /** Higher raises more pins. A pin is raised when at least (100 - sensitivity)% of it is subject. */
   const [sensitivity, setSensitivity] = useState(100 - Math.round(DEFAULT_PIN_FILL * 100));
   const pinFill = (100 - sensitivity) / 100;
-  const [style, setStyle] = useState<ShapeStyle>('filled');
   const [snap, setSnap] = useState(true);
   /** null = automatic: Smart Cut-Out runs when the background is busy. */
   const [cutoutOverride, setCutoutOverride] = useState<boolean | null>(null);
   const [cutout, setCutout] = useState<{ for: Picked; mask: Float32Array | null; error?: string } | null>(null);
   /** null = automatic (smart crop). */
   const [manualCrop, setManualCrop] = useState<Rect | null>(null);
+  /** A point the user tapped on the picture: the smart crop focuses on what's there (e.g. one picture in a grid). */
+  const [focus, setFocus] = useState<{ x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
   /** null = automatic: axes and gridlines are removed when the image looks like a graph. */
   const [linesOverride, setLinesOverride] = useState<boolean | null>(null);
   const [live, setLive] = useState<LiveCapture | null>(null);
@@ -119,8 +122,8 @@ export default function ImageScreen() {
     [tolerance, minPieceRatio, removeLines],
   );
   const smart = useMemo(
-    () => (picked && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions) : null),
-    [picked, subjectMask, w, h, smartOptions],
+    () => (picked && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, undefined, focus ?? undefined) : null),
+    [picked, subjectMask, w, h, smartOptions, focus],
   );
   // Inside the user's own box the same logic picks the subject, so stray UI caught by the box is ignored.
   const smartInCrop = useMemo(
@@ -162,33 +165,35 @@ export default function ImageScreen() {
   const shapesApply = removeBackground && !stretch;
   const filledMask = useMemo(() => (fg && shapesApply ? fillHoles(fg.mask, w, h, sampleBox) : null), [fg, shapesApply, w, h, sampleBox]);
   const shape = useMemo(() => (filledMask ? detectShape(filledMask, w, h, sampleBox) : null), [filledMask, w, h, sampleBox]);
-  const styledMask = useMemo(
-    () => (filledMask ? (style === 'filled' ? filledMask : outlineOf(filledMask, w, h)) : (fg?.mask ?? null)),
-    [filledMask, style, fg, w, h],
+  const pinMask = useMemo(
+    // Shapes are always shown filled: on 40 pins a solid shape is the easiest to feel.
+    () => filledMask ?? fg?.mask ?? null,
+    [filledMask, fg],
   );
 
   const ink = useMemo(() => {
-    if (!picked || !fg || !styledMask) return null;
+    if (!picked || !fg || !pinMask) return null;
     if (!removeBackground) return inkFromGray(picked.gray);
     const cell = cellSizePx(sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch);
-    const stroke = style === 'outline' && filledMask ? 1 : fg.strokeWidth;
-    return inkFromMask(thickenThinLines(styledMask, w, h, stroke, cell));
-  }, [picked, fg, styledMask, filledMask, style, removeBackground, sampleBox, stretch, w, h]);
+    const stroke = fg.strokeWidth;
+    return inkFromMask(thickenThinLines(pinMask, w, h, stroke, cell));
+  }, [picked, fg, pinMask, removeBackground, sampleBox, stretch, w, h]);
   const samples = useMemo(
     () => (ink ? sampleCrop(ink, w, h, sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch) : null),
     [ink, w, h, sampleBox, stretch],
   );
   const result = useMemo(() => {
-    if (shape && snap && shapesApply) return renderShape(shape, GRID.rows, GRID.cols, GRID.pinPitchRatio, style, pinFill);
+    if (shape && snap && shapesApply) return renderShape(shape, GRID.rows, GRID.cols, GRID.pinPitchRatio, 'filled', pinFill);
     return samples ? patternFromSamples(samples, GRID.rows, GRID.cols, pinFill, false) : null;
-  }, [shape, snap, shapesApply, style, pinFill, samples]);
+  }, [shape, snap, shapesApply, pinFill, samples]);
   const cleanedUri = useMemo(
-    () => (picked && fg ? rgbToPngDataUri(renderCrop(picked.rgb, w, h, removeBackground ? styledMask : null, sampleBox)) : null),
-    [picked, fg, styledMask, w, h, removeBackground, sampleBox],
+    () => (picked && fg ? rgbToPngDataUri(renderCrop(picked.rgb, w, h, removeBackground ? pinMask : null, sampleBox)) : null),
+    [picked, fg, pinMask, w, h, removeBackground, sampleBox],
   );
 
   const resetForNewImage = () => {
     setManualCrop(null);
+    setFocus(null);
     setLinesOverride(null);
     setCutoutOverride(null);
     setToleranceOverride(null);
@@ -259,7 +264,17 @@ export default function ImageScreen() {
     freeze();
   };
 
-  const dropping = useImageDrop(load);
+  /** Back to the empty Image tab: stops any screen share and forgets the image, crop and per-image settings. */
+  const clearImage = () => {
+    live?.stop();
+    setLive(null);
+    setPicked(null);
+    setError(null);
+    resetForNewImage();
+    AccessibilityInfo.announceForAccessibility('Image cleared');
+  };
+
+  const dropping = useImageDrop(load, setError);
 
   const use = () => {
     if (!result) return;
@@ -268,12 +283,14 @@ export default function ImageScreen() {
   };
 
   const gridAspect = (GRID.cols * GRID.pinPitchRatio) / GRID.rows;
-  // Only worth a warning when the subject is separated by colour (not when the curve colour or the AI defines it).
-  const busy = !!fg && !knownSubject && fg.borderNoise > BUSY_BACKGROUND;
 
   return (
     <View style={{ flex: 1 }}>
-      <Screen title="Image" scrollEnabled={!dragging}>
+      <Screen
+        title="Image"
+        // Native: hold the scroll view still while the crop box is dragged. Web: never toggle it, because hiding the
+        // page scrollbar changes the content width and makes the whole picture jump; the crop area blocks touch scrolling itself.
+        scrollEnabled={Platform.OS === 'web' || !dragging}>
         {!picked || !fg ? (
           <Section padded style={{ maxWidth: 560, width: '100%', alignSelf: 'center' }}>
             <View style={styles.empty}>
@@ -315,6 +332,12 @@ export default function ImageScreen() {
                     imageHeight={h}
                     crop={crop}
                     onChange={setManualCrop}
+                    onTap={(point) => {
+                      // Tap a picture: the smart crop focuses on it (your own box gives way to it).
+                      setManualCrop(null);
+                      setFocus(point);
+                      AccessibilityInfo.announceForAccessibility('Cropped to the tapped picture');
+                    }}
                     onDragging={setDragging}
                   />
                   <View style={styles.buttonRow}>
@@ -324,18 +347,35 @@ export default function ImageScreen() {
                       variant="secondary"
                       compact
                       style={{ flex: 1 }}
-                      disabled={!manualCrop}
-                      onPress={() => setManualCrop(null)}
+                      disabled={!manualCrop && !focus}
+                      onPress={() => {
+                        setManualCrop(null);
+                        setFocus(null);
+                      }}
                       accessibilityHint="Crops to the main subject again"
                     />
-                    <Button
-                      title="Whole Image"
-                      icon="fullscreen"
-                      variant="secondary"
-                      compact
-                      style={{ flex: 1 }}
-                      onPress={() => setManualCrop(fullRect(w, h))}
-                    />
+                    {live ? (
+                      // While sharing, Stop Sharing (below) already ends the share; this slot frames the whole screen.
+                      <Button
+                        title="Whole Screen"
+                        icon="fullscreen"
+                        variant="secondary"
+                        compact
+                        style={{ flex: 1 }}
+                        onPress={() => setManualCrop(fullRect(w, h))}
+                        accessibilityHint="Uses the whole shared screen instead of the automatic crop"
+                      />
+                    ) : (
+                      <Button
+                        title="Clear Image"
+                        icon="close"
+                        variant="destructive"
+                        compact
+                        style={{ flex: 1 }}
+                        onPress={clearImage}
+                        accessibilityHint="Removes the image and returns to the start"
+                      />
+                    )}
                   </View>
                   <View style={styles.buttonRow}>
                     <Button
@@ -381,8 +421,6 @@ export default function ImageScreen() {
                     <StatusBanner tone="warning" title="Smart Cut-Out unavailable" message={cutout.error} />
                   ) : removeBackground && !fg.subject ? (
                     <StatusBanner tone="warning" title="No subject found" message={cutoutOn ? undefined : 'Try a lower Tolerance.'} />
-                  ) : removeBackground && busy && !cutoutOn ? (
-                    <StatusBanner tone="warning" title="Busy background" message="Crop closer or raise Tolerance." />
                   ) : null}
                 </Section>
               </>
@@ -438,20 +476,6 @@ export default function ImageScreen() {
                           />
                         </>
                       ) : null}
-                      {shapesApply ? (
-                        <>
-                          <Separator />
-                          <SegmentedControl
-                            accessibilityLabel="Shape style"
-                            value={style}
-                            onChange={setStyle}
-                            options={[
-                              { value: 'filled', label: 'Filled' },
-                              { value: 'outline', label: 'Outline' },
-                            ]}
-                          />
-                        </>
-                      ) : null}
                     </>
                   ) : null}
                   {/* Tolerance only matters when the subject is separated by colour (not by a curve's colour or the AI). */}
@@ -493,6 +517,13 @@ export default function ImageScreen() {
                       onPress={use}
                       accessibilityHint="Replaces the preview on the Display tab, where you can edit and send it."
                     />
+                    <Button
+                      title="Save Pattern"
+                      icon="save"
+                      variant="secondary"
+                      onPress={() => setSaveOpen(true)}
+                      accessibilityHint="Saves this pattern so you can load it later from the Saved tab."
+                    />
                   </Section>
                 ) : null}
               </>
@@ -503,6 +534,17 @@ export default function ImageScreen() {
         {error ? <StatusBanner tone="error" title="Image not converted" message={error} /> : null}
       </Screen>
       {dropping ? <DropOverlay /> : null}
+      {result ? (
+        <SavePatternSheet
+          visible={saveOpen}
+          pattern={result}
+          onClose={() => setSaveOpen(false)}
+          onSaved={(name) => {
+            setSaveOpen(false);
+            AccessibilityInfo.announceForAccessibility(`Saved ${name}`);
+          }}
+        />
+      ) : null}
     </View>
   );
 }

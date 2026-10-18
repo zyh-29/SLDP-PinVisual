@@ -22,6 +22,7 @@ const ICONS = {
   info: { ios: 'info.circle', android: 'info', web: 'info' },
   bluetooth: { ios: 'antenna.radiowaves.left.and.right', android: 'bluetooth', web: 'bluetooth' },
   trash: { ios: 'trash', android: 'delete', web: 'delete' },
+  close: { ios: 'xmark', android: 'close', web: 'close' },
   edit: { ios: 'square.and.pencil', android: 'edit', web: 'edit' },
   chevron: { ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' },
   minus: { ios: 'minus', android: 'remove', web: 'remove' },

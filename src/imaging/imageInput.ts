@@ -13,7 +13,7 @@ export interface ImageSource {
 export const supportsFileDrop = false;
 export const supportsScreenCapture = false;
 
-export function useImageDrop(_onImage: (source: ImageSource) => void): boolean {
+export function useImageDrop(_onImage: (source: ImageSource) => void, _onError?: (message: string) => void): boolean {
   return false;
 }
 

@@ -1,5 +1,4 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
 import { AccessibilityInfo, ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
@@ -12,14 +11,12 @@ import { confirmAsync } from '@/ui/dialogs';
 import { useResponsive } from '@/ui/layout';
 import { Icon } from '@/ui/Icon';
 import { PinGrid } from '@/ui/PinGrid';
-import { SavePatternSheet } from '@/ui/SavePatternSheet';
 import { radius, space, useTheme } from '@/ui/theme';
 
 export default function SavedScreen() {
   const t = useTheme();
   const { patterns, skipped, loading, error, reload } = useSavedPatterns();
   const { pattern: current, setPattern } = usePattern();
-  const [saveOpen, setSaveOpen] = useState(false);
   const { twoColumn, width } = useResponsive();
   const columns = width >= 1280 ? 3 : 2;
 
@@ -109,14 +106,6 @@ export default function SavedScreen() {
 
   return (
     <Screen title="Saved">
-      <Button
-        title="Save Current Preview"
-        icon="save"
-        variant="secondary"
-        onPress={() => setSaveOpen(true)}
-        style={twoColumn ? { alignSelf: 'flex-start', paddingHorizontal: space.xl } : undefined}
-      />
-
       {error ? <StatusBanner tone="error" title="Could not read saved patterns" message={error} /> : null}
       {skipped > 0 ? (
         <StatusBanner tone="warning" title="Some saved data was unreadable" message={`${skipped} damaged record(s) were skipped.`} />
@@ -132,7 +121,7 @@ export default function SavedScreen() {
             </View>
             <Label variant="title3">No saved patterns</Label>
             <Label variant="subhead" secondary style={{ textAlign: 'center' }}>
-              Patterns you save are stored on this {DEVICE_WORD} only, with their grid size.
+              Save a pattern from the Image tab. It is stored on this {DEVICE_WORD} only.
             </Label>
           </View>
         </Section>
@@ -161,17 +150,6 @@ export default function SavedScreen() {
           </Section>
         )
       )}
-
-      <SavePatternSheet
-        visible={saveOpen}
-        pattern={current}
-        onClose={() => setSaveOpen(false)}
-        onSaved={async (name) => {
-          setSaveOpen(false);
-          await reload();
-          AccessibilityInfo.announceForAccessibility(`Saved ${name}`);
-        }}
-      />
     </Screen>
   );
 }

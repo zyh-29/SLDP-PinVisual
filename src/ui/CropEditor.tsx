@@ -1,6 +1,14 @@
 import { Image } from 'expo-image';
 import { type ReactNode, useRef, useState } from 'react';
-import { type GestureResponderEvent, type LayoutChangeEvent, type StyleProp, StyleSheet, View, type ViewStyle } from 'react-native';
+import {
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+  Platform,
+  type StyleProp,
+  StyleSheet,
+  View,
+  type ViewStyle,
+} from 'react-native';
 
 import { type CropDragMode as Mode, dragCrop, type Rect } from '@/imaging/foreground';
 import { radius, useTheme } from './theme';
@@ -20,13 +28,21 @@ interface Props {
   onChange: (crop: Rect) => void;
   /** True while a handle is held, so the parent can stop scrolling. */
   onDragging?: (dragging: boolean) => void;
+  /** A tap (not a drag) on the picture, in image pixels: "focus on what's here". */
+  onTap?: (point: { x: number; y: number }) => void;
   maxHeight?: number;
 }
+
+/** Movement (in points) below which a press counts as a tap, not a drag. */
+const TAP_SLOP = 6;
+
+/** Web: touches on the picture drag the crop box instead of scrolling the page (CSS touch-action). */
+const WEB_NO_TOUCH_SCROLL = { touchAction: 'none' } as unknown as ViewStyle;
 
 const HANDLE_HIT = 44;
 const HANDLE_DOT = 18;
 
-export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop, onChange, onDragging, maxHeight = 440 }: Props) {
+export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop, onChange, onDragging, onTap, maxHeight = 440 }: Props) {
   const t = useTheme();
   const [available, setAvailable] = useState(0);
   const [draft, setDraft] = useState<Rect | null>(null);
@@ -37,15 +53,30 @@ export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop
   const k = dispW / imageWidth; // display points per image pixel
 
   // Drag state lives in a ref: it is only touched from touch handlers.
-  const drag = useRef<{ startX: number; startY: number; from: Rect; current: Rect } | null>(null);
+  const drag = useRef<{
+    startX: number;
+    startY: number;
+    moved: number;
+    from: Rect;
+    current: Rect;
+    /** Where the press started, in image pixels (null for the corner handles, which don't take taps). */
+    at: { x: number; y: number } | null;
+  } | null>(null);
 
-  const grant = (e: GestureResponderEvent) => {
-    drag.current = { startX: e.nativeEvent.pageX, startY: e.nativeEvent.pageY, from: crop, current: crop };
-    onDragging?.(true);
+  /** `origin`: the pressed view's top-left within the picture, in points, or null when taps don't count there. */
+  const grant = (e: GestureResponderEvent, origin: { left: number; top: number } | null) => {
+    const at = origin && k ? { x: (origin.left + e.nativeEvent.locationX) / k, y: (origin.top + e.nativeEvent.locationY) / k } : null;
+    drag.current = { startX: e.nativeEvent.pageX, startY: e.nativeEvent.pageY, moved: 0, from: crop, current: crop, at };
   };
-  const move = (mode: Mode, e: GestureResponderEvent) => {
+  /** `mode` null: the picture itself, which only takes taps. */
+  const move = (mode: Mode | null, e: GestureResponderEvent) => {
     const d = drag.current;
     if (!d || !k) return;
+    const wasTap = d.moved < TAP_SLOP;
+    d.moved = Math.max(d.moved, Math.hypot(e.nativeEvent.pageX - d.startX, e.nativeEvent.pageY - d.startY));
+    if (!mode || d.moved < TAP_SLOP) return;
+    // Only a real drag tells the parent to hold scrolling; a tap never does (no layout change on a tap).
+    if (wasTap) onDragging?.(true);
     const dx = (e.nativeEvent.pageX - d.startX) / k;
     const dy = (e.nativeEvent.pageY - d.startY) / k;
     d.current = dragCrop(d.from, mode, dx, dy, imageWidth, imageHeight);
@@ -55,8 +86,13 @@ export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop
     const d = drag.current;
     drag.current = null;
     setDraft(null);
-    onDragging?.(false);
-    if (d) onChange(d.current);
+    if (!d) return;
+    if (d.moved >= TAP_SLOP) onDragging?.(false);
+    if (d.moved < TAP_SLOP) {
+      if (d.at && onTap) onTap({ x: Math.min(imageWidth - 1, Math.max(0, d.at.x)), y: Math.min(imageHeight - 1, Math.max(0, d.at.y)) });
+      return;
+    }
+    if (d.current !== d.from) onChange(d.current);
   };
 
   const r = draft ?? crop;
@@ -67,11 +103,24 @@ export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop
     <View onLayout={(e: LayoutChangeEvent) => setAvailable(e.nativeEvent.layout.width)} style={{ alignItems: 'center' }}>
       {dispW > 0 ? (
         <View
-          style={[styles.stage, { width: dispW, height: dispH, backgroundColor: t.fill }]}
+          style={[
+            styles.stage,
+            { width: dispW, height: dispH, backgroundColor: t.fill },
+            Platform.OS === 'web' ? WEB_NO_TOUCH_SCROLL : null,
+          ]}
           accessible
           accessibilityRole="image"
           accessibilityLabel={`Selected image with crop box covering ${Math.round((r.width / imageWidth) * 100)}% of the width and ${Math.round((r.height / imageHeight) * 100)}% of the height. Use the crop buttons to change it.`}>
           {backdrop ?? <Image source={{ uri }} contentFit="fill" style={StyleSheet.absoluteFill} accessible={false} />}
+          {/* The picture: tap anything to focus the smart crop on it */}
+          {onTap ? (
+            <DragZone
+              onGrant={(e) => grant(e, { left: 0, top: 0 })}
+              onMove={(e) => move(null, e)}
+              onEnd={() => finish()}
+              style={StyleSheet.absoluteFill}
+            />
+          ) : null}
           {/* Dimmed area outside the crop */}
           <View pointerEvents="none" style={[styles.abs, { left: 0, top: 0, width: dispW, height: box.top, backgroundColor: shade }]} />
           <View
@@ -105,7 +154,11 @@ export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop
             ]}
           />
           {/* Crop box: drag inside to move */}
-          <DragZone onGrant={(e) => grant(e)} onMove={(e) => move('move', e)} onEnd={() => finish()} style={[styles.abs, styles.box, box]}>
+          <DragZone
+            onGrant={(e) => grant(e, { left: box.left, top: box.top })}
+            onMove={(e) => move('move', e)}
+            onEnd={() => finish()}
+            style={[styles.abs, styles.box, box]}>
             <View pointerEvents="none" style={[styles.third, { left: '33.33%', top: 0, bottom: 0, width: StyleSheet.hairlineWidth }]} />
             <View pointerEvents="none" style={[styles.third, { left: '66.66%', top: 0, bottom: 0, width: StyleSheet.hairlineWidth }]} />
             <View pointerEvents="none" style={[styles.third, { top: '33.33%', left: 0, right: 0, height: StyleSheet.hairlineWidth }]} />
@@ -115,7 +168,7 @@ export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop
           {(['tl', 'tr', 'bl', 'br'] as const).map((c) => (
             <DragZone
               key={c}
-              onGrant={(e) => grant(e)}
+              onGrant={(e) => grant(e, null)}
               onMove={(e) => move(c, e)}
               onEnd={() => finish()}
               style={[
