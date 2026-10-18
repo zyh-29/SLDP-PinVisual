@@ -5,7 +5,7 @@
  */
 import type { RasterImage } from './convert';
 
-const WORKING_SIZE = 256;
+const WORKING_SIZE = 512;
 
 function loadHtmlImage(uri: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -16,7 +16,7 @@ function loadHtmlImage(uri: string): Promise<HTMLImageElement> {
   });
 }
 
-export async function loadImagePixels(uri: string, _width?: number, _height?: number): Promise<RasterImage> {
+export async function loadImagePixels(uri: string, _width?: number, _height?: number): Promise<RasterImage & { fileUri?: string }> {
   const img = await loadHtmlImage(uri);
   const w0 = img.naturalWidth;
   const h0 = img.naturalHeight;

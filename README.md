@@ -17,7 +17,8 @@ boards. It runs fully offline, with no accounts and no cloud.
 | Manual grid editing, Clear Grid | ✅ Working; tested in the iOS simulator (Expo Go) |
 | Send Pattern / Reset Physical Pins to **mock device** | ✅ Working; covered by automated tests (not tapped through in the simulator) |
 | Protocol: framing, CRC, chunking, command IDs, retries, timeouts, ACK matching | ✅ Implemented and unit-tested against the simulated firmware |
-| Image → pins (grayscale, aspect-ratio fit/fill, threshold, invert) | ✅ Conversion math and PNG decoding unit-tested; the photo picker still needs a manual test on a phone |
+| Image → pins (background removal, axis/grid removal for graphs, label removal, smart + manual crop, thin-line thickening, live screen sharing on web) | ✅ Unit-tested, and clicked through in the web app with a textbook-style triangle diagram; the photo picker and crop dragging still need a manual test on a phone |
+| Shape/letter/graph recognition and redraw | ⏳ Planned (Phase 1, next step) |
 | Save / load / delete patterns on the phone | ✅ Store logic unit-tested; UI rendered in the simulator |
 | **Real Bluetooth** (scan, connect, write, notify) | ⚠️ Implemented, **never run**: needs a development build, a physical phone, and firmware |
 | **Web app** layout (laptop 1280/1440, tablet 820, phone 390) | ✅ Checked in headless Chrome: no horizontal overflow, no console errors; mock connect → toggle → send → reset clicked through end to end |
@@ -114,37 +115,15 @@ bucket). Configure the host so unknown paths serve `index.html`; otherwise
   20-byte writes.
 - **Images on web** are read with a canvas (`src/imaging/loadImage.web.ts`).
   The conversion code is the same as in the mobile app.
-- **Saved patterns on web** live in the browser's local storage, separate from
-  the phone's.
-- Confirmation dialogs use the browser's `confirm()`, because React Native's
-  `Alert` does nothing on web.
-
-### Development build (needed for Bluetooth)
-
-`react-native-ble-plx` is a native module, so it needs a development build.
-
-Local build, with a phone connected by USB:
-
-```bash
-npx expo prebuild --clean     # generates ios/ and android/ from app.json (don't edit those by hand)
-npx expo run:ios --device     # or: npx expo run:android --device
-```
-
-Or a cloud build with EAS:
-
-```bash
-npx eas-cli@latest login
-npx eas-cli@latest build:configure
-npx eas-cli@latest build --profile development --platform ios      # or android
-# install the build on the phone, then:
-npx expo start --dev-client
-```
-
-iOS needs an Apple developer account to install on a physical phone. Simulators
-have no Bluetooth, so **BLE testing needs a real phone**.
-
-Change the bundle ID (`com.sldp.pinvisual` in `app.json`) if it clashes with your
-Apple or Google account.
+- **More ways to add an image on web** (`src/imaging/imageInput.web.ts`):
+  drag a file anywhere onto the Image tab, paste one with Cmd/Ctrl+V, or press
+  **Share Screen** (desktop browsers only). Share Screen opens the browser's
+  share picker (screen, window or tab) and keeps sharing: the crop box sits on
+  the live video, frames are processed about 3 times a second (only when the
+  picture changes), and the pins preview follows. Nothing reaches the board
+  until you press **Use This Pattern** and then **Send**. **Stop Sharing** (or
+  the browser's own stop button) keeps the last frame. Phones use the photo
+  picker; to use something on a phone's screen, take a screenshot and choose it.
 
 ## Test on a physical phone
 
@@ -196,12 +175,35 @@ The simulator cannot test the following:
   been lowered and offers Retry.
 - **Only one command at a time.** Send and Reset are disabled while one is
   pending, and the controller rejects overlapping calls too.
-- **Image conversion:** downscale with `expo-image-manipulator` → export PNG →
-  decode pixels in JS with `fast-png`. The image manipulator has no pixel API,
-  which is why decoding is a separate step. Then Rec. 709 grayscale (transparency
-  counts as white) → area-average each pin's region → threshold (default 128;
-  darker = raised) → optional invert. **Fit** pads with lowered pins; **Fill**
-  crops edges equally. There is no background removal.
+- **Image conversion** (`src/imaging/foreground.ts`): downscale to 512 px
+  (640 px for screen sharing) → decode pixels (`fast-png` on phones, a canvas
+  on web). Then:
+  1. **Background colour** = median colour of a thin ring around the image
+     edge or the crop edge, whichever is more even.
+  2. **Subject** = pixels whose colour differs from it by more than
+     *Tolerance*. Colour distance, not darkness, so pale fills count.
+  3. **Axes & grid**: long, thin, isolated straight lines are found. If a
+     horizontal and a vertical one cross and something else remains (a curve,
+     bars), the image is treated as a graph: the lines are removed and the
+     graph is stretched to fill all pins (its x/y scales are arbitrary). The
+     *Remove Axes & Grid* switch appears only when lines are found and
+     overrides the guess. A letter T or E is not mistaken for axes, because
+     nothing remains once its lines are removed.
+  4. **Labels & text**: pieces smaller than 15% of the biggest piece (labels,
+     tick numbers, watermarks) are dropped.
+  5. **Smart crop** = the box around what is left, with no margin. Drag the box or
+     its corners to change it; a manual crop is analysed on its own.
+  6. **Thin lines** (graphs, outlines, handwriting) are thickened to about half
+     a pin, so a line running through a pin raises it. Filled shapes are left alone.
+  7. The crop is placed on the grid (aspect ratio kept, centred, empty space
+     lowered; stretched for graphs). A pin is raised when at least *Pin Fill*
+     (default 35%) of its area is subject. **Invert** raises the background.
+
+  *What the pins see* shows the removed background as a checkerboard. With
+  *Remove Background* off, darkness is used instead. "Busy background" means
+  the ring of pixels used to guess the background has many different colours
+  (e.g. a photo or a screenshot with toolbars). Separating a subject from a
+  busy background needs an AI segmentation model (not built in).
 - **Saved patterns** keep rows × cols. Patterns from a different grid size are
   flagged and only load after you confirm a centred crop or pad.
 

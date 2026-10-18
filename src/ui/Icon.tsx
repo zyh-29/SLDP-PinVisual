@@ -29,6 +29,10 @@ const ICONS = {
   refresh: { ios: 'arrow.clockwise', android: 'refresh', web: 'refresh' },
   grid: { ios: 'circle.grid.3x3.fill', android: 'grid_on', web: 'grid_on' },
   bookmarks: { ios: 'square.stack', android: 'bookmarks', web: 'bookmarks' },
+  sparkles: { ios: 'sparkles', android: 'auto_awesome', web: 'auto_awesome' },
+  stop: { ios: 'stop.circle', android: 'stop_circle', web: 'stop_circle' },
+  screen: { ios: 'rectangle.dashed', android: 'screenshot_monitor', web: 'screenshot_monitor' },
+  fullscreen: { ios: 'arrow.up.left.and.arrow.down.right', android: 'fullscreen', web: 'fullscreen' },
 } as const satisfies Record<string, SymbolName>;
 
 export type IconName = keyof typeof ICONS;

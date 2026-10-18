@@ -2,28 +2,55 @@ import Slider from '@react-native-community/slider';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AccessibilityInfo, StyleSheet, Switch, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
-import { countRaised } from '@/domain/pattern';
-import { DEFAULT_THRESHOLD, type FitMode, patternFromLuminance, type RasterImage, sampleCells, toGrayscale } from '@/imaging/convert';
+import { type RasterImage, toGrayscale } from '@/imaging/convert';
+import {
+  DEFAULT_MIN_PIECE_RATIO,
+  DEFAULT_PIN_FILL,
+  DEFAULT_TOLERANCE,
+  findForeground,
+  fullRect,
+  inkFromGray,
+  inkFromMask,
+  cellSizePx,
+  thickenThinLines,
+  patternFromSamples,
+  type Rect,
+  renderCrop,
+  sampleCrop,
+  smartCrop,
+  toRgb,
+} from '@/imaging/foreground';
+import {
+  type ImageSource,
+  type LiveCapture,
+  startLiveCapture,
+  supportsFileDrop,
+  supportsScreenCapture,
+  useImageDrop,
+} from '@/imaging/imageInput';
 import { loadImagePixels } from '@/imaging/loadImage';
+import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { usePattern } from '@/state/PatternProvider';
-import { Button, Columns, Label, Screen, Section, SegmentedControl, Separator, StatusBanner } from '@/ui/components';
+import { Button, Columns, Label, Screen, Section, Separator, StatusBanner } from '@/ui/components';
+import { CropEditor } from '@/ui/CropEditor';
 import { Icon } from '@/ui/Icon';
+import { LiveVideo } from '@/ui/LiveVideo';
 import { PinGrid } from '@/ui/PinGrid';
 import { radius, space, useTheme } from '@/ui/theme';
 
 interface Picked {
   uri: string;
-  width: number;
-  height: number;
   raster: RasterImage;
+  rgb: Uint8ClampedArray;
   gray: Float32Array;
 }
 
-const STEP = 8;
+/** Above this border unevenness the background is probably a busy photo, not paper or a plain colour. */
+const BUSY_BACKGROUND = 28;
 
 export default function ImageScreen() {
   const t = useTheme();
@@ -31,36 +58,134 @@ export default function ImageScreen() {
   const [picked, setPicked] = useState<Picked | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [fit, setFit] = useState<FitMode>('fit');
-  const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
-  const [invert, setInvert] = useState(false);
-  const [view, setView] = useState<'pins' | 'brightness'>('pins');
 
-  const luminance = useMemo(
-    () => (picked ? sampleCells(picked.gray, picked.raster.width, picked.raster.height, GRID.rows, GRID.cols, fit, GRID.pinPitchRatio) : null),
-    [picked, fit],
+  const [removeBackground, setRemoveBackground] = useState(true);
+  const [removeClutter, setRemoveClutter] = useState(true);
+  const [tolerance, setTolerance] = useState(DEFAULT_TOLERANCE);
+  const [pinFill, setPinFill] = useState(Math.round(DEFAULT_PIN_FILL * 100));
+  const [invert, setInvert] = useState(false);
+  /** null = automatic (smart crop). */
+  const [manualCrop, setManualCrop] = useState<Rect | null>(null);
+  const [dragging, setDragging] = useState(false);
+  /** null = automatic: axes and gridlines are removed when the image looks like a graph. */
+  const [linesOverride, setLinesOverride] = useState<boolean | null>(null);
+  const [live, setLive] = useState<LiveCapture | null>(null);
+
+  // Stop screen sharing when the session is replaced or the screen goes away.
+  useEffect(() => () => live?.stop(), [live]);
+
+  const w = picked?.raster.width ?? 0;
+  const h = picked?.raster.height ?? 0;
+  const minPieceRatio = removeClutter ? DEFAULT_MIN_PIECE_RATIO : 0;
+  const removeLines = linesOverride ?? 'auto';
+
+  // Whole image: finds the subject for the automatic crop.
+  const fgAll = useMemo(
+    () => (picked ? findForeground(picked.rgb, w, h, { tolerance, minPieceRatio, removeLines }) : null),
+    [picked, w, h, tolerance, minPieceRatio, removeLines],
+  );
+  const autoCrop = useMemo(() => (fgAll ? smartCrop(fgAll) : null), [fgAll]);
+  const crop = manualCrop ?? autoCrop ?? fullRect(w, h);
+  // A manual crop is analysed on its own (background from its edge, labels judged within it).
+  // If the whole image is a graph, a crop of it is too, even when only one axis is inside the crop.
+  const fg = useMemo(() => {
+    if (!picked || !manualCrop) return fgAll;
+    const lines = linesOverride ?? (fgAll?.graphLikely ? true : 'auto');
+    return findForeground(picked.rgb, w, h, { tolerance, minPieceRatio, removeLines: lines, region: manualCrop });
+  }, [picked, w, h, tolerance, minPieceRatio, linesOverride, manualCrop, fgAll]);
+  // Graphs have arbitrary x and y scales, so they stretch to use every pin.
+  const stretch = removeBackground && !!fg?.linesRemoved;
+
+  const ink = useMemo(() => {
+    if (!picked || !fg) return null;
+    if (!removeBackground) return inkFromGray(picked.gray);
+    const cell = cellSizePx(crop, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch);
+    return inkFromMask(invert ? fg.mask : thickenThinLines(fg.mask, w, h, fg.strokeWidth, cell));
+  }, [picked, fg, removeBackground, invert, crop, stretch, w, h]);
+  const samples = useMemo(
+    () => (ink ? sampleCrop(ink, w, h, crop, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch) : null),
+    [ink, w, h, crop, stretch],
   );
   const result = useMemo(
-    () => (luminance ? patternFromLuminance(luminance, GRID.rows, GRID.cols, threshold, invert) : null),
-    [luminance, threshold, invert],
+    () => (samples ? patternFromSamples(samples, GRID.rows, GRID.cols, pinFill / 100, invert) : null),
+    [samples, pinFill, invert],
+  );
+  const cleanedUri = useMemo(
+    () => (picked && fg ? rgbToPngDataUri(renderCrop(picked.rgb, w, h, removeBackground ? fg.mask : null, crop)) : null),
+    [picked, fg, w, h, removeBackground, crop],
   );
 
-  const pick = async () => {
+  const resetForNewImage = () => {
+    setManualCrop(null);
+    setLinesOverride(null);
+  };
+
+  /** Photos, drops and pastes end up here. */
+  const load = async (source: ImageSource) => {
     setError(null);
+    setLoading(true);
     try {
-      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
-      if (res.canceled || !res.assets?.length) return;
-      const asset = res.assets[0];
-      setLoading(true);
-      const raster = await loadImagePixels(asset.uri, asset.width, asset.height);
-      setPicked({ uri: asset.uri, width: asset.width, height: asset.height, raster, gray: toGrayscale(raster) });
-      AccessibilityInfo.announceForAccessibility('Image converted to pin preview');
+      const raster = await loadImagePixels(source.uri, source.width ?? 0, source.height ?? 0);
+      live?.stop();
+      setLive(null);
+      setPicked({ uri: source.uri, raster, rgb: toRgb(raster), gray: toGrayscale(raster) });
+      resetForNewImage();
+      AccessibilityInfo.announceForAccessibility('Image converted to pin preview, cropped to the main subject');
     } catch (e) {
       setError(`Could not read that image: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setLoading(false);
     }
   };
+
+  const pick = async () => {
+    setError(null);
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+    if (res.canceled || !res.assets?.length) return;
+    const asset = res.assets[0];
+    await load({ uri: asset.uri, width: asset.width, height: asset.height });
+  };
+
+  /** Keeps the last shared frame as a still image. */
+  const freeze = () => {
+    setLive(null);
+    setPicked((p) =>
+      p && !p.uri
+        ? {
+            ...p,
+            uri: rgbToPngDataUri(renderCrop(p.rgb, p.raster.width, p.raster.height, null, fullRect(p.raster.width, p.raster.height))),
+          }
+        : p,
+    );
+  };
+
+  const startSharing = async () => {
+    setError(null);
+    try {
+      const session = await startLiveCapture({
+        onFrame: (raster) => {
+          setPicked({ uri: '', raster, rgb: toRgb(raster), gray: toGrayscale(raster) });
+          // Keep the user's crop while sharing, unless the shared window shrank under it.
+          setManualCrop((c) => (c && (c.x + c.width > raster.width + 0.5 || c.y + c.height > raster.height + 0.5) ? null : c));
+        },
+        onEnd: freeze,
+      });
+      if (!session) return;
+      live?.stop();
+      resetForNewImage();
+      setLive(session);
+      AccessibilityInfo.announceForAccessibility('Sharing screen. The pin preview updates live.');
+    } catch (e) {
+      setError(`Screen sharing failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const stopSharing = () => {
+    live?.stop();
+    freeze();
+  };
+
+  const dropping = useImageDrop(load);
 
   const use = () => {
     if (!result) return;
@@ -69,185 +194,358 @@ export default function ImageScreen() {
   };
 
   const gridAspect = (GRID.cols * GRID.pinPitchRatio) / GRID.rows;
+  const busy = !!fg && fg.borderNoise > BUSY_BACKGROUND;
 
   return (
-    <Screen title="Image">
-      {!picked ? (
-        <Section padded style={{ maxWidth: 560, width: '100%', alignSelf: 'center' }}>
-          <View style={styles.empty}>
-            <View style={[styles.emptyIcon, { backgroundColor: t.tintSoft }]}>
-              <Icon name="photo" color={t.tint} size={30} />
+    <View style={{ flex: 1 }}>
+      <Screen title="Image" scrollEnabled={!dragging}>
+        {!picked || !fg ? (
+          <Section padded style={{ maxWidth: 560, width: '100%', alignSelf: 'center' }}>
+            <View style={styles.empty}>
+              <View style={[styles.emptyIcon, { backgroundColor: t.tintSoft }]}>
+                <Icon name="photo" color={t.tint} size={30} />
+              </View>
+              <Label variant="title3" style={{ textAlign: 'center' }}>
+                Turn a picture into pins
+              </Label>
             </View>
-            <Label variant="title3" style={{ textAlign: 'center' }}>
-              Turn a picture into pins
-            </Label>
-            <Label variant="subhead" secondary style={{ textAlign: 'center' }}>
-              Dark areas become raised pins. High-contrast images with simple shapes work best on a {GRID.rows} × {GRID.cols} grid.
-            </Label>
-          </View>
-          <Button title="Choose Photo" icon="photo" onPress={pick} loading={loading} />
-        </Section>
-      ) : (
-        <>
+            <Button title="Choose Photo" icon="photo" onPress={pick} loading={loading} />
+            {supportsScreenCapture ? (
+              <Button
+                title="Share Screen"
+                icon="screen"
+                variant="secondary"
+                onPress={startSharing}
+                disabled={loading}
+                accessibilityHint="Share a screen or window. The pins follow it live; crop the part you want."
+              />
+            ) : null}
+            {supportsFileDrop ? (
+              <Label variant="footnote" secondary style={{ textAlign: 'center' }}>
+                or drop an image here
+              </Label>
+            ) : null}
+          </Section>
+        ) : (
           <Columns
             rightWidth={420}
             left={
-          <Section title="Original">
-            <Image
-              source={{ uri: picked.uri }}
-              contentFit="contain"
-              style={[styles.original, { aspectRatio: Math.max(0.5, Math.min(2.5, picked.width / picked.height)), backgroundColor: t.fill }]}
-              accessibilityLabel="Selected image"
-            />
-            <View>
-              <Label variant="footnote" secondary style={{ marginBottom: space.xs }}>
-                What the pins sample ({fit === 'fit' ? 'whole image, padded' : 'centre, cropped'})
-              </Label>
-              <View style={[styles.frame, { aspectRatio: gridAspect, borderColor: t.separator, backgroundColor: '#FFFFFF' }]}>
-                <Image source={{ uri: picked.uri }} contentFit={fit === 'fit' ? 'contain' : 'cover'} style={StyleSheet.absoluteFill} accessible={false} />
-              </View>
-            </View>
-            <Button title="Choose Another Photo" variant="secondary" icon="photo" compact onPress={pick} loading={loading} />
-          </Section>
+              <>
+                <Section title="Crop">
+                  <CropEditor
+                    uri={picked.uri}
+                    backdrop={live ? <LiveVideo stream={live.stream} /> : undefined}
+                    badge={live ? <LiveBadge /> : undefined}
+                    imageWidth={w}
+                    imageHeight={h}
+                    crop={crop}
+                    onChange={setManualCrop}
+                    onDragging={setDragging}
+                  />
+                  <View style={styles.buttonRow}>
+                    <Button
+                      title="Auto Crop"
+                      icon="sparkles"
+                      variant="secondary"
+                      compact
+                      style={{ flex: 1 }}
+                      disabled={!manualCrop}
+                      onPress={() => setManualCrop(null)}
+                      accessibilityHint="Crops to the main subject again"
+                    />
+                    <Button
+                      title="Whole Image"
+                      icon="fullscreen"
+                      variant="secondary"
+                      compact
+                      style={{ flex: 1 }}
+                      onPress={() => setManualCrop(fullRect(w, h))}
+                    />
+                  </View>
+                  <View style={styles.buttonRow}>
+                    <Button
+                      title={supportsScreenCapture ? 'New Photo' : 'Choose Another Photo'}
+                      variant="secondary"
+                      icon="photo"
+                      compact
+                      style={{ flex: 1 }}
+                      onPress={pick}
+                      loading={loading}
+                    />
+                    {live ? (
+                      <Button title="Stop Sharing" variant="destructive" icon="stop" compact style={{ flex: 1 }} onPress={stopSharing} />
+                    ) : supportsScreenCapture ? (
+                      <Button
+                        title="Share Screen"
+                        variant="secondary"
+                        icon="screen"
+                        compact
+                        style={{ flex: 1 }}
+                        onPress={startSharing}
+                        disabled={loading}
+                        accessibilityHint="Share a screen or window. The pins follow it live; crop the part you want."
+                      />
+                    ) : null}
+                  </View>
+                </Section>
+
+                <Section title="What the pins see">
+                  <View style={[styles.frame, { aspectRatio: gridAspect, borderColor: t.separator }]}>
+                    {cleanedUri ? (
+                      <Image
+                        source={{ uri: cleanedUri }}
+                        contentFit={stretch ? 'fill' : 'contain'}
+                        style={StyleSheet.absoluteFill}
+                        accessibilityLabel={removeBackground ? 'Cropped image with the background removed' : 'Cropped image'}
+                      />
+                    ) : null}
+                  </View>
+                  {removeBackground && !fg.subject ? (
+                    <StatusBanner tone="warning" title="No subject found" message="Try a lower Tolerance." />
+                  ) : removeBackground && busy ? (
+                    <StatusBanner tone="warning" title="Busy background" message="Crop closer or raise Tolerance." />
+                  ) : null}
+                </Section>
+              </>
             }
             right={
               <>
-          <Section
-            title="Conversion"
-            footer={
-              fit === 'fit'
-                ? 'Fit keeps the whole image and fills the empty edges with lowered pins.'
-                : 'Fill covers every pin and crops the image edges equally.'
-            }>
-            <SegmentedControl
-              accessibilityLabel="Aspect ratio handling"
-              value={fit}
-              onChange={setFit}
-              options={[
-                { value: 'fit', label: 'Fit (pad)' },
-                { value: 'fill', label: 'Fill (crop)' },
-              ]}
-            />
-            <Separator />
-            <View style={styles.sliderHeader}>
-              <Label variant="body">Threshold</Label>
-              <Label variant="body" secondary style={{ fontVariant: ['tabular-nums'] }}>
-                {threshold}
-              </Label>
-            </View>
-            <View style={styles.sliderRow}>
-              <Button
-                title=""
-                accessibilityLabel="Decrease threshold"
-                icon="minus"
-                variant="secondary"
-                compact
-                style={styles.stepButton}
-                onPress={() => setThreshold((v) => Math.max(0, v - STEP))}
-              />
-              <Slider
-                style={{ flex: 1, height: 44 }}
-                minimumValue={0}
-                maximumValue={255}
-                step={1}
-                value={threshold}
-                onValueChange={(v) => setThreshold(Math.round(v))}
-                minimumTrackTintColor={t.tint}
-                maximumTrackTintColor={t.fill}
-                accessibilityLabel="Brightness threshold"
-                accessibilityHint="Areas darker than this become raised pins"
-                accessibilityValue={{ min: 0, max: 255, now: threshold }}
-              />
-              <Button
-                title=""
-                accessibilityLabel="Increase threshold"
-                icon="plus"
-                variant="secondary"
-                compact
-                style={styles.stepButton}
-                onPress={() => setThreshold((v) => Math.min(255, v + STEP))}
-              />
-            </View>
-            <Label variant="footnote" secondary>
-              Higher raises more pins. Pixels darker than {threshold} of 255 are raised.
-            </Label>
-            <Separator />
-            <View style={styles.switchRow}>
-              <View style={{ flex: 1 }}>
-                <Label variant="body">Invert</Label>
-                <Label variant="footnote" secondary>
-                  Raise light areas instead of dark ones
-                </Label>
-              </View>
-              <Switch value={invert} onValueChange={setInvert} accessibilityLabel="Invert, raise light areas instead of dark ones" />
-            </View>
-          </Section>
+                <Section title="Conversion">
+                  <SwitchRow
+                    title="Remove Background"
+                    hint="Anything that differs from the edge colour counts as the subject"
+                    value={removeBackground}
+                    onChange={setRemoveBackground}
+                  />
+                  {removeBackground ? (
+                    <>
+                      {fg.lines.length > 0 || linesOverride !== null ? (
+                        <>
+                          <Separator />
+                          <SwitchRow
+                            title="Remove Axes & Grid"
+                            hint="Removes long straight lines such as graph axes and gridlines, and stretches the graph to fill the pins"
+                            value={fg.linesRemoved}
+                            onChange={setLinesOverride}
+                          />
+                        </>
+                      ) : null}
+                      <Separator />
+                      <SwitchRow
+                        title="Ignore Labels & Text"
+                        hint="Drops labels, text and specks much smaller than the main shape"
+                        value={removeClutter}
+                        onChange={setRemoveClutter}
+                      />
+                      <Separator />
+                      <SliderRow
+                        title="Tolerance"
+                        value={tolerance}
+                        display={String(tolerance)}
+                        min={8}
+                        max={160}
+                        step={4}
+                        onChange={setTolerance}
+                        hint="Higher ignores faint colours, shadows and paper texture. Lower keeps pale fills."
+                      />
+                    </>
+                  ) : null}
+                  <Separator />
+                  <SliderRow
+                    title="Pin Fill"
+                    value={pinFill}
+                    display={`${pinFill}%`}
+                    min={5}
+                    max={95}
+                    step={5}
+                    onChange={setPinFill}
+                    hint={`A pin is raised when at least ${pinFill}% of its area is ${removeBackground ? 'subject' : 'dark'}. Lower raises more pins.`}
+                  />
+                  <Separator />
+                  <SwitchRow
+                    title="Invert"
+                    hint={removeBackground ? 'Raise the background instead of the subject' : 'Raise light areas instead of dark ones'}
+                    value={invert}
+                    onChange={setInvert}
+                  />
+                </Section>
 
-          {result && luminance ? (
-            <Section title="Result">
-              <SegmentedControl
-                accessibilityLabel="Result view"
-                value={view}
-                onChange={setView}
-                options={[
-                  { value: 'pins', label: 'Pins' },
-                  { value: 'brightness', label: 'Brightness' },
-                ]}
-              />
-              {view === 'pins' ? <PinGrid pattern={result} /> : <BrightnessGrid luminance={luminance} threshold={threshold} />}
-              <Label variant="footnote" secondary>
-                {countRaised(result)} of {GRID.rows * GRID.cols} pins raised. You can correct individual pins on the Display tab.
-              </Label>
-              <Button title="Use This Pattern" icon="edit" onPress={use} accessibilityHint="Replaces the preview on the Display tab, where you can edit and send it." />
-            </Section>
-          ) : null}
+                {result && samples ? (
+                  <Section title="Result">
+                    <PinGrid pattern={result} />
+                    <Button
+                      title="Use This Pattern"
+                      icon="edit"
+                      onPress={use}
+                      accessibilityHint="Replaces the preview on the Display tab, where you can edit and send it."
+                    />
+                  </Section>
+                ) : null}
               </>
             }
           />
-        </>
-      )}
+        )}
 
-      {error ? <StatusBanner tone="error" title="Image not converted" message={error} /> : null}
-    </Screen>
+        {error ? <StatusBanner tone="error" title="Image not converted" message={error} /> : null}
+      </Screen>
+      {dropping ? <DropOverlay /> : null}
+    </View>
   );
 }
 
-/** Average brightness per pin, so the threshold choice is easy to understand. */
-function BrightnessGrid({ luminance, threshold }: { luminance: Float32Array; threshold: number }) {
-  const t = useTheme();
-  const [width, setWidth] = useState(0);
-  const cell = width ? Math.min(64, Math.floor((width - 12) / GRID.cols)) : 0;
+function LiveBadge() {
   return (
-    <View
-      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
-      accessible
-      accessibilityLabel={`Brightness preview for each pin. Pins darker than ${threshold} are raised unless inverted.`}
-      style={[styles.brightWell, { backgroundColor: t.gridWell }]}>
-      {cell > 0 &&
-        Array.from({ length: GRID.rows }, (_, r) => (
-          <View key={r} style={{ flexDirection: 'row' }}>
-            {Array.from({ length: GRID.cols }, (_, c) => {
-              const v = Math.round(luminance[r * GRID.cols + c]);
-              return (
-                <View key={c} style={{ width: cell, height: cell, padding: 2 }}>
-                  <View style={{ flex: 1, borderRadius: 4, backgroundColor: `rgb(${v},${v},${v})` }} />
-                </View>
-              );
-            })}
-          </View>
-        ))}
+    <View style={styles.liveBadge} accessible accessibilityLabel="Live">
+      <View style={styles.liveDot} />
+      <Label variant="caption" style={{ color: '#FFFFFF', fontWeight: '600' }}>
+        Live
+      </Label>
+    </View>
+  );
+}
+
+/** Shown while an image file is dragged over the page (web). */
+function DropOverlay() {
+  const t = useTheme();
+  return (
+    <View pointerEvents="none" style={[styles.dropOverlay, { backgroundColor: t.background }]}>
+      <View style={[styles.dropZone, { borderColor: t.tint, backgroundColor: t.tintSoft }]}>
+        <Icon name="photo" color={t.tint} size={40} />
+        <Label variant="title3" style={{ color: t.tint }}>
+          Drop Image
+        </Label>
+      </View>
+    </View>
+  );
+}
+
+function SwitchRow({ title, hint, value, onChange }: { title: string; hint: string; value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <View style={styles.switchRow}>
+      <Label variant="body" style={{ flex: 1 }}>
+        {title}
+      </Label>
+      <Switch value={value} onValueChange={onChange} accessibilityLabel={title} accessibilityHint={hint} />
+    </View>
+  );
+}
+
+function SliderRow(p: {
+  title: string;
+  value: number;
+  display: string;
+  min: number;
+  max: number;
+  step: number;
+  hint: string;
+  onChange: (v: number) => void;
+}) {
+  const t = useTheme();
+  const set = (v: number) => p.onChange(Math.min(p.max, Math.max(p.min, Math.round(v / p.step) * p.step)));
+  return (
+    <View style={{ gap: space.xs }}>
+      <View style={styles.sliderHeader}>
+        <Label variant="body">{p.title}</Label>
+        <Label variant="body" secondary style={{ fontVariant: ['tabular-nums'] }}>
+          {p.display}
+        </Label>
+      </View>
+      <View style={styles.sliderRow}>
+        <Button
+          title=""
+          accessibilityLabel={`Decrease ${p.title}`}
+          icon="minus"
+          variant="secondary"
+          compact
+          style={styles.stepButton}
+          onPress={() => set(p.value - p.step)}
+        />
+        <Slider
+          style={{ flex: 1, height: 44 }}
+          minimumValue={p.min}
+          maximumValue={p.max}
+          step={p.step}
+          value={p.value}
+          onValueChange={set}
+          minimumTrackTintColor={t.tint}
+          maximumTrackTintColor={t.fill}
+          accessibilityLabel={p.title}
+          accessibilityHint={p.hint}
+          accessibilityValue={{
+            min: p.min,
+            max: p.max,
+            now: p.value,
+            text: p.display,
+          }}
+        />
+        <Button
+          title=""
+          accessibilityLabel={`Increase ${p.title}`}
+          icon="plus"
+          variant="secondary"
+          compact
+          style={styles.stepButton}
+          onPress={() => set(p.value + p.step)}
+        />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   empty: { alignItems: 'center', gap: space.sm, paddingVertical: space.lg },
-  emptyIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', marginBottom: space.sm },
-  original: { width: '100%', maxHeight: 440, borderRadius: radius.md },
-  frame: { width: '100%', borderRadius: radius.sm, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
+  emptyIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.sm,
+  },
+  buttonRow: { flexDirection: 'row', gap: space.sm },
+  frame: {
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
+    borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+  },
   sliderHeader: { flexDirection: 'row', justifyContent: 'space-between' },
   sliderRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   stepButton: { width: 44, paddingHorizontal: 0 },
-  switchRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: 44 },
-  brightWell: { borderRadius: radius.md, padding: 6, alignItems: 'center' },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    minHeight: 44,
+  },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF3B30' },
+  dropOverlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    padding: space.lg,
+  },
+  dropZone: {
+    flex: 1,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderRadius: radius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+  },
 });

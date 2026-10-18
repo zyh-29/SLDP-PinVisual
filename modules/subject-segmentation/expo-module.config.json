@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["SubjectSegmentationModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.subjectsegmentation.SubjectSegmentationModule"]
+  }
+}
