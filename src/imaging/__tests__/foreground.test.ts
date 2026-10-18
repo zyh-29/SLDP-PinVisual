@@ -205,7 +205,12 @@ describe('graphs: axes and gridlines', () => {
       if (Math.abs(y - c) <= 1 || (Math.abs(x - 100 - Math.sqrt(Math.max(0, (150 - y) / 0.032)) * Math.sign(x - 100)) <= 1 && y < 150))
         return [200, 60, 50];
       if (x === 100 || y === 150) return [90, 90, 90]; // axes
-      if ((x >= 60 && x < 66 && y >= 152 && y < 158) || (x >= 140 && x < 146 && y >= 152 && y < 158)) return BLACK; // tick numbers
+      if (
+        (x >= 60 && x < 66 && y >= 152 && y < 158) ||
+        (x >= 140 && x < 146 && y >= 152 && y < 158) ||
+        (x >= 103 && x < 108 && y >= 152 && y < 158)
+      )
+        return BLACK; // tick numbers, including a 0 next to the vertex
       if (x % 20 === 0 || y % 20 === 10) return [205, 205, 205]; // gridlines
       return WHITE;
     });
@@ -242,6 +247,20 @@ describe('graphs: axes and gridlines', () => {
       '01100110',
       '00111100',
     ]);
+  });
+
+  it('keeps the curve where it crosses gridlines and the axis, and drops the 0 label (zoomed crop)', () => {
+    const region = { x: 70, y: 100, width: 60, height: 60 };
+    const z = findForeground(rgb, img.width, img.height, { tolerance: 40, minPieceRatio: 0.15, removeLines: true, region });
+    const onCurve = (y: number) => {
+      const dx = Math.round(Math.sqrt((150 - y) / 0.032));
+      return [100 - dx, 100 + dx].every((cx) => [-1, 0, 1].some((d) => z.mask[y * img.width + cx + d] === 1));
+    };
+    expect(onCurve(130)).toBe(true); // crossing a horizontal gridline
+    const yAt80 = Math.round(150 - 0.032 * 20 ** 2); // crossing the vertical gridline x = 80
+    expect([-1, 0, 1].some((d) => z.mask[(yAt80 + d) * img.width + 80] === 1)).toBe(true);
+    expect(z.mask[150 * img.width + 100]).toBe(1); // the vertex, sitting on the x-axis
+    for (let y = 152; y < 158; y++) for (let x = 103; x < 108; x++) expect(z.mask[y * img.width + x]).toBe(0); // the 0 label
   });
 
   it('can be told to keep the lines', () => {

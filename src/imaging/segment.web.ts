@@ -4,7 +4,17 @@
  * (MIT, WebAssembly, public/ort/). Both are served by the app itself, so this
  * works offline and costs nothing. Loaded on first use only.
  */
-import type * as Ort from 'onnxruntime-web';
+/** The parts of ONNX Runtime Web used here (it is loaded as a script, not bundled). */
+interface OrtSession {
+  inputNames: readonly string[];
+  outputNames: readonly string[];
+  run(feeds: Record<string, unknown>): Promise<Record<string, { data: unknown }>>;
+}
+interface OrtModule {
+  env: { wasm: { wasmPaths: string; numThreads: number } };
+  InferenceSession: { create(url: string, options: { executionProviders: string[] }): Promise<OrtSession> };
+  Tensor: new (type: 'float32', data: Float32Array, dims: number[]) => unknown;
+}
 
 export interface SegmentInput {
   rgb: ArrayLike<number>;
@@ -19,7 +29,7 @@ const STD = [0.229, 0.224, 0.225];
 
 export const smartCutoutAvailable = typeof window !== 'undefined' && typeof WebAssembly === 'object';
 
-let sessionPromise: Promise<{ ort: typeof Ort; session: Ort.InferenceSession }> | null = null;
+let sessionPromise: Promise<{ ort: OrtModule; session: OrtSession }> | null = null;
 
 function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -34,7 +44,7 @@ function loadScript(src: string): Promise<void> {
 
 function getSession() {
   sessionPromise ??= (async () => {
-    const w = window as unknown as { ort?: typeof Ort };
+    const w = window as unknown as { ort?: OrtModule };
     if (!w.ort) await loadScript('/ort/ort.wasm.min.js');
     const ort = w.ort!;
     ort.env.wasm.wasmPaths = '/ort/';

@@ -290,17 +290,73 @@ export function linesCross(lines: StraightLine[]): boolean {
   return false;
 }
 
-function eraseLines(mask: Uint8Array, width: number, height: number, region: Rect, lines: StraightLine[]) {
+/** Colour distance below which a pixel counts as part of a removed line (same grey as the axis). */
+const LINE_COLOUR_MATCH = 70;
+
+/**
+ * Removes axes and gridlines without cutting what crosses them:
+ *  1. Each line is erased only where a pixel has the line's own colour, so a
+ *     red curve crossing a grey axis survives.
+ *  2. Gaps are then repaired: where a stroke continues on both sides of a
+ *     removed line (e.g. a black pen curve crossing a black axis), the gap is
+ *     filled back in.
+ */
+function eraseLines(mask: Uint8Array, rgb: ArrayLike<number>, width: number, height: number, region: Rect, lines: StraightLine[]) {
   const { x0, y0, x1, y1 } = bounds(region, width, height);
+  const at = (l: StraightLine, across: number, along: number) => (l.orientation === 'h' ? across * width + along : along * width + across);
+  const acrossLimit = (l: StraightLine) => (l.orientation === 'h' ? [y0, y1] : [x0, x1]);
+  const alongLimit = (l: StraightLine) => (l.orientation === 'h' ? [x0, x1] : [y0, y1]);
+
+  // The colour of each line: median of its middle row/column.
+  const colours = lines.map((l) => {
+    const mid = (l.from + l.to) >> 1;
+    const rs: number[] = [];
+    const gs: number[] = [];
+    const bs: number[] = [];
+    for (let i = l.start; i <= l.end; i++) {
+      const p = at(l, mid, i);
+      if (!mask[p]) continue;
+      rs.push(rgb[p * 3]);
+      gs.push(rgb[p * 3 + 1]);
+      bs.push(rgb[p * 3 + 2]);
+    }
+    return { r: median(rs), g: median(gs), b: median(bs) };
+  });
+
+  const erased = new Uint8Array(mask.length);
+  lines.forEach((l, k) => {
+    const [a0, a1] = acrossLimit(l);
+    const [l0, l1] = alongLimit(l);
+    // One extra pixel each side catches anti-aliasing halos.
+    for (let a = Math.max(a0, l.from - 1); a <= Math.min(a1 - 1, l.to + 1); a++)
+      for (let i = l0; i < l1; i++) {
+        const p = at(l, a, i);
+        if (mask[p] && dist(rgb, p * 3, colours[k]) < LINE_COLOUR_MATCH) {
+          mask[p] = 0;
+          erased[p] = 1;
+        }
+      }
+  });
+
+  // Repair: fill an erased gap where content continues just beyond both sides of the line.
   for (const l of lines) {
-    // One extra pixel each side removes anti-aliasing halos.
-    for (let a = l.from - 1; a <= l.to + 1; a++) {
-      if (l.orientation === 'h') {
-        if (a < y0 || a >= y1) continue;
-        for (let x = x0; x < x1; x++) mask[a * width + x] = 0;
-      } else {
-        if (a < x0 || a >= x1) continue;
-        for (let y = y0; y < y1; y++) mask[y * width + a] = 0;
+    const [a0, a1] = acrossLimit(l);
+    const [l0, l1] = alongLimit(l);
+    const before = l.from - 2;
+    const after = l.to + 2;
+    if (before < a0 || after >= a1) continue;
+    const near = (a: number, i: number) => {
+      for (let d = -2; d <= 2; d++) {
+        const j = i + d;
+        if (j >= l0 && j < l1 && mask[at(l, a, j)]) return true;
+      }
+      return false;
+    };
+    for (let i = l0; i < l1; i++) {
+      if (!near(before, i) || !near(after, i)) continue;
+      for (let a = l.from - 1; a <= l.to + 1; a++) {
+        const p = at(l, a, i);
+        if (erased[p]) mask[p] = 1;
       }
     }
   }
@@ -333,10 +389,12 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
   const region = o.region ?? fullRect(width, height);
   const { x0, y0, x1, y1 } = bounds(region, width, height);
 
-  // The image edge suits a tight auto crop; the crop edge suits part of a screenshot. Use the more even one.
+  // Background colour. For a manual crop, the crop's own edge usually lies on the background the user framed
+  // (e.g. a grey card inside a dark screenshot), so it wins unless it is clearly messier than the image edge
+  // (a tight crop whose edge runs through the subject).
   const whole = estimateBackground(rgb, width, height);
   const local = o.region ? estimateBackground(rgb, width, height, region) : whole;
-  const { color: background, noise: borderNoise } = local.noise < whole.noise ? local : whole;
+  const { color: background, noise: borderNoise } = local.noise <= Math.max(whole.noise * 1.5, whole.noise + 8) ? local : whole;
 
   const mask = new Uint8Array(width * height);
   for (let y = y0; y < y1; y++) {
@@ -352,19 +410,20 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
   if (linesCross(lines)) {
     // A graph has something besides its axes and grid (a curve, bars). A letter T or E doesn't.
     const without = mask.slice();
-    eraseLines(without, width, height, region, lines);
+    eraseLines(without, rgb, width, height, region, lines);
     const longest = lines.reduce((m, l) => Math.max(m, (l.end - l.start + 1) * (l.to - l.from + 1)), 0);
     graphLikely = countOnes(without) >= longest * 0.5;
   }
   const remove = o.removeLines === 'auto' || o.removeLines === undefined ? graphLikely : o.removeLines;
   const linesRemoved = remove && lines.length > 0;
-  if (linesRemoved) eraseLines(mask, width, height, region, lines);
+  if (linesRemoved) eraseLines(mask, rgb, width, height, region, lines);
 
   // Clutter: tiny specks always go; otherwise drop pieces much smaller than the main one.
   const { labels, components } = labelComponents(mask, width, height);
   const largest = components.reduce((m, c) => Math.max(m, c.area), 0);
   const minArea = Math.max(2, largest * o.minPieceRatio);
   const keep = components.map((c) => c.area >= minArea);
+  if (o.minPieceRatio > 0 && components.length > 1) dropNeutralClutter(rgb, labels, components, keep);
 
   let sx0 = width,
     sy0 = height,
@@ -398,6 +457,34 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
     linesRemoved,
     strokeWidth: strokeWidth(mask, width, height),
   };
+}
+
+/** max - min of the channels: 0 for grey/black/white, high for vivid colours. */
+const saturation = (c: Rgb) => Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b);
+
+/**
+ * When the main subject is coloured (e.g. a red curve), smaller grey or black
+ * pieces are almost always labels, tick numbers or axes leftovers: drop them.
+ */
+function dropNeutralClutter(rgb: ArrayLike<number>, labels: Int32Array, components: Component[], keep: boolean[]) {
+  const sums = components.map(() => ({ r: 0, g: 0, b: 0 }));
+  for (let p = 0; p < labels.length; p++) {
+    const l = labels[p];
+    if (!l) continue;
+    const s = sums[l - 1];
+    s.r += rgb[p * 3];
+    s.g += rgb[p * 3 + 1];
+    s.b += rgb[p * 3 + 2];
+  }
+  const mean = components.map((c, i) => ({ r: sums[i].r / c.area, g: sums[i].g / c.area, b: sums[i].b / c.area }));
+  let main = 0;
+  components.forEach((c, i) => {
+    if (c.area > components[main].area) main = i;
+  });
+  if (saturation(mean[main]) < 60) return;
+  components.forEach((c, i) => {
+    if (i !== main && keep[i] && saturation(mean[i]) < 30 && c.area < components[main].area * 0.5) keep[i] = false;
+  });
 }
 
 export function fullRect(width: number, height: number): Rect {

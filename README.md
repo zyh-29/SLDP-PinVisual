@@ -18,7 +18,9 @@ boards. It runs fully offline, with no accounts and no cloud.
 | Send Pattern / Reset Physical Pins to **mock device** | ✅ Working; covered by automated tests (not tapped through in the simulator) |
 | Protocol: framing, CRC, chunking, command IDs, retries, timeouts, ACK matching | ✅ Implemented and unit-tested against the simulated firmware |
 | Image → pins (background removal, axis/grid removal for graphs, label removal, smart + manual crop, thin-line thickening, live screen sharing on web) | ✅ Unit-tested, and clicked through in the web app with a textbook-style triangle diagram; the photo picker and crop dragging still need a manual test on a phone |
-| Shape/letter/graph recognition and redraw | ⏳ Planned (Phase 1, next step) |
+| Shape snapping (triangle … hexagon, circle/oval), filled/outline | ✅ Unit-tested and checked in the web app |
+| Smart Cut-Out (AI subject segmentation) | ✅ Web (U²-Net) checked in Chrome. ⚠️ iOS (Apple Vision) and Android (ML Kit) written, **need a new development build** to run |
+| Letter recognition | ⏳ Planned |
 | Save / load / delete patterns on the phone | ✅ Store logic unit-tested; UI rendered in the simulator |
 | **Real Bluetooth** (scan, connect, write, notify) | ⚠️ Implemented, **never run**: needs a development build, a physical phone, and firmware |
 | **Web app** layout (laptop 1280/1440, tablet 820, phone 390) | ✅ Checked in headless Chrome: no horizontal overflow, no console errors; mock connect → toggle → send → reset clicked through end to end |
@@ -178,32 +180,60 @@ The simulator cannot test the following:
 - **Image conversion** (`src/imaging/foreground.ts`): downscale to 512 px
   (640 px for screen sharing) → decode pixels (`fast-png` on phones, a canvas
   on web). Then:
-  1. **Background colour** = median colour of a thin ring around the image
-     edge or the crop edge, whichever is more even.
+  1. **Background colour** = median colour of a thin ring around the crop
+     edge (a manual crop usually frames the background), or the image edge
+     when the crop edge is clearly messier.
   2. **Subject** = pixels whose colour differs from it by more than
      *Tolerance*. Colour distance, not darkness, so pale fills count.
   3. **Axes & grid**: long, thin, isolated straight lines are found. If a
      horizontal and a vertical one cross and something else remains (a curve,
-     bars), the image is treated as a graph: the lines are removed and the
+     bars), the image is treated as a graph: the lines are removed (only
+     where a pixel has the line's own colour, so a red curve crossing a grey
+     axis survives; gaps where a stroke continues on both sides are filled
+     back in) and the
      graph is stretched to fill all pins (its x/y scales are arbitrary). The
      *Remove Axes & Grid* switch appears only when lines are found and
      overrides the guess. A letter T or E is not mistaken for axes, because
      nothing remains once its lines are removed.
   4. **Labels & text**: pieces smaller than 15% of the biggest piece (labels,
-     tick numbers, watermarks) are dropped.
+     tick numbers, watermarks) are dropped. When the main subject is coloured,
+     smaller grey/black pieces (axis numbers, captions) are dropped too.
   5. **Smart crop** = the box around what is left, with no margin. Drag the box or
      its corners to change it; a manual crop is analysed on its own.
   6. **Thin lines** (graphs, outlines, handwriting) are thickened to about half
      a pin, so a line running through a pin raises it. Filled shapes are left alone.
-  7. The crop is placed on the grid (aspect ratio kept, centred, empty space
-     lowered; stretched for graphs). A pin is raised when at least *Pin Fill*
-     (default 35%) of its area is subject. **Invert** raises the background.
+  7. **Shapes** (not graphs): closed outlines are filled (*Filled*) or reduced to
+     their edge (*Outline*). If the subject is a clean convex shape (triangle,
+     square, rectangle, pentagon, hexagon, circle, oval), its exact corners
+     are found (convex hull, corner simplification, edges extended to sharp
+     corners) and the perfect shape is drawn on the pins, as large as the grid
+     allows. It is then **perfected**: tilts under 8° are straightened, and
+     nearly equilateral/isosceles/right triangles, rectangles, squares,
+     diamonds, regular pentagons/hexagons and circles become exact. A
+     mirror-symmetric shape gets a mirror-symmetric pin pattern centred on the
+     grid's middle line, and sharp tips always get a pin. *Snap to Triangle*
+     (etc.) appears only when a shape is found and turns this off.
+  8. Otherwise the crop is placed on the grid (aspect ratio kept, centred, empty
+     space lowered; stretched for graphs). **Sensitivity** (default 65%):
+     higher raises more pins; a pin is raised when at least 100 − Sensitivity
+     percent of it is subject. **Invert** raises the background.
 
   *What the pins see* shows the removed background as a checkerboard. With
   *Remove Background* off, darkness is used instead. "Busy background" means
   the ring of pixels used to guess the background has many different colours
-  (e.g. a photo or a screenshot with toolbars). Separating a subject from a
-  busy background needs an AI segmentation model (not built in).
+  (e.g. a photo or a screenshot with toolbars). Then **Smart Cut-Out** turns on
+  by itself (and can be switched off): an on-device AI model separates the main
+  subject, like remove.bg but free and offline (`src/imaging/segment*.ts`):
+  - **iPhone/iPad (iOS 17+):** Apple Vision subject lifting, through the local
+    module `modules/subject-segmentation`. Not in Expo Go or the simulator.
+  - **Android:** Google ML Kit Subject Segmentation (beta), same module. Play
+    services downloads the model when the app is installed.
+  - **Web:** U²-Net small (`public/models/u2netp.onnx`, 4.4 MB, Apache-2.0)
+    run with ONNX Runtime Web (MIT). The runtime is copied into `public/ort/`
+    by `scripts/copy-ort.mjs` on `npm install`; both are served by the app
+    itself, so it works offline. Loaded the first time it is needed.
+  - In Expo Go (no native module) the switch is hidden and colour-based removal
+    is used.
 - **Saved patterns** keep rows × cols. Patterns from a different grid size are
   flagged and only load after you confirm a centred crop or pad.
 

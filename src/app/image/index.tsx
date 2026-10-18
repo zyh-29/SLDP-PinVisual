@@ -11,6 +11,7 @@ import {
   DEFAULT_MIN_PIECE_RATIO,
   DEFAULT_PIN_FILL,
   DEFAULT_TOLERANCE,
+  estimateBackground,
   findForeground,
   fullRect,
   inkFromGray,
@@ -33,9 +34,11 @@ import {
   useImageDrop,
 } from '@/imaging/imageInput';
 import { loadImagePixels } from '@/imaging/loadImage';
+import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
+import { detectShape, fillHoles, outlineOf, renderShape, type ShapeStyle } from '@/imaging/shapes';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { usePattern } from '@/state/PatternProvider';
-import { Button, Columns, Label, Screen, Section, Separator, StatusBanner } from '@/ui/components';
+import { Button, Columns, Label, Screen, Section, SegmentedControl, Separator, StatusBanner } from '@/ui/components';
 import { CropEditor } from '@/ui/CropEditor';
 import { Icon } from '@/ui/Icon';
 import { LiveVideo } from '@/ui/LiveVideo';
@@ -44,6 +47,8 @@ import { radius, space, useTheme } from '@/ui/theme';
 
 interface Picked {
   uri: string;
+  /** Downscaled PNG on the device, for Smart Cut-Out (phones). */
+  fileUri?: string;
   raster: RasterImage;
   rgb: Uint8ClampedArray;
   gray: Float32Array;
@@ -62,7 +67,14 @@ export default function ImageScreen() {
   const [removeBackground, setRemoveBackground] = useState(true);
   const [removeClutter, setRemoveClutter] = useState(true);
   const [tolerance, setTolerance] = useState(DEFAULT_TOLERANCE);
-  const [pinFill, setPinFill] = useState(Math.round(DEFAULT_PIN_FILL * 100));
+  /** Higher raises more pins. A pin is raised when at least (100 - sensitivity)% of it is subject. */
+  const [sensitivity, setSensitivity] = useState(100 - Math.round(DEFAULT_PIN_FILL * 100));
+  const pinFill = (100 - sensitivity) / 100;
+  const [style, setStyle] = useState<ShapeStyle>('filled');
+  const [snap, setSnap] = useState(true);
+  /** null = automatic: Smart Cut-Out runs when the background is busy. */
+  const [cutoutOverride, setCutoutOverride] = useState<boolean | null>(null);
+  const [cutout, setCutout] = useState<{ for: Picked; mask: Float32Array | null; error?: string } | null>(null);
   const [invert, setInvert] = useState(false);
   /** null = automatic (smart crop). */
   const [manualCrop, setManualCrop] = useState<Rect | null>(null);
@@ -79,10 +91,26 @@ export default function ImageScreen() {
   const minPieceRatio = removeClutter ? DEFAULT_MIN_PIECE_RATIO : 0;
   const removeLines = linesOverride ?? 'auto';
 
+  // Smart Cut-Out (AI subject segmentation, on-device) for photos with a busy background.
+  const busyPhoto = useMemo(() => (picked ? estimateBackground(picked.rgb, w, h).noise > BUSY_BACKGROUND : false), [picked, w, h]);
+  const cutoutOn = removeBackground && smartCutoutAvailable && !live && (cutoutOverride ?? busyPhoto);
+  const cuttingOut = cutoutOn && cutout?.for !== picked;
+  const subjectMask = cutoutOn && cutout?.for === picked ? (cutout.mask ?? undefined) : undefined;
+  useEffect(() => {
+    if (!cutoutOn || !picked || cutout?.for === picked) return;
+    let cancelled = false;
+    segmentSubject({ rgb: picked.rgb, width: picked.raster.width, height: picked.raster.height, fileUri: picked.fileUri })
+      .then((mask) => !cancelled && setCutout({ for: picked, mask }))
+      .catch((e) => !cancelled && setCutout({ for: picked, mask: null, error: e instanceof Error ? e.message : String(e) }));
+    return () => {
+      cancelled = true;
+    };
+  }, [cutoutOn, picked, cutout]);
+
   // Whole image: finds the subject for the automatic crop.
   const fgAll = useMemo(
-    () => (picked ? findForeground(picked.rgb, w, h, { tolerance, minPieceRatio, removeLines }) : null),
-    [picked, w, h, tolerance, minPieceRatio, removeLines],
+    () => (picked ? findForeground(picked.rgb, w, h, { tolerance, minPieceRatio, removeLines, subjectMask }) : null),
+    [picked, w, h, tolerance, minPieceRatio, removeLines, subjectMask],
   );
   const autoCrop = useMemo(() => (fgAll ? smartCrop(fgAll) : null), [fgAll]);
   const crop = manualCrop ?? autoCrop ?? fullRect(w, h);
@@ -91,33 +119,46 @@ export default function ImageScreen() {
   const fg = useMemo(() => {
     if (!picked || !manualCrop) return fgAll;
     const lines = linesOverride ?? (fgAll?.graphLikely ? true : 'auto');
-    return findForeground(picked.rgb, w, h, { tolerance, minPieceRatio, removeLines: lines, region: manualCrop });
-  }, [picked, w, h, tolerance, minPieceRatio, linesOverride, manualCrop, fgAll]);
+    return findForeground(picked.rgb, w, h, { tolerance, minPieceRatio, removeLines: lines, region: manualCrop, subjectMask });
+  }, [picked, w, h, tolerance, minPieceRatio, linesOverride, manualCrop, fgAll, subjectMask]);
   // Graphs have arbitrary x and y scales, so they stretch to use every pin.
   const stretch = removeBackground && !!fg?.linesRemoved;
 
+  // Shapes (not graphs): close drawn outlines, then look for a clean triangle, square, circle...
+  const shapesApply = removeBackground && !stretch && !invert;
+  const filledMask = useMemo(() => (fg && shapesApply ? fillHoles(fg.mask, w, h, crop) : null), [fg, shapesApply, w, h, crop]);
+  const shape = useMemo(() => (filledMask ? detectShape(filledMask, w, h, crop) : null), [filledMask, w, h, crop]);
+  const styledMask = useMemo(
+    () => (filledMask ? (style === 'filled' ? filledMask : outlineOf(filledMask, w, h)) : (fg?.mask ?? null)),
+    [filledMask, style, fg, w, h],
+  );
+
   const ink = useMemo(() => {
-    if (!picked || !fg) return null;
+    if (!picked || !fg || !styledMask) return null;
     if (!removeBackground) return inkFromGray(picked.gray);
+    if (invert) return inkFromMask(fg.mask);
     const cell = cellSizePx(crop, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch);
-    return inkFromMask(invert ? fg.mask : thickenThinLines(fg.mask, w, h, fg.strokeWidth, cell));
-  }, [picked, fg, removeBackground, invert, crop, stretch, w, h]);
+    const stroke = style === 'outline' && filledMask ? 1 : fg.strokeWidth;
+    return inkFromMask(thickenThinLines(styledMask, w, h, stroke, cell));
+  }, [picked, fg, styledMask, filledMask, style, removeBackground, invert, crop, stretch, w, h]);
   const samples = useMemo(
     () => (ink ? sampleCrop(ink, w, h, crop, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch) : null),
     [ink, w, h, crop, stretch],
   );
-  const result = useMemo(
-    () => (samples ? patternFromSamples(samples, GRID.rows, GRID.cols, pinFill / 100, invert) : null),
-    [samples, pinFill, invert],
-  );
+  const result = useMemo(() => {
+    if (shape && snap && shapesApply) return renderShape(shape, GRID.rows, GRID.cols, GRID.pinPitchRatio, style, pinFill);
+    return samples ? patternFromSamples(samples, GRID.rows, GRID.cols, pinFill, invert) : null;
+  }, [shape, snap, shapesApply, style, pinFill, samples, invert]);
   const cleanedUri = useMemo(
-    () => (picked && fg ? rgbToPngDataUri(renderCrop(picked.rgb, w, h, removeBackground ? fg.mask : null, crop)) : null),
-    [picked, fg, w, h, removeBackground, crop],
+    () =>
+      picked && fg ? rgbToPngDataUri(renderCrop(picked.rgb, w, h, removeBackground ? (invert ? fg.mask : styledMask) : null, crop)) : null,
+    [picked, fg, styledMask, invert, w, h, removeBackground, crop],
   );
 
   const resetForNewImage = () => {
     setManualCrop(null);
     setLinesOverride(null);
+    setCutoutOverride(null);
   };
 
   /** Photos, drops and pastes end up here. */
@@ -128,7 +169,7 @@ export default function ImageScreen() {
       const raster = await loadImagePixels(source.uri, source.width ?? 0, source.height ?? 0);
       live?.stop();
       setLive(null);
-      setPicked({ uri: source.uri, raster, rgb: toRgb(raster), gray: toGrayscale(raster) });
+      setPicked({ uri: source.uri, fileUri: raster.fileUri, raster, rgb: toRgb(raster), gray: toGrayscale(raster) });
       resetForNewImage();
       AccessibilityInfo.announceForAccessibility('Image converted to pin preview, cropped to the main subject');
     } catch (e) {
@@ -300,9 +341,13 @@ export default function ImageScreen() {
                       />
                     ) : null}
                   </View>
-                  {removeBackground && !fg.subject ? (
-                    <StatusBanner tone="warning" title="No subject found" message="Try a lower Tolerance." />
-                  ) : removeBackground && busy ? (
+                  {cuttingOut ? (
+                    <StatusBanner tone="progress" title="Cutting out subject…" />
+                  ) : cutoutOn && cutout?.error ? (
+                    <StatusBanner tone="warning" title="Smart Cut-Out unavailable" message={cutout.error} />
+                  ) : removeBackground && !fg.subject ? (
+                    <StatusBanner tone="warning" title="No subject found" message={cutoutOn ? undefined : 'Try a lower Tolerance.'} />
+                  ) : removeBackground && busy && !cutoutOn ? (
                     <StatusBanner tone="warning" title="Busy background" message="Crop closer or raise Tolerance." />
                   ) : null}
                 </Section>
@@ -319,6 +364,17 @@ export default function ImageScreen() {
                   />
                   {removeBackground ? (
                     <>
+                      {smartCutoutAvailable && !live && (busyPhoto || cutoutOverride !== null) ? (
+                        <>
+                          <Separator />
+                          <SwitchRow
+                            title="Smart Cut-Out"
+                            hint="Uses on-device AI to separate the main subject from a busy background"
+                            value={cutoutOn}
+                            onChange={setCutoutOverride}
+                          />
+                        </>
+                      ) : null}
                       {fg.lines.length > 0 || linesOverride !== null ? (
                         <>
                           <Separator />
@@ -337,6 +393,35 @@ export default function ImageScreen() {
                         value={removeClutter}
                         onChange={setRemoveClutter}
                       />
+                      {shapesApply && shape ? (
+                        <>
+                          <Separator />
+                          <SwitchRow
+                            title={`Snap to ${shape.name}`}
+                            hint={`Draws a perfect ${shape.name.toLowerCase()} on the pins instead of following the pixels`}
+                            value={snap}
+                            onChange={setSnap}
+                          />
+                        </>
+                      ) : null}
+                      {shapesApply ? (
+                        <>
+                          <Separator />
+                          <SegmentedControl
+                            accessibilityLabel="Shape style"
+                            value={style}
+                            onChange={setStyle}
+                            options={[
+                              { value: 'filled', label: 'Filled' },
+                              { value: 'outline', label: 'Outline' },
+                            ]}
+                          />
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {removeBackground && !cutoutOn ? (
+                    <>
                       <Separator />
                       <SliderRow
                         title="Tolerance"
@@ -352,14 +437,14 @@ export default function ImageScreen() {
                   ) : null}
                   <Separator />
                   <SliderRow
-                    title="Pin Fill"
-                    value={pinFill}
-                    display={`${pinFill}%`}
+                    title="Sensitivity"
+                    value={sensitivity}
+                    display={`${sensitivity}%`}
                     min={5}
                     max={95}
                     step={5}
-                    onChange={setPinFill}
-                    hint={`A pin is raised when at least ${pinFill}% of its area is ${removeBackground ? 'subject' : 'dark'}. Lower raises more pins.`}
+                    onChange={setSensitivity}
+                    hint={`Higher raises more pins. A pin is raised when at least ${100 - sensitivity}% of it is ${removeBackground ? 'subject' : 'dark'}.`}
                   />
                   <Separator />
                   <SwitchRow
@@ -370,7 +455,7 @@ export default function ImageScreen() {
                   />
                 </Section>
 
-                {result && samples ? (
+                {result ? (
                   <Section title="Result">
                     <PinGrid pattern={result} />
                     <Button

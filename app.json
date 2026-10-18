@@ -67,7 +67,8 @@
           "cameraPermission": false,
           "microphonePermission": false
         }
-      ]
+      ],
+      "./modules/subject-segmentation/app.plugin.js"
     ],
     "experiments": {
       "typedRoutes": true,
