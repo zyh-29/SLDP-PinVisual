@@ -10,7 +10,6 @@ import { type RasterImage, toGrayscale } from '@/imaging/convert';
 import {
   DEFAULT_MIN_PIECE_RATIO,
   DEFAULT_PIN_FILL,
-  DEFAULT_TOLERANCE,
   estimateBackground,
   findForeground,
   fullRect,
@@ -22,7 +21,6 @@ import {
   type Rect,
   renderCrop,
   sampleCrop,
-  smartCrop,
   toRgb,
 } from '@/imaging/foreground';
 import {
@@ -36,6 +34,7 @@ import {
 import { loadImagePixels } from '@/imaging/loadImage';
 import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
 import { detectShape, fillHoles, outlineOf, renderShape, type ShapeStyle } from '@/imaging/shapes';
+import { isPhotoLike, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { usePattern } from '@/state/PatternProvider';
 import { Button, Columns, Label, Screen, Section, SegmentedControl, Separator, StatusBanner } from '@/ui/components';
@@ -66,7 +65,9 @@ export default function ImageScreen() {
 
   const [removeBackground, setRemoveBackground] = useState(true);
   const [removeClutter, setRemoveClutter] = useState(true);
-  const [tolerance, setTolerance] = useState(DEFAULT_TOLERANCE);
+  /** null = automatic: chosen from each image (and crop) by the triangle method on colour distances. */
+  const [toleranceOverride, setToleranceOverride] = useState<number | null>(null);
+  const tolerance = toleranceOverride ?? 'auto';
   /** Higher raises more pins. A pin is raised when at least (100 - sensitivity)% of it is subject. */
   const [sensitivity, setSensitivity] = useState(100 - Math.round(DEFAULT_PIN_FILL * 100));
   const pinFill = (100 - sensitivity) / 100;
@@ -75,7 +76,6 @@ export default function ImageScreen() {
   /** null = automatic: Smart Cut-Out runs when the background is busy. */
   const [cutoutOverride, setCutoutOverride] = useState<boolean | null>(null);
   const [cutout, setCutout] = useState<{ for: Picked; mask: Float32Array | null; error?: string } | null>(null);
-  const [invert, setInvert] = useState(false);
   /** null = automatic (smart crop). */
   const [manualCrop, setManualCrop] = useState<Rect | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -91,8 +91,14 @@ export default function ImageScreen() {
   const minPieceRatio = removeClutter ? DEFAULT_MIN_PIECE_RATIO : 0;
   const removeLines = linesOverride ?? 'auto';
 
-  // Smart Cut-Out (AI subject segmentation, on-device) for photos with a busy background.
-  const busyPhoto = useMemo(() => (picked ? estimateBackground(picked.rgb, w, h).noise > BUSY_BACKGROUND : false), [picked, w, h]);
+  // Smart Cut-Out (AI subject segmentation, on-device) only for photos with a busy background. Screenshots,
+  // graphs and drawings (lots of perfectly flat colour) never get it automatically: the AI keeps one solid
+  // object and would throw away thin curves.
+  const photoLike = useMemo(() => (picked ? isPhotoLike(picked.rgb, w, h) : false), [picked, w, h]);
+  const busyPhoto = useMemo(
+    () => (picked && photoLike ? estimateBackground(picked.rgb, w, h).noise > BUSY_BACKGROUND : false),
+    [picked, photoLike, w, h],
+  );
   const cutoutOn = removeBackground && smartCutoutAvailable && !live && (cutoutOverride ?? busyPhoto);
   const cuttingOut = cutoutOn && cutout?.for !== picked;
   const subjectMask = cutoutOn && cutout?.for === picked ? (cutout.mask ?? undefined) : undefined;
@@ -107,27 +113,55 @@ export default function ImageScreen() {
     };
   }, [cutoutOn, picked, cutout]);
 
-  // Whole image: finds the subject for the automatic crop.
-  const fgAll = useMemo(
-    () => (picked ? findForeground(picked.rgb, w, h, { tolerance, minPieceRatio, removeLines, subjectMask }) : null),
-    [picked, w, h, tolerance, minPieceRatio, removeLines, subjectMask],
+  // Smart crop: what part of the image should become pins (coloured curves, a shape, the object on a card).
+  const smartOptions = useMemo<SmartCropOptions>(
+    () => ({ tolerance, minPieceRatio, removeLines }),
+    [tolerance, minPieceRatio, removeLines],
   );
-  const autoCrop = useMemo(() => (fgAll ? smartCrop(fgAll) : null), [fgAll]);
-  const crop = manualCrop ?? autoCrop ?? fullRect(w, h);
-  // A manual crop is analysed on its own (background from its edge, labels judged within it).
-  // If the whole image is a graph, a crop of it is too, even when only one axis is inside the crop.
-  const fg = useMemo(() => {
-    if (!picked || !manualCrop) return fgAll;
-    const lines = linesOverride ?? (fgAll?.graphLikely ? true : 'auto');
-    return findForeground(picked.rgb, w, h, { tolerance, minPieceRatio, removeLines: lines, region: manualCrop, subjectMask });
-  }, [picked, w, h, tolerance, minPieceRatio, linesOverride, manualCrop, fgAll, subjectMask]);
+  const smart = useMemo(
+    () => (picked && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions) : null),
+    [picked, subjectMask, w, h, smartOptions],
+  );
+  // Inside the user's own box the same logic picks the subject, so stray UI caught by the box is ignored.
+  const smartInCrop = useMemo(
+    () => (picked && manualCrop && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, manualCrop) : null),
+    [picked, manualCrop, subjectMask, w, h, smartOptions],
+  );
+  const chosen = manualCrop ? (smartInCrop?.kind === 'none' ? null : smartInCrop) : smart;
+  const fullImage = useMemo(() => fullRect(w, h), [w, h]);
+  const autoContext = smart?.context ?? fullImage;
+  // The analysed area: around the chosen subject (its edge shows the background), else the user's box or the whole image.
+  const region = chosen?.context ?? manualCrop ?? fullImage;
+  // Graph curves mean axes and gridlines around them should go.
+  const lines = linesOverride ?? (chosen?.kind === 'curves' || smart?.kind === 'curves' ? true : 'auto');
+  // The subject's pixels when they are known exactly: the AI cut-out, or the graph curves' own pixels.
+  const knownSubject = subjectMask ?? (removeBackground ? chosen?.mask : undefined);
+  const fg = useMemo(
+    () =>
+      picked
+        ? findForeground(picked.rgb, w, h, {
+            tolerance,
+            minPieceRatio,
+            removeLines: lines,
+            region,
+            backgroundRegions: manualCrop ? [autoContext] : undefined,
+            subjectMask: knownSubject,
+          })
+        : null,
+    [picked, w, h, tolerance, minPieceRatio, lines, region, manualCrop, autoContext, knownSubject],
+  );
+  const autoBox = smart ? smart.box : (fg?.subject ?? fullImage);
+  /** The crop box shown to the user. */
+  const crop = manualCrop ?? autoBox;
+  /** What the pins use: the chosen subject's tight box (inside the user's box, if any), so empty margins don't waste pins. */
+  const sampleBox = chosen?.box ?? (manualCrop ? (fg?.subject ?? manualCrop) : autoBox);
   // Graphs have arbitrary x and y scales, so they stretch to use every pin.
-  const stretch = removeBackground && !!fg?.linesRemoved;
+  const stretch = removeBackground && (!!fg?.linesRemoved || (chosen ?? smart)?.kind === 'curves');
 
   // Shapes (not graphs): close drawn outlines, then look for a clean triangle, square, circle...
-  const shapesApply = removeBackground && !stretch && !invert;
-  const filledMask = useMemo(() => (fg && shapesApply ? fillHoles(fg.mask, w, h, crop) : null), [fg, shapesApply, w, h, crop]);
-  const shape = useMemo(() => (filledMask ? detectShape(filledMask, w, h, crop) : null), [filledMask, w, h, crop]);
+  const shapesApply = removeBackground && !stretch;
+  const filledMask = useMemo(() => (fg && shapesApply ? fillHoles(fg.mask, w, h, sampleBox) : null), [fg, shapesApply, w, h, sampleBox]);
+  const shape = useMemo(() => (filledMask ? detectShape(filledMask, w, h, sampleBox) : null), [filledMask, w, h, sampleBox]);
   const styledMask = useMemo(
     () => (filledMask ? (style === 'filled' ? filledMask : outlineOf(filledMask, w, h)) : (fg?.mask ?? null)),
     [filledMask, style, fg, w, h],
@@ -136,29 +170,28 @@ export default function ImageScreen() {
   const ink = useMemo(() => {
     if (!picked || !fg || !styledMask) return null;
     if (!removeBackground) return inkFromGray(picked.gray);
-    if (invert) return inkFromMask(fg.mask);
-    const cell = cellSizePx(crop, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch);
+    const cell = cellSizePx(sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch);
     const stroke = style === 'outline' && filledMask ? 1 : fg.strokeWidth;
     return inkFromMask(thickenThinLines(styledMask, w, h, stroke, cell));
-  }, [picked, fg, styledMask, filledMask, style, removeBackground, invert, crop, stretch, w, h]);
+  }, [picked, fg, styledMask, filledMask, style, removeBackground, sampleBox, stretch, w, h]);
   const samples = useMemo(
-    () => (ink ? sampleCrop(ink, w, h, crop, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch) : null),
-    [ink, w, h, crop, stretch],
+    () => (ink ? sampleCrop(ink, w, h, sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch) : null),
+    [ink, w, h, sampleBox, stretch],
   );
   const result = useMemo(() => {
     if (shape && snap && shapesApply) return renderShape(shape, GRID.rows, GRID.cols, GRID.pinPitchRatio, style, pinFill);
-    return samples ? patternFromSamples(samples, GRID.rows, GRID.cols, pinFill, invert) : null;
-  }, [shape, snap, shapesApply, style, pinFill, samples, invert]);
+    return samples ? patternFromSamples(samples, GRID.rows, GRID.cols, pinFill, false) : null;
+  }, [shape, snap, shapesApply, style, pinFill, samples]);
   const cleanedUri = useMemo(
-    () =>
-      picked && fg ? rgbToPngDataUri(renderCrop(picked.rgb, w, h, removeBackground ? (invert ? fg.mask : styledMask) : null, crop)) : null,
-    [picked, fg, styledMask, invert, w, h, removeBackground, crop],
+    () => (picked && fg ? rgbToPngDataUri(renderCrop(picked.rgb, w, h, removeBackground ? styledMask : null, sampleBox)) : null),
+    [picked, fg, styledMask, w, h, removeBackground, sampleBox],
   );
 
   const resetForNewImage = () => {
     setManualCrop(null);
     setLinesOverride(null);
     setCutoutOverride(null);
+    setToleranceOverride(null);
   };
 
   /** Photos, drops and pastes end up here. */
@@ -235,7 +268,8 @@ export default function ImageScreen() {
   };
 
   const gridAspect = (GRID.cols * GRID.pinPitchRatio) / GRID.rows;
-  const busy = !!fg && fg.borderNoise > BUSY_BACKGROUND;
+  // Only worth a warning when the subject is separated by colour (not when the curve colour or the AI defines it).
+  const busy = !!fg && !knownSubject && fg.borderNoise > BUSY_BACKGROUND;
 
   return (
     <View style={{ flex: 1 }}>
@@ -275,7 +309,7 @@ export default function ImageScreen() {
                 <Section title="Crop">
                   <CropEditor
                     uri={picked.uri}
-                    backdrop={live ? <LiveVideo stream={live.stream} /> : undefined}
+                    backdrop={live ? <LiveVideo video={live.video} /> : undefined}
                     badge={live ? <LiveBadge /> : undefined}
                     imageWidth={w}
                     imageHeight={h}
@@ -420,18 +454,20 @@ export default function ImageScreen() {
                       ) : null}
                     </>
                   ) : null}
-                  {removeBackground && !cutoutOn ? (
+                  {/* Tolerance only matters when the subject is separated by colour (not by a curve's colour or the AI). */}
+                  {removeBackground && !knownSubject && fg ? (
                     <>
                       <Separator />
                       <SliderRow
                         title="Tolerance"
-                        value={tolerance}
-                        display={String(tolerance)}
+                        value={fg.tolerance}
+                        display={toleranceOverride === null ? `Auto · ${fg.tolerance}` : String(toleranceOverride)}
                         min={8}
                         max={160}
-                        step={4}
-                        onChange={setTolerance}
-                        hint="Higher ignores faint colours, shadows and paper texture. Lower keeps pale fills."
+                        step={2}
+                        onChange={setToleranceOverride}
+                        onAuto={toleranceOverride === null ? undefined : () => setToleranceOverride(null)}
+                        hint="Set automatically for each image. Higher ignores faint colours, shadows and paper texture; lower keeps pale fills."
                       />
                     </>
                   ) : null}
@@ -445,13 +481,6 @@ export default function ImageScreen() {
                     step={5}
                     onChange={setSensitivity}
                     hint={`Higher raises more pins. A pin is raised when at least ${100 - sensitivity}% of it is ${removeBackground ? 'subject' : 'dark'}.`}
-                  />
-                  <Separator />
-                  <SwitchRow
-                    title="Invert"
-                    hint={removeBackground ? 'Raise the background instead of the subject' : 'Raise light areas instead of dark ones'}
-                    value={invert}
-                    onChange={setInvert}
                   />
                 </Section>
 
@@ -524,6 +553,8 @@ function SliderRow(p: {
   step: number;
   hint: string;
   onChange: (v: number) => void;
+  /** When given, an "Auto" button returns the setting to automatic. */
+  onAuto?: () => void;
 }) {
   const t = useTheme();
   const set = (v: number) => p.onChange(Math.min(p.max, Math.max(p.min, Math.round(v / p.step) * p.step)));
@@ -531,9 +562,14 @@ function SliderRow(p: {
     <View style={{ gap: space.xs }}>
       <View style={styles.sliderHeader}>
         <Label variant="body">{p.title}</Label>
-        <Label variant="body" secondary style={{ fontVariant: ['tabular-nums'] }}>
-          {p.display}
-        </Label>
+        <View style={styles.sliderValue}>
+          {p.onAuto ? (
+            <Button title="Auto" variant="plain" compact onPress={p.onAuto} accessibilityHint={`Sets ${p.title} automatically again`} />
+          ) : null}
+          <Label variant="body" secondary style={{ fontVariant: ['tabular-nums'] }}>
+            {p.display}
+          </Label>
+        </View>
       </View>
       <View style={styles.sliderRow}>
         <Button
@@ -597,7 +633,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#FFFFFF',
   },
-  sliderHeader: { flexDirection: 'row', justifyContent: 'space-between' },
+  sliderHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 32 },
+  sliderValue: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   sliderRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   stepButton: { width: 44, paddingHorizontal: 0 },
   switchRow: {

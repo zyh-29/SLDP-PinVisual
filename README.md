@@ -121,8 +121,12 @@ bucket). Configure the host so unknown paths serve `index.html`; otherwise
   drag a file anywhere onto the Image tab, paste one with Cmd/Ctrl+V, or press
   **Share Screen** (desktop browsers only). Share Screen opens the browser's
   share picker (screen, window or tab) and keeps sharing: the crop box sits on
-  the live video, frames are processed about 3 times a second (only when the
-  picture changes), and the pins preview follows. Nothing reaches the board
+  the live video, and each new frame is processed as soon as it arrives (at
+  most 5 times a second, only when the picture changed), so the pins preview
+  follows. One `<video>` element both feeds processing and is shown behind the
+  crop box: a shared window only sends a frame when something on it changes,
+  so a second element attached later would stay black until then. Measured
+  in Chrome: picture and pins preview about 0.25 s after sharing starts. Nothing reaches the board
   until you press **Use This Pattern** and then **Send**. **Stop Sharing** (or
   the browser's own stop button) keeps the last frame. Phones use the photo
   picker; to use something on a phone's screen, take a screenshot and choose it.
@@ -177,14 +181,22 @@ The simulator cannot test the following:
   been lowered and offers Retry.
 - **Only one command at a time.** Send and Reset are disabled while one is
   pending, and the controller rejects overlapping calls too.
-- **Image conversion** (`src/imaging/foreground.ts`): downscale to 512 px
-  (640 px for screen sharing) → decode pixels (`fast-png` on phones, a canvas
+- **Image conversion** (`src/imaging/foreground.ts`): downscale to 800 px
+  (also for screen sharing; enough to keep thin graph lines) → decode pixels (`fast-png` on phones, a canvas
   on web). Then:
   1. **Background colour** = median colour of a thin ring around the crop
      edge (a manual crop usually frames the background), or the image edge
      when the crop edge is clearly messier.
   2. **Subject** = pixels whose colour differs from it by more than
      *Tolerance*. Colour distance, not darkness, so pale fills count.
+     Tolerance is **automatic** ("Auto · 24"): the histogram of distances
+     from the background is cut with the triangle method (Zack 1977, OpenCV
+     `THRESH_TRIANGLE`), where the background peak ends; never below a noise
+     floor measured on the image edge (2.5 × its spread + 8) and kept within
+     24–90. It is recomputed for every image, live frame and crop. Dragging
+     the slider sets it by hand; **Auto** returns to automatic. The slider is
+     hidden when tolerance doesn't apply (graph curves taken by their own
+     colour, Smart Cut-Out).
   3. **Axes & grid**: long, thin, isolated straight lines are found. If a
      horizontal and a vertical one cross and something else remains (a curve,
      bars), the image is treated as a graph: the lines are removed (only
@@ -198,8 +210,38 @@ The simulator cannot test the following:
   4. **Labels & text**: pieces smaller than 15% of the biggest piece (labels,
      tick numbers, watermarks) are dropped. When the main subject is coloured,
      smaller grey/black pieces (axis numbers, captions) are dropped too.
-  5. **Smart crop** = the box around what is left, with no margin. Drag the box or
-     its corners to change it; a manual crop is analysed on its own.
+  5. **Smart crop** (`src/imaging/smartCrop.ts`) decides what becomes pins:
+     - *Photo or screenshot?* Screenshots, diagrams and clip art have lots of
+       perfectly flat colour, photos almost none. Smart Cut-Out turns on by
+       itself only for busy **photos**; on a graph it would keep one blob and
+       drop the thin curves.
+     - *Graphs (e.g. Desmos):* coloured, long, thin, solid strokes are curves;
+       grey axes, gridlines and text, short icons, filled buttons, rectangle
+       outlines (input boxes, frames, even with an icon fused to them) and
+       scattered photo noise are ignored. Strokes that outline a filled area
+       (a triangle diagram's edge) are a shape, not a graph.
+       Curves count wherever the area around them is flat, so sharing the
+       whole screen (photo wallpaper and all) still finds them.
+     - *Graphs with a black or grey curve:* colour can't separate the curve
+       from axes and text, so the **plot area** is found by its structure: a
+       grid of long, thin, crossing horizontal and vertical lines, detected
+       as local dips in brightness (so faint, shrunk gridlines count and solid
+       toolbars don't). Inside the plot the background really is one colour;
+       axes and gridlines are erased (every row of an anti-aliased line, dark
+       core and light edge), labels are dropped as small, framed UI (zoom
+       buttons) is dropped, and what remains is the curve.
+       Curves are found at full size (shrinking fades thin lines), and their
+       own colour becomes the subject, so no background guessing is needed
+       near toolbars and panels.
+     - *Shapes and objects:* each piece that differs from the background
+       (flat or gradient) is scored by size, colour, closeness to the centre,
+       not touching the edge and not looking like text. If the winner is a
+       card (e.g. an image thumbnail), the search repeats inside it. Decided on
+       a half-size copy for speed (under 10 ms per frame).
+     - Drag the box or its corners to choose yourself. The same smart logic
+       then runs inside your box (curves first, then the best object), so
+       stray UI caught by the box is ignored and empty margins don't waste pins.
+       Auto Crop goes back to the smart crop.
   6. **Thin lines** (graphs, outlines, handwriting) are thickened to about half
      a pin, so a line running through a pin raises it. Filled shapes are left alone.
   7. **Shapes** (not graphs): closed outlines are filled (*Filled*) or reduced to
@@ -216,7 +258,7 @@ The simulator cannot test the following:
   8. Otherwise the crop is placed on the grid (aspect ratio kept, centred, empty
      space lowered; stretched for graphs). **Sensitivity** (default 65%):
      higher raises more pins; a pin is raised when at least 100 − Sensitivity
-     percent of it is subject. **Invert** raises the background.
+     percent of it is subject.
 
   *What the pins see* shows the removed background as a checkerboard. With
   *Remove Background* off, darkness is used instead. "Busy background" means

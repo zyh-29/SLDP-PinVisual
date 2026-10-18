@@ -89,84 +89,123 @@ export function useImageDrop(onImage: (source: ImageSource) => void): boolean {
 
 export interface LiveCapture {
   stream: MediaStream;
+  /**
+   * The one video element that both feeds processing and is shown behind the
+   * crop box. Reusing it matters: a shared window only sends a new frame when
+   * something on it changes, so a second <video> attached later would stay
+   * black until then.
+   */
+  video: HTMLVideoElement;
   /** Stops sharing. Safe to call more than once. */
   stop: () => void;
 }
 
 /** Longest side of frames taken from a shared screen. Higher than photos: screens have thin lines and small text. */
-const LIVE_WORKING_SIZE = 640;
+const LIVE_WORKING_SIZE = 800;
+
+type FrameCallbackVideo = HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
 
 /**
  * Asks the browser to share a screen, window or tab and keeps sharing.
- * Every `intervalMs` it grabs a downscaled frame and calls `onFrame`, but
- * only when the picture changed. `onEnd` runs when sharing stops from the
+ * Each new frame is processed as soon as it arrives (at most every
+ * `minIntervalMs`, with the latest frame always processed last), and only
+ * when the picture changed. `onEnd` runs when sharing stops from the
  * browser's own controls. Returns null if the user cancels the picker.
  */
 export async function startLiveCapture(o: {
   onFrame: (frame: RasterImage) => void;
   onEnd: () => void;
-  intervalMs?: number;
+  minIntervalMs?: number;
 }): Promise<LiveCapture | null> {
   let stream: MediaStream;
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 10 }, audio: false });
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
   } catch (e) {
     if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return null;
     throw e;
   }
-  const video = document.createElement('video');
+  const minInterval = o.minIntervalMs ?? 200;
+  const video: FrameCallbackVideo = document.createElement('video');
   video.srcObject = stream;
   video.muted = true;
   video.playsInline = true;
+  video.autoplay = true;
+  Object.assign(video.style, { position: 'absolute', top: '0', left: '0', width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' });
+
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   let lastSignature = -1;
+  let lastRun = -Infinity;
+  let trailing: ReturnType<typeof setTimeout> | undefined;
+  let poll: ReturnType<typeof setInterval> | undefined;
 
   const stop = () => {
     if (stopped) return;
     stopped = true;
-    clearTimeout(timer);
+    clearTimeout(trailing);
+    clearInterval(poll);
     stream.getTracks().forEach((t) => t.stop());
     video.srcObject = null;
   };
 
-  const tick = () => {
+  const process = () => {
     if (stopped) return;
+    lastRun = performance.now();
     const vw = video.videoWidth;
     const vh = video.videoHeight;
-    if (ctx && vw && vh) {
-      const scale = Math.min(1, LIVE_WORKING_SIZE / Math.max(vw, vh));
-      const width = Math.max(1, Math.round(vw * scale));
-      const height = Math.max(1, Math.round(vh * scale));
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width;
-        canvas.height = height;
-      }
-      ctx.drawImage(video, 0, 0, width, height);
-      const { data } = ctx.getImageData(0, 0, width, height);
-      // Cheap change check, so a still screen costs nothing.
-      let signature = width * 31 + height;
-      for (let i = 0; i < data.length; i += 61) signature = (signature * 33 + data[i]) | 0;
-      if (signature !== lastSignature) {
-        lastSignature = signature;
-        o.onFrame({ width, height, data, channels: 4 });
-      }
+    if (!ctx || !vw || !vh) return;
+    const scale = Math.min(1, LIVE_WORKING_SIZE / Math.max(vw, vh));
+    const width = Math.max(1, Math.round(vw * scale));
+    const height = Math.max(1, Math.round(vh * scale));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
     }
-    timer = setTimeout(tick, o.intervalMs ?? 300);
+    ctx.drawImage(video, 0, 0, width, height);
+    const { data } = ctx.getImageData(0, 0, width, height);
+    // Cheap change check, so a still screen costs nothing.
+    let signature = width * 31 + height;
+    for (let i = 0; i < data.length; i += 61) signature = (signature * 33 + data[i]) | 0;
+    if (signature !== lastSignature) {
+      lastSignature = signature;
+      o.onFrame({ width, height, data, channels: 4 });
+    }
+  };
+
+  /** A new frame arrived: process now, or once the minimum interval has passed (so the latest frame is never skipped). */
+  const onNewFrame = () => {
+    if (stopped) return;
+    const wait = minInterval - (performance.now() - lastRun);
+    clearTimeout(trailing);
+    if (wait <= 0) process();
+    else trailing = setTimeout(process, wait);
   };
 
   stream.getVideoTracks()[0]?.addEventListener('ended', () => {
     stop();
     o.onEnd();
   });
+
+  if (video.requestVideoFrameCallback) {
+    // Chrome, Edge, Safari, recent Firefox: called exactly when a new frame is shown.
+    const loop = () => {
+      if (stopped) return;
+      onNewFrame();
+      video.requestVideoFrameCallback!(loop);
+    };
+    video.requestVideoFrameCallback(loop);
+  } else {
+    poll = setInterval(onNewFrame, minInterval);
+  }
+  // The first frame: process it the moment it is decoded.
+  video.addEventListener('loadeddata', onNewFrame, { once: true });
+
   try {
     await video.play();
   } catch (e) {
     stop();
     throw e;
   }
-  tick();
-  return { stream, stop };
+  return { stream, video, stop };
 }

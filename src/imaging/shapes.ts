@@ -224,7 +224,7 @@ function nameQuad(q: Point[]): string {
     return Math.abs(dot) / (Math.hypot(a.x - p.x, a.y - p.y) * Math.hypot(b.x - p.x, b.y - p.y)) < 0.17; // within ~10° of square
   });
   if (!right) return 'Quadrilateral';
-  return Math.max(...sides) / Math.min(...sides) < 1.15 ? 'Square' : 'Rectangle';
+  return Math.max(...sides) / Math.min(...sides) < 1 + SQUARE ? 'Square' : 'Rectangle';
 }
 
 /**
@@ -350,6 +350,8 @@ const DEG = Math.PI / 180;
 const STRAIGHTEN = 8 * DEG;
 /** Sides within this share of each other count as equal. */
 const EQUAL = 0.12;
+/** A rectangle counts as a square only if its sides are within this share of each other (stricter than EQUAL: a slightly tall box is not a square). */
+const SQUARE = 0.07;
 /** Angles within this of a right angle count as right angles. */
 const RIGHT = 10 * DEG;
 
@@ -430,7 +432,7 @@ function perfectQuad(pts: Point[]): { points: Point[]; name: string } | null {
     const d = snapDelta(theta, Math.PI / 2);
     let w = (sides[0] + sides[2]) / 2;
     let h = (sides[1] + sides[3]) / 2;
-    const square = nearlyEqual(w, h);
+    const square = Math.abs(w - h) <= SQUARE * Math.max(w, h);
     if (square) w = h = (w + h) / 2;
     // A square standing on a corner is a diamond: snap it to exactly 45 degrees.
     const onCorner = square && Math.abs(Math.abs(d) - Math.PI / 4) <= STRAIGHTEN;

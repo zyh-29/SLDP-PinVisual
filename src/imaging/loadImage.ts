@@ -10,7 +10,7 @@ import type { RasterImage } from './convert';
 import { decodePngToRaster } from './decodePng';
 
 /** Longest side after downscaling. Keeps thin lines visible and is still fast to process. */
-const WORKING_SIZE = 512;
+const WORKING_SIZE = 800;
 
 /** Pixels plus the downscaled PNG they came from (used by Smart Cut-Out). */
 export async function loadImagePixels(uri: string, width: number, height: number): Promise<RasterImage & { fileUri?: string }> {

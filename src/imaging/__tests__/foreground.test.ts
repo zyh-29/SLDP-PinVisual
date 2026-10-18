@@ -1,17 +1,19 @@
 import { imageToPattern, type RasterImage } from '../convert';
 import {
+  AUTO_MIN,
+  autoTolerance,
+  cellSizePx,
+  dilate,
   dragCrop,
   estimateBackground,
   findForeground,
   inkFromMask,
   labelComponents,
-  cellSizePx,
-  dilate,
-  thickenThinLines,
   patternFromSamples,
   sampleCrop,
   smartCrop,
   strokeWidth,
+  thickenThinLines,
   toRgb,
 } from '../foreground';
 
@@ -298,6 +300,13 @@ describe('thin lines', () => {
     expect(thickenThinLines(m, 40, 40, 8, { w: 20, h: 20 })).toBe(m);
   });
 
+  it('still thickens a thin line when pins are long and flat (a stretched, zoomed-in graph)', () => {
+    const m = new Uint8Array(60 * 20);
+    for (let x = 0; x < 60; x++) m[10 * 60 + x] = 1; // 1 px line
+    const thick = thickenThinLines(m, 60, 20, 1.3, { w: 12, h: 3.4 });
+    expect(thick).not.toBe(m);
+  });
+
   it('dilates with a rectangular block', () => {
     const m = new Uint8Array(7 * 7);
     m[3 * 7 + 3] = 1;
@@ -309,5 +318,57 @@ describe('thin lines', () => {
     const line = new Uint8Array(50 * 50);
     for (let x = 5; x < 45; x++) for (let y = 20; y < 24; y++) line[y * 50 + x] = 1;
     expect(strokeWidth(line, 50, 50)).toBeCloseTo(4, 0);
+  });
+});
+
+describe('automatic tolerance', () => {
+  it('keeps a pale fill on white (the cut sits between the background and the fill)', () => {
+    const img = diagram(); // pale yellow (distance ~42 from white) with a green edge and labels
+    const fg = findForeground(toRgb(img), img.width, img.height, { tolerance: 'auto', minPieceRatio: 0.15 });
+    expect(fg.tolerance).toBeLessThan(42);
+    expect(fg.mask[100 * img.width + 180]).toBe(1); // inside the pale fill
+    expect(fg.subject).toEqual({ x: 40, y: 40, width: 161, height: 81 });
+  });
+
+  it('rises above paper grain so the background stays background', () => {
+    let seed = 11;
+    const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5) * 28; // +-14 grain
+    const img = image(200, 150, (x, y) => {
+      const ink = Math.hypot(x - 100, y - 75) < 30;
+      const g = rand();
+      return ink ? [40 + g, 40 + g, 50 + g] : [236 + g, 232 + g, 220 + g];
+    });
+    const fg = findForeground(toRgb(img), img.width, img.height, { tolerance: 'auto', minPieceRatio: 0 });
+    let leaked = 0;
+    for (let y = 0; y < 150; y++) for (let x = 0; x < 200; x++) if (Math.hypot(x - 100, y - 75) > 33 && fg.mask[y * 200 + x]) leaked++;
+    expect(leaked).toBe(0);
+    expect(fg.mask[75 * 200 + 100]).toBe(1);
+  });
+
+  it('uses the minimum on a clean screenshot-like image', () => {
+    const d = new Float32Array(1000);
+    for (let i = 900; i < 1000; i++) d[i] = 200; // a dark subject on a perfectly flat background
+    expect(autoTolerance(d, 0)).toBeGreaterThanOrEqual(AUTO_MIN);
+    expect(autoTolerance(d, 0)).toBeLessThan(200);
+  });
+});
+
+describe('removing anti-aliased axes', () => {
+  it('erases the whole axis band, its dark core as well as its light edge row', () => {
+    // A 2-row axis: a light anti-aliased edge row (219) above a near-black core row (24), crossing a plot,
+    // with a red curve so the image counts as a graph.
+    const W = 300;
+    const H = 200;
+    const img = image(W, H, (x, y) => {
+      if (Math.abs(y - (150 - 0.004 * (x - 150) ** 2)) <= 1) return [199, 68, 64];
+      if (y === 149) return [219, 219, 219];
+      if (y === 150) return [24, 24, 24];
+      if (x === 150) return [24, 24, 24];
+      return [255, 255, 255];
+    });
+    const fg = findForeground(toRgb(img), W, H, { tolerance: 40, minPieceRatio: 0, removeLines: true });
+    expect(fg.mask[150 * W + 30]).toBe(0); // dark core gone
+    expect(fg.mask[149 * W + 30]).toBe(0); // light edge gone
+    expect(fg.mask[60 * W + 150]).toBe(0); // vertical axis gone
   });
 });

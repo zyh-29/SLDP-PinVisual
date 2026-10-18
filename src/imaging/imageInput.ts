@@ -19,13 +19,14 @@ export function useImageDrop(_onImage: (source: ImageSource) => void): boolean {
 
 export interface LiveCapture {
   stream: unknown;
+  video: unknown;
   stop: () => void;
 }
 
 export async function startLiveCapture(_o: {
   onFrame: (frame: RasterImage) => void;
   onEnd: () => void;
-  intervalMs?: number;
+  minIntervalMs?: number;
 }): Promise<LiveCapture | null> {
   return null;
 }

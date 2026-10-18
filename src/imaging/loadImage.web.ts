@@ -5,7 +5,7 @@
  */
 import type { RasterImage } from './convert';
 
-const WORKING_SIZE = 512;
+const WORKING_SIZE = 800;
 
 function loadHtmlImage(uri: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
