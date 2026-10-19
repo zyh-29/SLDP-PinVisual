@@ -29,6 +29,12 @@ const STD = [0.229, 0.224, 0.225];
 
 export const smartCutoutAvailable = typeof window !== 'undefined' && typeof WebAssembly === 'object';
 
+/**
+ * Where the app is hosted: '' at a site's root, or e.g. '/pinvisual' in a folder (set with WEB_BASE_URL when
+ * building, see app.config.js). The engine and model are files in public/, so their URLs need it too.
+ */
+const BASE = (process.env.EXPO_BASE_URL ?? '').replace(/\/$/, '');
+
 let sessionPromise: Promise<{ ort: OrtModule; session: OrtSession }> | null = null;
 
 function loadScript(src: string): Promise<void> {
@@ -45,11 +51,11 @@ function loadScript(src: string): Promise<void> {
 function getSession() {
   sessionPromise ??= (async () => {
     const w = window as unknown as { ort?: OrtModule };
-    if (!w.ort) await loadScript('/ort/ort.wasm.min.js');
+    if (!w.ort) await loadScript(`${BASE}/ort/ort.wasm.min.js`);
     const ort = w.ort!;
-    ort.env.wasm.wasmPaths = '/ort/';
+    ort.env.wasm.wasmPaths = `${BASE}/ort/`;
     ort.env.wasm.numThreads = 1; // threads need cross-origin isolation, which a static host may not have
-    const session = await ort.InferenceSession.create('/models/u2netp.onnx', { executionProviders: ['wasm'] });
+    const session = await ort.InferenceSession.create(`${BASE}/models/u2netp.onnx`, { executionProviders: ['wasm'] });
     return { ort, session };
   })().catch((e) => {
     sessionPromise = null; // allow a retry

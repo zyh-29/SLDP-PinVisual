@@ -99,10 +99,23 @@ npm run web         # dev server at http://localhost:8081
 npm run build:web   # static site in dist/ (single-page app)
 ```
 
-`dist/` can go on any static host (Netlify, Vercel, GitHub Pages, an S3
-bucket). Configure the host so unknown paths serve `index.html`; otherwise
-`/device` won't load on refresh. Bluetooth only works on **https://** or
-`localhost`.
+#### Putting it on your website
+
+1. Build. At the root of a site or subdomain (`https://pinvisual.example.com/`):
+   `npm run build:web`. In a folder of a site (`https://example.com/pinvisual/`):
+   `WEB_BASE_URL=/pinvisual npm run build:web` (the folder name must match).
+2. Upload **everything inside `dist/`** (including the hidden `.nojekyll` file
+   and the `_expo`, `ort` and `models` folders) to that place on your host.
+3. Open it over **https://**. Bluetooth and screen sharing need it (or `localhost`).
+
+No server code or rewrite rules are needed: the build also writes the page at
+`/image`, `/saved`, `/device` and `404.html` (`scripts/web-routes.mjs`), so
+opening or refreshing any tab works on any static host (GitHub Pages, Netlify,
+Vercel, Cloudflare Pages, a plain web server). Check the build first with
+`npx expo serve` (root builds only). Rebuild after changing the folder: it is
+fixed at build time. The AI cut-out files (`ort/`, `models/`, about 15 MB) load
+only when a busy photo needs them. Saved patterns stay in each visitor's
+browser.
 
 - **Laptop (900 px and wider):** macOS-style sidebar with the connection status
   at the bottom. Screens use two columns when the content area is 900 px or
