@@ -1,10 +1,12 @@
 /**
- * Browser-only ways to bring in an image: drag and drop, paste, and live
- * screen sharing (getDisplayMedia). The phone versions are in imageInput.ts.
+ * Browser-only ways to bring in an image: drag and drop, paste, live screen
+ * sharing (getDisplayMedia) and the live camera (getUserMedia). The phone
+ * app versions are in imageInput.ts.
  */
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { denoiseFrame } from './cameraFrame';
 import type { RasterImage } from './convert';
 
 export interface ImageSource {
@@ -19,6 +21,13 @@ export const supportsFileDrop = typeof window !== 'undefined' && !!window.matchM
 /** Desktop Chrome, Edge, Firefox and Safari. Not available in any mobile browser. */
 export const supportsScreenCapture =
   typeof navigator !== 'undefined' && typeof navigator.mediaDevices?.getDisplayMedia === 'function' && supportsFileDrop;
+
+/**
+ * A live camera: phones (Chrome on Android, Safari and Chrome on iPhone) and laptops with a webcam. Browsers
+ * only allow it on https:// pages (or localhost), which is why it needs `isSecureContext`.
+ */
+export const supportsCamera =
+  typeof window !== 'undefined' && window.isSecureContext && typeof navigator.mediaDevices?.getUserMedia === 'function';
 
 const imageFile = (files: FileList | null | undefined) => Array.from(files ?? []).find((f) => f.type.startsWith('image/'));
 
@@ -139,8 +148,11 @@ export function useImageDrop(onImage: (source: ImageSource) => void, onError?: (
   return over;
 }
 
+export type LiveSource = 'screen' | 'camera';
+export type CameraFacing = 'environment' | 'user';
+
 export interface LiveCapture {
-  stream: MediaStream;
+  kind: LiveSource;
   /**
    * The one video element that both feeds processing and is shown behind the
    * crop box. Reusing it matters: a shared window only sends a new frame when
@@ -148,35 +160,103 @@ export interface LiveCapture {
    * black until then.
    */
   video: HTMLVideoElement;
-  /** Stops sharing. Safe to call more than once. */
+  /** Stops sharing (or the camera). Safe to call more than once. */
   stop: () => void;
+  /** Camera only: the device has more than one camera (front and back), so flip() can switch. */
+  canFlip: boolean;
+  /** Camera only: which camera is in use. */
+  facing?: CameraFacing;
+  /** Camera only: switches between the back and front camera, keeping the same video element. */
+  flip: () => Promise<void>;
+  /**
+   * Camera only: the current picture as a still photo (an object URL to load like any picked image), taken from
+   * the camera's full picture, shrunk to the photo working size and denoised like live frames.
+   */
+  snapshot: () => Promise<string>;
 }
 
-/** Longest side of frames taken from a shared screen. Higher than photos: screens have thin lines and small text. */
-const LIVE_WORKING_SIZE = 800;
+/** The size picked photos are analysed at (loadImage.web.ts): a capture is taken at that size, so nothing is lost. */
+const SNAPSHOT_SIZE = 800;
+
+/**
+ * Longest side of frames. A shared screen: 800, for thin lines and small text. A camera: 640, because a phone
+ * runs the whole conversion on every frame, and a camera picture has less fine detail anyway.
+ */
+const WORKING_SIZE: Record<LiveSource, number> = { screen: 800, camera: 640 };
+/** Shortest time between processed frames. A camera changes on every frame (noise), so it is paced a bit slower. */
+const MIN_INTERVAL: Record<LiveSource, number> = { screen: 200, camera: 250 };
 
 type FrameCallbackVideo = HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
 
+/** A readable message for a camera that couldn't start (or null when the user just said no to a picker). */
+function cameraError(e: unknown): Error {
+  const name = e instanceof DOMException ? e.name : '';
+  if (name === 'NotAllowedError' || name === 'SecurityError')
+    return new Error('Camera access is blocked. Allow the camera for this site (the icon next to the address), then try again.');
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return new Error('No camera was found on this device.');
+  if (name === 'NotReadableError' || name === 'AbortError')
+    return new Error('The camera is busy. Close other apps or tabs using it, then try again.');
+  return e instanceof Error ? e : new Error(String(e));
+}
+
+async function openCamera(facing: CameraFacing): Promise<MediaStream> {
+  // 1280 x 720 is plenty (frames are shrunk to 640 anyway) and every phone camera offers it.
+  const video: MediaTrackConstraints = { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } };
+  try {
+    return await navigator.mediaDevices.getUserMedia({ video, audio: false });
+  } catch (e) {
+    // Some laptops reject the size or facing hints: any camera will do.
+    if (e instanceof DOMException && e.name === 'OverconstrainedError')
+      return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    throw e;
+  }
+}
+
+/** Keeps the camera focusing by itself where the browser allows it (Chrome on Android). */
+async function tuneCamera(stream: MediaStream) {
+  const track = stream.getVideoTracks()[0];
+  const caps = (track?.getCapabilities?.() ?? {}) as { focusMode?: string[] };
+  if (caps.focusMode?.includes('continuous'))
+    await track.applyConstraints({ advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet] }).catch(() => {});
+}
+
 /**
- * Asks the browser to share a screen, window or tab and keeps sharing.
- * Each new frame is processed as soon as it arrives (at most every
+ * Starts a live source and keeps it running: `screen` asks the browser to
+ * share a screen, window or tab; `camera` opens the camera (the back one on
+ * phones). Each new frame is processed as soon as it arrives (at most every
  * `minIntervalMs`, with the latest frame always processed last), and only
- * when the picture changed. `onEnd` runs when sharing stops from the
- * browser's own controls. Returns null if the user cancels the picker.
+ * when the picture changed. Camera frames are denoised first (see
+ * cameraFrame.ts). `onEnd` runs when the source stops from the browser's own
+ * controls. Returns null if the user cancels the screen picker.
  */
 export async function startLiveCapture(o: {
+  source?: LiveSource;
   onFrame: (frame: RasterImage) => void;
   onEnd: () => void;
   minIntervalMs?: number;
 }): Promise<LiveCapture | null> {
+  const kind = o.source ?? 'screen';
+  let facing: CameraFacing = 'environment';
   let stream: MediaStream;
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
+    stream =
+      kind === 'camera'
+        ? await openCamera(facing)
+        : await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
   } catch (e) {
+    if (kind === 'camera') throw cameraError(e);
     if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return null;
     throw e;
   }
-  const minInterval = o.minIntervalMs ?? 200;
+  if (kind === 'camera') {
+    await tuneCamera(stream);
+    facing = (stream.getVideoTracks()[0]?.getSettings().facingMode as CameraFacing | undefined) ?? facing;
+  }
+  // Labels and device lists are only complete once the camera is allowed.
+  const cameras =
+    kind === 'camera' ? (await navigator.mediaDevices.enumerateDevices().catch(() => [])).filter((d) => d.kind === 'videoinput').length : 0;
+  const minInterval = o.minIntervalMs ?? MIN_INTERVAL[kind];
+  const workingSize = WORKING_SIZE[kind];
   const video: FrameCallbackVideo = document.createElement('video');
   video.srcObject = stream;
   video.muted = true;
@@ -200,11 +280,18 @@ export async function startLiveCapture(o: {
   let trailing: ReturnType<typeof setTimeout> | undefined;
   let poll: ReturnType<typeof setInterval> | undefined;
 
+  // Phones pause the video when the browser goes to the background; start it again on return.
+  const resume = () => {
+    if (!stopped && document.visibilityState === 'visible') video.play().catch(() => {});
+  };
+  document.addEventListener('visibilitychange', resume);
+
   const stop = () => {
     if (stopped) return;
     stopped = true;
     clearTimeout(trailing);
     clearInterval(poll);
+    document.removeEventListener('visibilitychange', resume);
     stream.getTracks().forEach((t) => t.stop());
     video.srcObject = null;
   };
@@ -215,7 +302,7 @@ export async function startLiveCapture(o: {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     if (!ctx || !vw || !vh) return;
-    const scale = Math.min(1, LIVE_WORKING_SIZE / Math.max(vw, vh));
+    const scale = Math.min(1, workingSize / Math.max(vw, vh));
     const width = Math.max(1, Math.round(vw * scale));
     const height = Math.max(1, Math.round(vh * scale));
     if (canvas.width !== width || canvas.height !== height) {
@@ -229,6 +316,7 @@ export async function startLiveCapture(o: {
     for (let i = 0; i < data.length; i += 61) signature = (signature * 33 + data[i]) | 0;
     if (signature !== lastSignature) {
       lastSignature = signature;
+      if (kind === 'camera') denoiseFrame(data, width, height);
       o.onFrame({ width, height, data, channels: 4 });
     }
   };
@@ -242,10 +330,62 @@ export async function startLiveCapture(o: {
     else trailing = setTimeout(process, wait);
   };
 
-  stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+  /** The browser's own controls (or the system) ended the track. */
+  const ended = () => {
     stop();
     o.onEnd();
-  });
+  };
+  stream.getVideoTracks()[0]?.addEventListener('ended', ended);
+
+  const capture: LiveCapture = {
+    kind,
+    video,
+    stop,
+    canFlip: cameras > 1,
+    facing: kind === 'camera' ? facing : undefined,
+    flip: async () => {
+      if (kind !== 'camera' || stopped) return;
+      const want: CameraFacing = facing === 'environment' ? 'user' : 'environment';
+      // Phones can't open both cameras at once: release this one first.
+      stream.getVideoTracks()[0]?.removeEventListener('ended', ended);
+      stream.getTracks().forEach((t) => t.stop());
+      try {
+        stream = await openCamera(want);
+      } catch (e) {
+        stream = await openCamera(facing).catch(() => {
+          throw cameraError(e);
+        });
+      }
+      await tuneCamera(stream);
+      facing = (stream.getVideoTracks()[0]?.getSettings().facingMode as CameraFacing | undefined) ?? want;
+      capture.facing = facing;
+      stream.getVideoTracks()[0]?.addEventListener('ended', ended);
+      video.srcObject = stream;
+      lastSignature = -1;
+      await video.play().catch(() => {});
+    },
+    snapshot: async () => {
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      if (stopped || !vw || !vh) throw new Error('The camera has no picture yet.');
+      const scale = Math.min(1, SNAPSHOT_SIZE / Math.max(vw, vh));
+      const shot = document.createElement('canvas');
+      shot.width = Math.max(1, Math.round(vw * scale));
+      shot.height = Math.max(1, Math.round(vh * scale));
+      const sctx = shot.getContext('2d', { willReadFrequently: true });
+      if (!sctx) throw new Error('Canvas is not available in this browser.');
+      sctx.imageSmoothingQuality = 'high';
+      sctx.drawImage(video, 0, 0, shot.width, shot.height);
+      // Denoised like the live frames, so a photographed graph is still found as a graph.
+      const img = sctx.getImageData(0, 0, shot.width, shot.height);
+      denoiseFrame(img.data, shot.width, shot.height);
+      sctx.putImageData(img, 0, 0);
+      // PNG: lossless, so the cleaned pixels arrive exactly as they are.
+      const blob = await new Promise<Blob | null>((resolve) => shot.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('Could not capture the picture.');
+      return URL.createObjectURL(blob);
+    },
+  };
 
   if (video.requestVideoFrameCallback) {
     // Chrome, Edge, Safari, recent Firefox: called exactly when a new frame is shown.
@@ -267,5 +407,5 @@ export async function startLiveCapture(o: {
     stop();
     throw e;
   }
-  return { stream, video, stop };
+  return capture;
 }

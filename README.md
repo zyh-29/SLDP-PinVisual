@@ -24,6 +24,7 @@ boards. It runs fully offline, with no accounts and no cloud.
 | Save / load / delete patterns on the phone | ✅ Store logic unit-tested; UI rendered in the simulator |
 | Export / import saved patterns (backup file) | ✅ Unit-tested; download and file import checked in Chrome. ⚠️ Phone share sheet and paste import not yet tried on a device |
 | Tap to focus (shapes, cards, one of several graphs, one curve, one cut-out subject) | ✅ Unit-tested and checked in Chrome |
+| **Live camera** on the website (phones and laptops) | ✅ Unit-tested, and checked in Chrome with a simulated phone camera (graphs on paper, a shape on a table, hand shake, denied permission). ⚠️ Not yet tried on a real phone |
 | Graph Range (±2 / ±5 / ±10 units around the curve's key point) | ✅ Web, checked on 27 real Desmos screenshots. ⚠️ Needs `tesseract.js` installed to read axis numbers; phones count one grid square as one unit |
 | **Real Bluetooth** (scan, connect, write, notify) | ⚠️ Implemented, **never run**: needs a development build, a physical phone, and firmware |
 | **Web app** layout (laptop 1280/1440, tablet 820, phone 390) | ✅ Checked in headless Chrome: no horizontal overflow, no console errors |
@@ -139,6 +140,23 @@ browser.
   chooser, and the app connects to the board you pick. Safari, Firefox and
   every iOS browser have no Web Bluetooth, so the Device tab says so. Web Bluetooth doesn't report the MTU, so the app uses safe
   20-byte writes.
+- **Live Camera** (web, `src/imaging/imageInput.web.ts`): point a phone (or a
+  laptop's webcam) at a worksheet, a screen or an object and the pins follow
+  it live. It runs everything screen sharing does (smart crop, curves and
+  plots, tap to focus, Graph Range, shapes, the pin lock), plus three things
+  a camera needs (`src/imaging/cameraFrame.ts`): each frame is lightly
+  blurred, because sensor noise would otherwise make every frame count as a
+  photo and switch graph detection off; each pin is averaged over the last
+  frames and only flips once it clearly changed, so noise and a shaking hand
+  don't make pins flicker; and frames are 640 px and at most 4 a second, so
+  a phone keeps up. Phones open the back camera; **Flip Camera** appears
+  when there is a front one too. **Capture** takes a photo (the camera's full
+  picture, cleaned like the live frames) and carries on with it as a still
+  picture, keeping whatever you tapped or cropped; Smart Cut-Out can then help
+  with busy backgrounds. **Stop Camera**, or leaving the Image tab, turns the
+  camera off and keeps the last live frame. Browsers only
+  allow the camera on `https://` (Vercel is) or `localhost`. If the app is
+  embedded in another page with an `<iframe>`, add `allow="camera"` to it.
 - **Images on web** are read with a canvas (`src/imaging/loadImage.web.ts`).
   The conversion code is the same as in the mobile app.
 - **More ways to add an image on web** (`src/imaging/imageInput.web.ts`):

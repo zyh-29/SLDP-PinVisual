@@ -284,7 +284,17 @@ describe('thin lines', () => {
     let rows = 0;
     for (let y = 0; y < 40; y++) rows += thick[y * 40 + 10];
     expect(rows).toBe(11); // 1 + 2 * round(20 / 4 - 1 / 2)
-    expect(thickenThinLines(m, 40, 40, 8, { w: 20, h: 20 })).toBe(m);
+    // Half a pin or more (a filled shape, a bold stroke): left alone.
+    expect(thickenThinLines(m, 40, 40, 10, { w: 20, h: 20 })).toBe(m);
+  });
+
+  it('also grows a medium stroke (a blurred camera line, 0.35 of a pin) to half a pin, so it raises the pins it crosses', () => {
+    const m = new Uint8Array(40 * 40);
+    for (let y = 17; y < 24; y++) for (let x = 0; x < 40; x++) m[y * 40 + x] = 1; // 7 px line
+    const thick = thickenThinLines(m, 40, 40, 7, { w: 20, h: 20 });
+    let rows = 0;
+    for (let y = 0; y < 40; y++) rows += thick[y * 40 + 10];
+    expect(rows).toBe(11); // 7 + 2 * round(20 / 4 - 7 / 2) = 7 + 2 * 2
   });
 
   it('still thickens a thin line when pins are long and flat (a stretched, zoomed-in graph)', () => {

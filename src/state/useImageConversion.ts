@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { GRID } from '@/config/hardware';
 import type { Pattern } from '@/domain/pattern';
 import { readAxisNumbers } from '@/imaging/axisNumbers';
+import { type SteadyPins, steadyPins } from '@/imaging/cameraFrame';
 import type { RasterImage } from '@/imaging/convert';
 import { DEFAULT_MIN_PIECE_RATIO, estimateBackground, findForeground } from '@/imaging/foreground';
 import { fullRect, type Point, type Rect } from '@/imaging/geometry';
@@ -186,10 +187,24 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     () => (ink ? sampleCrop(ink, w, h, sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch) : null),
     [ink, w, h, sampleBox, stretch],
   );
-  const result = useMemo<Pattern | null>(() => {
+  const frameResult = useMemo<Pattern | null>(() => {
     if (shape && snap && shapesApply) return renderShape(shape, GRID.rows, GRID.cols, GRID.pinPitchRatio, 'filled', pinFill);
     return samples ? patternFromSamples(samples, GRID.rows, GRID.cols, pinFill, false) : null;
   }, [shape, snap, shapesApply, pinFill, samples]);
+
+  // Live camera: noise and a moving hand change a few pins on every frame, so each pin is averaged over the last
+  // frames and only flips once it has clearly changed (cameraFrame.ts). Folded in once per new frame result
+  // (React's "adjust state while rendering" pattern, so the pins never lag a render behind).
+  const steadyOn = live?.kind === 'camera';
+  const [steady, setSteady] = useState<{ from: Pattern | null; state: SteadyPins | null }>({ from: null, state: null });
+  let result = frameResult;
+  if (steadyOn && frameResult) {
+    if (steady.from !== frameResult) {
+      const state = steadyPins(steady.state, frameResult);
+      setSteady({ from: frameResult, state });
+      result = state.pattern;
+    } else if (steady.state) result = steady.state.pattern;
+  } else if (!steadyOn && steady.state) setSteady({ from: null, state: null });
 
   const cleanedUri = useMemo(
     () => (picked && fg ? rgbToPngDataUri(renderCrop(picked.rgb, w, h, removeBackground ? pinMask : null, sampleBox)) : null),

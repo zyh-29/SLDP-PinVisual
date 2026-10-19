@@ -601,7 +601,9 @@ function analyseCurve(mask: Float32Array, width: number, height: number, axes: G
   // A steep curve leaving the plot fills several pixels of its last column, so its traced height there sits a few
   // pixels inside the edge: "at the edge" allows for that.
   const edge = Math.max(6, Math.min(plot.width, plot.height) * 0.025);
-  const clipped = (i: number) => ys[i] <= plot.y + edge || ys[i] >= plot.y + plot.height - edge;
+  // The left and right edges cut the stroke too (its last columns flatten), so those count as well.
+  const clipped = (i: number) =>
+    ys[i] <= plot.y + edge || ys[i] >= plot.y + plot.height - edge || x0 + i <= plot.x + edge || x0 + i >= plot.x + plot.width - edge;
   let lo = 0;
   while (lo < n - 1 && clipped(lo)) lo++;
   let hi = n - 1;
@@ -616,7 +618,13 @@ function analyseCurve(mask: Float32Array, width: number, height: number, axes: G
   // Bends: where the direction (angle) stops turning one way and starts the other.
   const r = Math.max(2, Math.round(n * 0.02));
   const angle = ys.map((_, i) => Math.atan2(ys[Math.min(n - 1, i + r)] - ys[Math.max(0, i - r)], Math.min(n - 1, i + r) - Math.max(0, i - r)));
-  const bends = within(extremes(angle.slice(lo, hi + 1), 0.25)).filter((b) => inside(b.i) && b.i > lo + r && b.i < hi - r);
+  // Only angles measured wholly between the clipped ends: one whose ±r window reaches past them would mix in
+  // the flattened edge and fake a bend on a straight line.
+  const a0 = Math.min(lo + r, hi);
+  const a1 = Math.max(a0, hi - r);
+  const bends = extremes(angle.slice(a0, a1 + 1), 0.25)
+    .map((b) => ({ ...b, i: b.i + a0 }))
+    .filter((b) => inside(b.i));
 
   if (turns.length === 1) {
     const t = turns[0];

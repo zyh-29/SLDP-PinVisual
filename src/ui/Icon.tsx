@@ -36,6 +36,8 @@ const ICONS = {
   stop: { ios: 'stop.circle', android: 'stop_circle', web: 'stop_circle' },
   screen: { ios: 'rectangle.dashed', android: 'screenshot_monitor', web: 'screenshot_monitor' },
   fullscreen: { ios: 'arrow.up.left.and.arrow.down.right', android: 'fullscreen', web: 'fullscreen' },
+  camera: { ios: 'camera', android: 'photo_camera', web: 'photo_camera' },
+  flip: { ios: 'arrow.triangle.2.circlepath.camera', android: 'flip_camera_android', web: 'flip_camera_android' },
   export: { ios: 'square.and.arrow.up', android: 'ios_share', web: 'ios_share' },
   import: { ios: 'tray.and.arrow.down', android: 'file_open', web: 'file_open' },
 } as const satisfies Record<string, SymbolName>;

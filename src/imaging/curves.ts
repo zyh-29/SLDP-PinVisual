@@ -4,7 +4,7 @@
  * unit tested.
  */
 import { AUTO_MIN } from './foreground';
-import { fullRect, type Point, type Rect, union } from './geometry';
+import { expand, fullRect, overlaps, type Point, type Rect, union } from './geometry';
 import { dilate, labelComponents } from './masks';
 
 /** Hue in degrees, 0..360. */
@@ -76,7 +76,16 @@ export function findCurves(rgb: ArrayLike<number>, width: number, height: number
     }
   if (!any) return null;
 
-  const results: { score: number; box: Rect; labels: Int32Array; bin: Uint8Array; accepted: Set<number> }[] = [];
+  const results: {
+    hueBin: number;
+    score: number;
+    box: Rect;
+    labels: Int32Array;
+    bin: Uint8Array;
+    accepted: Set<number>;
+    /** Each accepted piece's box, by label. */
+    boxes: Map<number, Rect>;
+  }[] = [];
   for (let binIndex = 0; binIndex < HUE_BINS; binIndex++) {
     // A colour with fewer pixels than one minimum-length curve can't hold a curve: skip the expensive part.
     if (counts[binIndex] < minLength) continue;
@@ -128,6 +137,7 @@ export function findCurves(rgb: ArrayLike<number>, width: number, height: number
     let score = 0;
     let box: Rect | null = null;
     const accepted = new Set<number>();
+    const boxes = new Map<number, Rect>();
     real.forEach((k, i) => {
       if (!k.area) return;
       const kb = { x: k.x0, y: k.y0, width: k.x1 - k.x0 + 1, height: k.y1 - k.y0 + 1 };
@@ -144,13 +154,15 @@ export function findCurves(rgb: ArrayLike<number>, width: number, height: number
       score += length;
       box = box ? union(box, kb) : kb;
       accepted.add(i + 1);
+      boxes.set(i + 1, kb);
     });
-    if (box && score >= shortSide * 0.25) results.push({ score, box, labels, bin, accepted });
+    if (box && score >= shortSide * 0.25) results.push({ hueBin: binIndex, score, box, labels, bin, accepted, boxes });
   }
   if (!results.length) return null;
   const top = Math.max(...results.map((r) => r.score));
   // Several curves of different colours (y = x² in red, y = 2x in blue) all count if they are comparable.
-  let chosen = results.filter((r) => r.score >= top * 0.35);
+  /** What goes into the mask: per colour, the pieces to keep. */
+  let chosen = results.filter((r) => r.score >= top * 0.35).map((r) => ({ r, keep: r.accepted }));
   if (focus) {
     // The curve under the finger, if any: its accepted pixels nearest the tap, within a finger's width.
     const reach = Math.max(6, shortSide * 0.03);
@@ -171,12 +183,28 @@ export function findCurves(rgb: ArrayLike<number>, width: number, height: number
             tapped = r;
           }
         }
-    if (tapped) chosen = [tapped];
+    if (tapped) {
+      // The tapped colour, plus the pieces of the neighbouring hues that lie on it: a blurred (camera) or
+      // anti-aliased curve straddles two hue bins, and keeping one would keep half the curve, varying by frame.
+      const t = tapped;
+      const near = expand(t.box, 0.02, width, height);
+      chosen = [{ r: t, keep: t.accepted }];
+      for (const r of results) {
+        const d = Math.abs(r.hueBin - t.hueBin);
+        if (r === t || Math.min(d, HUE_BINS - d) !== 1) continue;
+        const keep = new Set([...r.boxes].filter(([, b]) => overlaps(b, near)).map(([l]) => l));
+        if (keep.size) chosen.push({ r, keep });
+      }
+    }
   }
   // Only the accepted curves' own pixels: never an icon or button that happens to share the colour.
   const mask = new Float32Array(width * height);
-  for (const r of chosen) for (let p = 0; p < r.bin.length; p++) if (r.bin[p] && r.accepted.has(r.labels[p])) mask[p] = 1;
-  return { box: chosen.reduce((u, r) => union(u, r.box), chosen[0].box), mask };
+  let box: Rect | null = null;
+  for (const { r, keep } of chosen) {
+    for (let p = 0; p < r.bin.length; p++) if (r.bin[p] && keep.has(r.labels[p])) mask[p] = 1;
+    for (const l of keep) box = box ? union(box, r.boxes.get(l)!) : r.boxes.get(l)!;
+  }
+  return { box: box!, mask };
 }
 
 /**

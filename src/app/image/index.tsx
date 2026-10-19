@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Platform, StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
@@ -12,7 +12,9 @@ import { fullRect, type Point, type Rect } from '@/imaging/geometry';
 import {
   type ImageSource,
   type LiveCapture,
+  type LiveSource,
   startLiveCapture,
+  supportsCamera,
   supportsFileDrop,
   supportsScreenCapture,
   useImageDrop,
@@ -33,6 +35,15 @@ import { LiveVideo } from '@/ui/LiveVideo';
 import { SavePatternSheet } from '@/ui/SavePatternSheet';
 import { SliderRow, SwitchRow } from '@/ui/SettingRows';
 import { radius, space, useTheme } from '@/ui/theme';
+
+const CAMERA_HINT = 'Turns on the camera. The pins follow what it sees; tap the picture to focus on one thing.';
+const SCREEN_HINT = 'Share a screen or window. The pins follow it live; crop the part you want.';
+
+/** A live frame kept as a still picture: it gets an image of its own for the crop view. */
+const asStill = (p: PickedImage | null): PickedImage | null =>
+  p && !p.uri
+    ? { ...p, uri: rgbToPngDataUri(renderCrop(p.rgb, p.raster.width, p.raster.height, null, fullRect(p.raster.width, p.raster.height))) }
+    : p;
 
 export default function ImageScreen() {
   const t = useTheme();
@@ -118,7 +129,11 @@ export default function ImageScreen() {
   };
 
   /** Photos, drops and pastes end up here. */
-  const load = async (source: ImageSource) => {
+  const load = async (
+    source: ImageSource,
+    /** A capture from the live camera: keeps what the user tapped or cropped (given at `fromWidth`), rescaled. */
+    keep?: { focus: Point | null; crop: Rect | null; fromWidth: number },
+  ) => {
     setError(null);
     setLoading(true);
     try {
@@ -127,7 +142,14 @@ export default function ImageScreen() {
       setLive(null);
       setPicked({ uri: source.uri, fileUri: raster.fileUri, raster, rgb: toRgb(raster), gray: toGrayscale(raster) });
       resetForNewImage();
-      AccessibilityInfo.announceForAccessibility('Image converted to pin preview, cropped to the main subject');
+      if (keep && keep.fromWidth > 0) {
+        const k = raster.width / keep.fromWidth;
+        if (keep.focus) setFocus({ x: keep.focus.x * k, y: keep.focus.y * k });
+        if (keep.crop) setManualCrop({ x: keep.crop.x * k, y: keep.crop.y * k, width: keep.crop.width * k, height: keep.crop.height * k });
+      }
+      AccessibilityInfo.announceForAccessibility(
+        keep ? 'Photo captured. The camera is off.' : 'Image converted to pin preview, cropped to the main subject',
+      );
     } catch (e) {
       setError(`Could not read that image: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -146,20 +168,15 @@ export default function ImageScreen() {
   /** Keeps the last shared frame as a still image. */
   const freeze = () => {
     setLive(null);
-    setPicked((p) =>
-      p && !p.uri
-        ? {
-            ...p,
-            uri: rgbToPngDataUri(renderCrop(p.rgb, p.raster.width, p.raster.height, null, fullRect(p.raster.width, p.raster.height))),
-          }
-        : p,
-    );
+    setPicked(asStill);
   };
 
-  const startSharing = async () => {
+  /** Starts screen sharing or the live camera; both feed the same pipeline, frame by frame. */
+  const startLive = async (source: LiveSource) => {
     setError(null);
     try {
       const session = await startLiveCapture({
+        source,
         onFrame: (raster) => {
           setPicked({ uri: '', raster, rgb: toRgb(raster), gray: toGrayscale(raster) });
           // Keep the user's crop while sharing, unless the shared window shrank under it.
@@ -171,16 +188,67 @@ export default function ImageScreen() {
       live?.stop();
       resetForNewImage();
       setLive(session);
-      AccessibilityInfo.announceForAccessibility('Sharing screen. The pin preview updates live.');
+      AccessibilityInfo.announceForAccessibility(
+        source === 'camera'
+          ? 'Camera on. The pin preview follows what the camera sees. Tap the picture to focus on one thing.'
+          : 'Sharing screen. The pin preview updates live.',
+      );
     } catch (e) {
-      setError(`Screen sharing failed: ${e instanceof Error ? e.message : String(e)}`);
+      setError(`${source === 'camera' ? 'Camera' : 'Screen sharing'} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
-  const stopSharing = () => {
+  /** Stops the screen share or camera and keeps the last frame as a still picture. */
+  const stopLive = () => {
     live?.stop();
     freeze();
   };
+
+  /**
+   * Takes a photo from the live camera and continues with it as a still picture (like a chosen photo, so Smart
+   * Cut-Out can help with busy backgrounds). What was tapped or cropped carries over.
+   */
+  const capturePhoto = async () => {
+    if (live?.kind !== 'camera') return;
+    try {
+      const uri = await live.snapshot();
+      await load({ uri }, { focus, crop: manualCrop, fromWidth: w });
+    } catch (e) {
+      setError(`Capture failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  /** Back camera <-> front camera. A different view: the crop, tap and graph scale start over. */
+  const flipCamera = async () => {
+    if (!live) return;
+    try {
+      await live.flip();
+      resetForNewImage();
+      AccessibilityInfo.announceForAccessibility(live.facing === 'user' ? 'Front camera' : 'Back camera');
+    } catch (e) {
+      setError(`Camera failed: ${e instanceof Error ? e.message : String(e)}`);
+      stopLive();
+    }
+  };
+
+  // Leaving the Image tab turns the camera off (it would keep running, and filming, out of sight). The last frame
+  // stays as a still picture. A screen share keeps going: the pins can follow it from the Display tab.
+  const liveRef = useRef(live);
+  useEffect(() => {
+    liveRef.current = live;
+  });
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        const l = liveRef.current;
+        if (l?.kind !== 'camera') return;
+        l.stop();
+        setLive(null);
+        setPicked(asStill);
+      },
+      [],
+    ),
+  );
 
   /** Back to the empty Image tab: stops any screen share and forgets the image, crop and per-image settings. */
   const clearImage = () => {
@@ -220,14 +288,24 @@ export default function ImageScreen() {
               </Label>
             </View>
             <Button title="Choose Photo" icon="photo" onPress={pick} loading={loading} />
+            {supportsCamera ? (
+              <Button
+                title="Live Camera"
+                icon="camera"
+                variant="secondary"
+                onPress={() => startLive('camera')}
+                disabled={loading}
+                accessibilityHint={CAMERA_HINT}
+              />
+            ) : null}
             {supportsScreenCapture ? (
               <Button
                 title="Share Screen"
                 icon="screen"
                 variant="secondary"
-                onPress={startSharing}
+                onPress={() => startLive('screen')}
                 disabled={loading}
-                accessibilityHint="Share a screen or window. The pins follow it live; crop the part you want."
+                accessibilityHint={SCREEN_HINT}
               />
             ) : null}
             {supportsFileDrop ? (
@@ -274,15 +352,15 @@ export default function ImageScreen() {
                       accessibilityHint="Crops to the main subject again"
                     />
                     {live ? (
-                      // While sharing, Stop Sharing (below) already ends the share; this slot frames the whole screen.
+                      // While live, Stop (below) already ends it; this slot frames the whole picture.
                       <Button
-                        title="Whole Screen"
+                        title={live.kind === 'camera' ? 'Whole View' : 'Whole Screen'}
                         icon="fullscreen"
                         variant="secondary"
                         compact
                         style={{ flex: 1 }}
                         onPress={() => setManualCrop(fullRect(w, h))}
-                        accessibilityHint="Uses the whole shared screen instead of the automatic crop"
+                        accessibilityHint={`Uses the whole ${live.kind === 'camera' ? 'camera view' : 'shared screen'} instead of the automatic crop`}
                       />
                     ) : (
                       <Button
@@ -296,31 +374,84 @@ export default function ImageScreen() {
                       />
                     )}
                   </View>
-                  <View style={styles.buttonRow}>
-                    <Button
-                      title={supportsScreenCapture ? 'New Photo' : 'Choose Another Photo'}
-                      variant="secondary"
-                      icon="photo"
-                      compact
-                      style={{ flex: 1 }}
-                      onPress={pick}
-                      loading={loading}
-                    />
-                    {live ? (
-                      <Button title="Stop Sharing" variant="destructive" icon="stop" compact style={{ flex: 1 }} onPress={stopSharing} />
-                    ) : supportsScreenCapture ? (
+                  {live?.kind === 'camera' ? (
+                    <>
+                      <View style={styles.buttonRow}>
+                        <Button
+                          title="Capture"
+                          icon="camera"
+                          compact
+                          style={{ flex: 1 }}
+                          onPress={capturePhoto}
+                          loading={loading}
+                          accessibilityLabel="Capture photo"
+                          accessibilityHint="Takes a photo of what the camera sees and turns the camera off"
+                        />
+                        <Button
+                          title="Stop Camera"
+                          variant="destructive"
+                          icon="stop"
+                          compact
+                          style={{ flex: 1 }}
+                          onPress={stopLive}
+                          accessibilityHint="Turns the camera off and keeps the last picture"
+                        />
+                      </View>
+                      {live.canFlip ? (
+                        <Button
+                          title="Flip Camera"
+                          variant="secondary"
+                          icon="flip"
+                          compact
+                          onPress={flipCamera}
+                          accessibilityHint={`Switches to the ${live.facing === 'user' ? 'back' : 'front'} camera`}
+                        />
+                      ) : null}
+                    </>
+                  ) : (
+                    <View style={styles.buttonRow}>
                       <Button
-                        title="Share Screen"
+                        title={supportsScreenCapture || supportsCamera ? 'New Photo' : 'Choose Another Photo'}
                         variant="secondary"
-                        icon="screen"
+                        icon="photo"
                         compact
                         style={{ flex: 1 }}
-                        onPress={startSharing}
-                        disabled={loading}
-                        accessibilityHint="Share a screen or window. The pins follow it live; crop the part you want."
+                        onPress={pick}
+                        loading={loading}
                       />
-                    ) : null}
-                  </View>
+                      {live ? (
+                        <Button title="Stop Sharing" variant="destructive" icon="stop" compact style={{ flex: 1 }} onPress={stopLive} />
+                      ) : (
+                        <>
+                          {supportsCamera ? (
+                            <Button
+                              title="Camera"
+                              variant="secondary"
+                              icon="camera"
+                              compact
+                              style={{ flex: 1 }}
+                              onPress={() => startLive('camera')}
+                              disabled={loading}
+                              accessibilityLabel="Live camera"
+                              accessibilityHint={CAMERA_HINT}
+                            />
+                          ) : null}
+                          {supportsScreenCapture ? (
+                            <Button
+                              title="Share Screen"
+                              variant="secondary"
+                              icon="screen"
+                              compact
+                              style={{ flex: 1 }}
+                              onPress={() => startLive('screen')}
+                              disabled={loading}
+                              accessibilityHint={SCREEN_HINT}
+                            />
+                          ) : null}
+                        </>
+                      )}
+                    </View>
+                  )}
                 </Section>
 
                 <Section title="What the pins see">

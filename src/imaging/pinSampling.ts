@@ -117,7 +117,8 @@ export function thickenThinLines(
   cell: { w: number; h: number },
 ): Uint8Array {
   // Thin compared with the pin's longer side (stretched graphs have long, flat pins); each direction is grown separately.
-  if (stroke <= 0 || stroke >= 0.25 * Math.max(cell.w, cell.h)) return mask;
+  // Up to half a pin: a line a third of a pin wide covers too little of each pin to raise it (35% by default).
+  if (stroke <= 0 || stroke >= 0.5 * Math.max(cell.w, cell.h)) return mask;
   const rx = Math.max(0, 0.25 * cell.w - stroke / 2);
   const ry = Math.max(0, 0.25 * cell.h - stroke / 2);
   if (Math.round(rx) === 0 && Math.round(ry) === 0) return mask;
