@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AccessibilityInfo, Platform, StyleSheet, Switch, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
+import { cellsToString, countRaised, type Pattern, togglePin } from '@/domain/pattern';
 import { type RasterImage, toGrayscale } from '@/imaging/convert';
 import {
   DEFAULT_MIN_PIECE_RATIO,
@@ -82,6 +83,8 @@ export default function ImageScreen() {
   const [focus, setFocus] = useState<{ x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
+  /** The user's pin edits and lock state, tied to the picture they were made on (see the pin lock below). */
+  const [editState, setEditState] = useState<{ picked: Picked; auto: string; pattern: Pattern | null; unlocked: boolean } | null>(null);
   /** null = automatic: axes and gridlines are removed when the image looks like a graph. */
   const [linesOverride, setLinesOverride] = useState<boolean | null>(null);
   const [live, setLive] = useState<LiveCapture | null>(null);
@@ -186,6 +189,30 @@ export default function ImageScreen() {
     if (shape && snap && shapesApply) return renderShape(shape, GRID.rows, GRID.cols, GRID.pinPitchRatio, 'filled', pinFill);
     return samples ? patternFromSamples(samples, GRID.rows, GRID.cols, pinFill, false) : null;
   }, [shape, snap, shapesApply, pinFill, samples]);
+  // Pin lock. Locked (default): the pins follow the image. Unlocked: the user taps pins, and those edits win over
+  // every setting. Edits (and the unlock) belong to the picture they were made on: a new picture discards them and
+  // locks again. During a live share that means the screen changed enough to change the automatic pins.
+  const autoKey = result ? cellsToString(result) : '';
+  const edit = editState && (editState.picked === picked || (live && editState.auto === autoKey)) ? editState : null;
+  const pinsUnlocked = !!edit?.unlocked;
+  /** What the user gets: their edited pins, or the automatic result. */
+  const shown = edit?.pattern ?? result;
+  const toggleLock = () => {
+    if (!picked) return;
+    const unlocked = !pinsUnlocked;
+    setEditState({ picked, auto: autoKey, pattern: edit?.pattern ?? null, unlocked });
+    AccessibilityInfo.announceForAccessibility(unlocked ? 'Pins unlocked. Tap a pin to raise or lower it.' : 'Pins locked');
+  };
+  const togglePinAt = (row: number, col: number) => {
+    if (!picked || !shown || !pinsUnlocked) return;
+    setEditState({ picked, auto: autoKey, pattern: togglePin(shown, row, col), unlocked: true });
+  };
+  const resetPins = () => {
+    if (!picked || !edit) return;
+    setEditState({ ...edit, picked, auto: autoKey, pattern: null });
+    AccessibilityInfo.announceForAccessibility('Pins reset to the image');
+  };
+
   const cleanedUri = useMemo(
     () => (picked && fg ? rgbToPngDataUri(renderCrop(picked.rgb, w, h, removeBackground ? pinMask : null, sampleBox)) : null),
     [picked, fg, pinMask, w, h, removeBackground, sampleBox],
@@ -197,6 +224,7 @@ export default function ImageScreen() {
     setLinesOverride(null);
     setCutoutOverride(null);
     setToleranceOverride(null);
+    setEditState(null);
   };
 
   /** Photos, drops and pastes end up here. */
@@ -277,8 +305,8 @@ export default function ImageScreen() {
   const dropping = useImageDrop(load, setError);
 
   const use = () => {
-    if (!result) return;
-    setPattern(result, 'From image');
+    if (!shown) return;
+    setPattern(shown, 'From image');
     router.navigate('/');
   };
 
@@ -510,20 +538,63 @@ export default function ImageScreen() {
 
                 {result ? (
                   <Section title="Result">
-                    <PinGrid pattern={result} />
-                    <Button
-                      title="Use This Pattern"
-                      icon="edit"
-                      onPress={use}
-                      accessibilityHint="Replaces the preview on the Display tab, where you can edit and send it."
-                    />
-                    <Button
-                      title="Save Pattern"
-                      icon="save"
-                      variant="secondary"
-                      onPress={() => setSaveOpen(true)}
-                      accessibilityHint="Saves this pattern so you can load it later from the Saved tab."
-                    />
+                    <PinGrid pattern={shown ?? result} onToggle={pinsUnlocked ? togglePinAt : undefined} />
+                    {/* Under the grid, a toolbar laid out like the button row below it: the lock (and Reset after an edit)
+                        span the same width as Use This Pattern, and the live pin count sits in the Save column. */}
+                    <View style={styles.resultBar}>
+                      <View style={styles.resultTools}>
+                        <Button
+                          title={pinsUnlocked ? 'Unlocked' : 'Locked'}
+                          icon={pinsUnlocked ? 'unlock' : 'lock'}
+                          variant={pinsUnlocked ? 'secondary' : 'destructive'}
+                          compact
+                          style={styles.pill}
+                          onPress={toggleLock}
+                          accessibilityLabel={pinsUnlocked ? 'Pins unlocked' : 'Pins locked'}
+                          accessibilityHint={
+                            pinsUnlocked ? 'Locks the pins so taps do nothing' : 'Unlocks the pins so you can raise or lower each one'
+                          }
+                        />
+                        {edit?.pattern ? (
+                          <Button
+                            title="Reset"
+                            icon="undo"
+                            variant="secondary"
+                            compact
+                            style={styles.pill}
+                            onPress={resetPins}
+                            accessibilityLabel="Reset pins"
+                            accessibilityHint="Discards your pin changes and follows the image again"
+                          />
+                        ) : null}
+                      </View>
+                      <Label
+                        variant="headline"
+                        secondary
+                        numberOfLines={1}
+                        accessibilityLabel={`${shown ? countRaised(shown) : 0} of ${GRID.rows * GRID.cols} pins raised`}
+                        style={[styles.sideColumn, styles.pinCount]}>
+                        {shown ? countRaised(shown) : 0} of {GRID.rows * GRID.cols}
+                      </Label>
+                    </View>
+                    <View style={styles.buttonRow}>
+                      <Button
+                        title="Use This Pattern"
+                        icon="edit"
+                        style={{ flex: 1 }}
+                        onPress={use}
+                        accessibilityHint="Replaces the preview on the Display tab, where you can edit and send it."
+                      />
+                      <Button
+                        title="Save"
+                        icon="save"
+                        variant="secondary"
+                        style={styles.sideColumn}
+                        onPress={() => setSaveOpen(true)}
+                        accessibilityLabel="Save Pattern"
+                        accessibilityHint="Saves this pattern so you can load it later from the Saved tab."
+                      />
+                    </View>
                   </Section>
                 ) : null}
               </>
@@ -534,10 +605,10 @@ export default function ImageScreen() {
         {error ? <StatusBanner tone="error" title="Image not converted" message={error} /> : null}
       </Screen>
       {dropping ? <DropOverlay /> : null}
-      {result ? (
+      {shown ? (
         <SavePatternSheet
           visible={saveOpen}
-          pattern={result}
+          pattern={shown}
           onClose={() => setSaveOpen(false)}
           onSaved={(name) => {
             setSaveOpen(false);
@@ -666,6 +737,14 @@ const styles = StyleSheet.create({
     marginBottom: space.sm,
   },
   buttonRow: { flexDirection: 'row', gap: space.sm },
+  resultBar: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  /** Same width as Use This Pattern; the lock and Reset share it equally. */
+  resultTools: { flex: 1, flexDirection: 'row', gap: space.sm },
+  /** Same width as Save, so the two rows line up; the pin count is centred in it. */
+  sideColumn: { width: 100, flexShrink: 0 },
+  pinCount: { textAlign: 'center', fontVariant: ['tabular-nums'] },
+  /** Compact capsule buttons: each starts at its label's width, then they share the rest of the row. */
+  pill: { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', borderRadius: radius.pill, paddingHorizontal: space.sm },
   frame: {
     width: '100%',
     maxWidth: 480,
