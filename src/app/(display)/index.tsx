@@ -15,7 +15,7 @@ import { MIN_TOUCH, radius, space, useTheme } from '@/ui/theme';
 
 export default function DisplayScreen() {
   const { pattern, source, toggle, clear } = usePattern();
-  const { send, reset, connected, busy, isMock, state } = useBoardActions();
+  const { send, reset, connected, busy, state } = useBoardActions();
   const [saveOpen, setSaveOpen] = useState(false);
   const t = useTheme();
 
@@ -61,7 +61,7 @@ export default function DisplayScreen() {
         {!connected ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="No board connected. Open the Device tab to connect a board or the mock device."
+            accessibilityLabel="No board connected. Open the Device tab to connect a board."
             onPress={() => router.navigate('/device')}
             style={({ pressed }) => [styles.notice, { backgroundColor: pressed ? t.cardPressed : t.card }]}>
             <Icon name="disconnected" color={t.textSecondary} size={18} />
@@ -80,7 +80,7 @@ export default function DisplayScreen() {
         <CommandStatus command={state.command} connected={connected} onRetrySend={send} onRetryReset={reset} />
 
         <Button
-          title={isMock ? 'Send to Mock Device' : 'Send Pattern'}
+          title="Send Pattern"
           icon="send"
           onPress={send}
           disabled={!connected || busy}
