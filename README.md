@@ -22,6 +22,9 @@ boards. It runs fully offline, with no accounts and no cloud.
 | Smart Cut-Out (AI subject segmentation) | ✅ Web (U²-Net) checked in Chrome. ⚠️ iOS (Apple Vision) and Android (ML Kit) written, **need a new development build** to run |
 | Letter recognition | ⏳ Planned |
 | Save / load / delete patterns on the phone | ✅ Store logic unit-tested; UI rendered in the simulator |
+| Export / import saved patterns (backup file) | ✅ Unit-tested; download and file import checked in Chrome. ⚠️ Phone share sheet and paste import not yet tried on a device |
+| Tap to focus (shapes, cards, one of several graphs, one curve, one cut-out subject) | ✅ Unit-tested and checked in Chrome |
+| Graph Range (±2 / ±5 / ±10 units around the curve's key point) | ✅ Web, checked on 27 real Desmos screenshots. ⚠️ Needs `tesseract.js` installed to read axis numbers; phones count one grid square as one unit |
 | **Real Bluetooth** (scan, connect, write, notify) | ⚠️ Implemented, **never run**: needs a development build, a physical phone, and firmware |
 | **Web app** layout (laptop 1280/1440, tablet 820, phone 390) | ✅ Checked in headless Chrome: no horizontal overflow, no console errors |
 | **Web Bluetooth** (Chrome/Edge) | ⚠️ Implemented, **never run** against a board |
@@ -41,9 +44,14 @@ src/
     DeviceController   Connection state, the one-command-at-a-time lock, send/reset
     ble/BleDriver      react-native-ble-plx (iOS/Android); BleDriver.web.ts = Web Bluetooth
     __tests__/support  Simulated board for the automated tests only (MockFirmware); not in the app
-  imaging/             Pixel conversion (pure), PNG decoding, image loading (.web.ts = canvas)
-  storage/             Saved patterns (AsyncStorage, local only)
-  state/               React providers and hooks
+  imaging/             Pixel conversion (pure, unit tested), PNG decoding, image loading (.web.ts = canvas)
+    foreground         Background model, subject mask, axis/grid removal
+    smartCrop          What becomes pins (+ tap to focus); curves.ts finds graph curves, plotGrid.ts plot areas
+    graph              Graph Range: axes, scale, the curve's key point, the window; axisNumbers*.ts = OCR
+    pinSampling        Thin-line thickening, mask → pins, the preview
+    geometry / masks   Rectangles, connected pieces, growing masks
+  storage/             Saved patterns (AsyncStorage, local only), export/import files (patternFile*.ts)
+  state/               React providers and hooks (useImageConversion = the Image tab's pipeline)
   ui/                  Theme, components, AppTabs (native tabs) / AppTabs.web (sidebar), layout breakpoints
 ```
 
@@ -68,6 +76,9 @@ npm test            # Jest unit tests
 npm run typecheck   # tsc --noEmit
 npx expo lint
 ```
+
+GitHub runs the same checks, plus a web build, on every push and pull request
+(`.github/workflows/ci.yml`, Node 22).
 
 ### Run the app
 
@@ -104,7 +115,7 @@ npm run build:web   # static site in dist/ (single-page app)
    `npm run build:web`. In a folder of a site (`https://example.com/pinvisual/`):
    `WEB_BASE_URL=/pinvisual npm run build:web` (the folder name must match).
 2. Upload **everything inside `dist/`** (including the hidden `.nojekyll` file
-   and the `_expo`, `ort` and `models` folders) to that place on your host.
+   and the `_expo`, `ort`, `models` and, once installed, `tesseract` folders) to that place on your host.
 3. Open it over **https://**. Bluetooth and screen sharing need it (or `localhost`).
 
 No server code or rewrite rules are needed: the build also writes the page at
@@ -253,12 +264,30 @@ The simulator cannot test the following:
        not touching the edge and not looking like text. If the winner is a
        card (e.g. an image thumbnail), the search repeats inside it. Decided on
        a half-size copy for speed (under 10 ms per frame).
-     - **Tap a picture** in the crop area (e.g. one result in a grid of image
-       search results, during a screen share or in a photo): the smart crop
-       focuses on what contains that point (the shape on that card, that plot),
-       or the nearest thing if you tap empty space. It stays focused as live
-       frames update; Auto Crop returns to automatic. (Clicks made directly on
-       another window can't be seen by a web page, so tap in PinVisual.)
+     - **Tap** in the crop area to choose what becomes pins; a ring marks the
+       spot. It stays focused as live frames update; Auto Crop returns to
+       automatic. (Clicks made directly on another window can't be seen by a
+       web page, so tap in PinVisual.)
+       - On a shape: the piece whose own pixels are under your finger wins,
+         even when a bigger shape's box surrounds the spot (a dot inside an arc).
+       - On a card's background (one result in a grid of image search results):
+         the shape on that card. On empty space: the nearest thing.
+       - On a page with several graphs: only the plot you tapped.
+       - On a curve: only that curve (tap the blue line to drop the red
+         parabola). On empty graph paper every curve stays.
+       - With Smart Cut-Out on and several subjects found: the one you tapped.
+     - **Graph Range** (graphs only, `src/imaging/graph.ts`): instead of
+       squeezing the whole curve onto 40 pins, the pins show ±2, ±5 (default)
+       or ±10 units at the graph's true proportions, placed where the curve
+       says the most: a parabola's vertex (in the bottom or top row so both
+       arms show), a cubic's or wave's middle, a circle's centre, where a root
+       or log starts, where a line crosses the y-axis, or the origin between
+       the branches of 1/x. Units come from the numbers on the axes, read on
+       the device with Tesseract.js OCR (web, offline, served from
+       `public/tesseract/`); without readable numbers (or on phones, for now)
+       one major grid square counts as one unit, which on real Desmos
+       screenshots can be off. Zoomed too far in or out, the window is
+       resized and a note says so.
      - Drag the box or its corners to choose yourself. The same smart logic
        then runs inside your box (curves first, then the best object), so
        stray UI caught by the box is ignored and empty margins don't waste pins.
@@ -298,6 +327,12 @@ The simulator cannot test the following:
     is used.
 - **Saved patterns** keep rows × cols. Patterns from a different grid size are
   flagged and only load after you confirm a centred crop or pad.
+- **Backup** (Saved tab): **Export** writes every pattern to a small JSON file
+  (`pinvisual-patterns-YYYY-MM-DD.json`; a download on web, the share sheet on
+  phones). **Import** adds the patterns from such a file (file picker on web;
+  paste the text on phones). Nothing is ever overwritten: identical patterns
+  are skipped and a different one with a taken name becomes "Name (2)". Still
+  no accounts or cloud: the file goes wherever you put it.
 
 ## Dependency notes
 

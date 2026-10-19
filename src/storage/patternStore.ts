@@ -1,7 +1,8 @@
 /**
- * Saved patterns, stored on the phone only (AsyncStorage). No network.
+ * Saved patterns, stored on the phone (or in the browser) only (AsyncStorage). No network.
  * Each record keeps its own rows/cols so patterns made for a different grid
  * size are detected instead of being silently misread.
+ * Export / import: a JSON file the user keeps or moves to another device (see patternFile.ts).
  */
 import { cellsFromString, cellsToString, type Pattern } from '@/domain/pattern';
 
@@ -76,6 +77,64 @@ function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// ---------- Export and import (a file the user keeps, moves to another device, or shares) ----------
+
+export const EXPORT_FORMAT = 'pinvisual-patterns';
+export const EXPORT_VERSION = 1;
+
+/** The patterns as a small JSON file: what Export saves and Import reads. */
+export function exportPatterns(patterns: SavedPattern[], exportedAt = Date.now()): string {
+  return JSON.stringify({ format: EXPORT_FORMAT, version: EXPORT_VERSION, exportedAt, patterns }, null, 2);
+}
+
+/** A file name for an export, e.g. pinvisual-patterns-2026-10-19.json. */
+export function exportFileName(at = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${EXPORT_FORMAT}-${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}.json`;
+}
+
+/**
+ * Reads an exported file (or a bare list of patterns). Damaged records are skipped and counted. Throws with a
+ * readable message when the text isn't an export at all.
+ */
+export function parseExport(text: string): { patterns: SavedPattern[]; skipped: number } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new Error('This is not a PinVisual patterns file.');
+  }
+  let list: unknown = raw;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    if (o.format !== EXPORT_FORMAT) throw new Error('This is not a PinVisual patterns file.');
+    if (typeof o.version !== 'number' || o.version > EXPORT_VERSION)
+      throw new Error('This file was made by a newer version of PinVisual. Update the app to import it.');
+    list = o.patterns;
+  }
+  if (!Array.isArray(list)) throw new Error('This is not a PinVisual patterns file.');
+  const patterns = list.filter(isSavedPattern).map((p) => ({ ...p, name: normalizeName(p.name).slice(0, MAX_NAME_LENGTH) || 'Untitled' }));
+  return { patterns, skipped: list.length - patterns.length };
+}
+
+export interface ImportResult {
+  /** Patterns added (including renamed ones). */
+  added: number;
+  /** Added under a new name, because a different pattern already had theirs: "Arrow" became "Arrow (2)". */
+  renamed: number;
+  /** Already here (same name, size and pins): left alone. */
+  duplicates: number;
+}
+
+/** "Name (2)", "Name (3)"... the first that's free, kept within the name length limit. */
+function freeName(name: string, taken: Set<string>): string {
+  for (let k = 2; ; k++) {
+    const suffix = ` (${k})`;
+    const candidate = `${name.slice(0, MAX_NAME_LENGTH - suffix.length).trimEnd()}${suffix}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+}
+
 export class PatternStore {
   constructor(
     private readonly kv: KeyValueStore,
@@ -119,5 +178,33 @@ export class PatternStore {
   async remove(id: string): Promise<void> {
     const { patterns } = await this.list();
     await this.kv.setItem(STORAGE_KEY, JSON.stringify(patterns.filter((p) => p.id !== id)));
+  }
+
+  /**
+   * Adds imported patterns. Nothing here is ever overwritten: an identical pattern (same name, size and pins) is
+   * skipped, and a different one with a name already in use is added as "Name (2)".
+   */
+  async importPatterns(incoming: SavedPattern[]): Promise<ImportResult> {
+    const { patterns } = await this.list();
+    const byName = new Map(patterns.map((p) => [p.name.toLowerCase(), p]));
+    const ids = new Set(patterns.map((p) => p.id));
+    const added: SavedPattern[] = [];
+    let renamed = 0;
+    let duplicates = 0;
+    for (const p of incoming) {
+      const same = byName.get(p.name.toLowerCase());
+      if (same && same.rows === p.rows && same.cols === p.cols && same.cells === p.cells) {
+        duplicates++;
+        continue;
+      }
+      const name = same ? freeName(p.name, new Set(byName.keys())) : p.name;
+      if (same) renamed++;
+      const record: SavedPattern = { ...p, name, id: ids.has(p.id) ? newId() : p.id };
+      ids.add(record.id);
+      byName.set(name.toLowerCase(), record);
+      added.push(record);
+    }
+    if (added.length) await this.kv.setItem(STORAGE_KEY, JSON.stringify([...added, ...patterns]));
+    return { added: added.length, renamed, duplicates };
   }
 }

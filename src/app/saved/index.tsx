@@ -1,17 +1,23 @@
 import { router } from 'expo-router';
+import { useState } from 'react';
 import { AccessibilityInfo, ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
 import { countRaised, fitPatternToGrid, patternsEqual } from '@/domain/pattern';
 import { usePattern } from '@/state/PatternProvider';
 import { patternStore, useSavedPatterns } from '@/state/useSavedPatterns';
-import { isCompatible, type SavedPattern, toPattern } from '@/storage/patternStore';
+import { canPickFile, pickPatternFile, savePatternFile } from '@/storage/patternFile';
+import { exportFileName, exportPatterns, isCompatible, parseExport, type SavedPattern, toPattern } from '@/storage/patternStore';
 import { Button, Label, Screen, Section, Separator, StatusBanner } from '@/ui/components';
 import { confirmAsync } from '@/ui/dialogs';
 import { useResponsive } from '@/ui/layout';
 import { Icon } from '@/ui/Icon';
+import { ImportPasteSheet } from '@/ui/ImportPasteSheet';
 import { PinGrid } from '@/ui/PinGrid';
 import { radius, space, useTheme } from '@/ui/theme';
+
+/** "3 patterns", "1 pattern". */
+const count = (n: number) => `${n} pattern${n === 1 ? '' : 's'}`;
 
 export default function SavedScreen() {
   const t = useTheme();
@@ -19,6 +25,87 @@ export default function SavedScreen() {
   const { pattern: current, setPattern } = usePattern();
   const { twoColumn, width } = useResponsive();
   const columns = width >= 1280 ? 3 : 2;
+  /** The last export or import, reported under the buttons. */
+  const [transfer, setTransfer] = useState<{ tone: 'success' | 'warning' | 'error'; title: string; message?: string } | null>(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+
+  const report = (r: NonNullable<typeof transfer>) => {
+    setTransfer(r);
+    AccessibilityInfo.announceForAccessibility(r.message ? `${r.title}. ${r.message}` : r.title);
+  };
+
+  const exportAll = async () => {
+    try {
+      const shared = await savePatternFile(exportPatterns(patterns), exportFileName());
+      if (shared) report({ tone: 'success', title: `Exported ${count(patterns.length)}`, message: 'Keep the file to restore them or move them to another device.' });
+    } catch (e) {
+      report({ tone: 'error', title: 'Export failed', message: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  /** Reads an export and adds its patterns. Throws (for the paste sheet) when the text isn't an export. */
+  const importText = async (text: string) => {
+    const parsed = parseExport(text);
+    const res = await patternStore.importPatterns(parsed.patterns);
+    await reload();
+    setPasteOpen(false);
+    const notes = [
+      res.renamed ? `${count(res.renamed)} renamed, because the name was taken` : '',
+      res.duplicates ? `${count(res.duplicates)} already here` : '',
+      parsed.skipped ? `${parsed.skipped} damaged record(s) skipped` : '',
+    ].filter(Boolean);
+    report({
+      tone: res.added || res.duplicates ? 'success' : 'warning',
+      title: res.added ? `Imported ${count(res.added)}` : res.duplicates ? 'Nothing new to import' : 'No patterns in that file',
+      message: notes.length ? `${notes.join(' · ')}.` : undefined,
+    });
+  };
+
+  const importAll = async () => {
+    if (!canPickFile) {
+      setPasteOpen(true);
+      return;
+    }
+    try {
+      const text = await pickPatternFile();
+      if (text !== null) await importText(text);
+    } catch (e) {
+      report({ tone: 'error', title: 'Import failed', message: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  const transferTools = (
+    <View style={{ gap: space.sm }}>
+      <View style={styles.actions}>
+        <Button
+          title="Export"
+          icon="export"
+          variant="secondary"
+          compact
+          style={{ flex: 1 }}
+          disabled={!patterns.length}
+          onPress={exportAll}
+          accessibilityLabel="Export all patterns"
+          accessibilityHint={
+            canPickFile ? 'Downloads a file with every saved pattern' : 'Shares the saved patterns as text you can keep or send'
+          }
+        />
+        <Button
+          title="Import"
+          icon="import"
+          variant="secondary"
+          compact
+          style={{ flex: 1 }}
+          onPress={importAll}
+          accessibilityLabel="Import patterns"
+          accessibilityHint={
+            canPickFile ? 'Adds the patterns from an exported file' : 'Adds the patterns from exported text you paste'
+          }
+        />
+      </View>
+      {transfer ? <StatusBanner tone={transfer.tone} title={transfer.title} message={transfer.message} /> : null}
+    </View>
+  );
 
   const load = (saved: SavedPattern, adapt = false) => {
     const p = toPattern(saved);
@@ -121,35 +208,46 @@ export default function SavedScreen() {
             </View>
             <Label variant="title3">No saved patterns</Label>
             <Label variant="subhead" secondary style={{ textAlign: 'center' }}>
-              Save a pattern from the Image tab. It is stored on this {DEVICE_WORD} only.
+              Save a pattern from the Image tab. It is stored on this {DEVICE_WORD} only. Have an export? Import it.
             </Label>
           </View>
+          {transferTools}
         </Section>
       ) : (
-        twoColumn ? (
-          <View style={{ gap: space.sm }}>
-            <Label variant="footnote" secondary accessibilityRole="header" style={styles.groupTitle}>
-              {`ON THIS ${DEVICE_WORD.toUpperCase()} · ${patterns.length}`}
-            </Label>
-            <View style={styles.cardGrid}>
-              {patterns.map((saved) => (
-                <View key={saved.id} style={[styles.card, { backgroundColor: t.card, width: columns === 3 ? '31.9%' : '48.9%' }]}>
+        <>
+          <Section
+            title="Backup"
+            footer={`Export keeps a copy of every pattern outside this ${DEVICE_WORD}; Import adds them back here or on another device. Nothing is replaced.`}
+            padded
+            style={twoColumn ? { maxWidth: 560 } : undefined}>
+            {transferTools}
+          </Section>
+          {twoColumn ? (
+            <View style={{ gap: space.sm }}>
+              <Label variant="footnote" secondary accessibilityRole="header" style={styles.groupTitle}>
+                {`ON THIS ${DEVICE_WORD.toUpperCase()} · ${patterns.length}`}
+              </Label>
+              <View style={styles.cardGrid}>
+                {patterns.map((saved) => (
+                  <View key={saved.id} style={[styles.card, { backgroundColor: t.card, width: columns === 3 ? '31.9%' : '48.9%' }]}>
+                    {renderItem(saved)}
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : (
+            <Section title={`On this ${DEVICE_WORD} · ${patterns.length}`} padded={false}>
+              {patterns.map((saved, i) => (
+                <View key={saved.id}>
+                  {i > 0 ? <Separator inset={space.lg} /> : null}
                   {renderItem(saved)}
                 </View>
               ))}
-            </View>
-          </View>
-        ) : (
-          <Section title={`On this ${DEVICE_WORD} · ${patterns.length}`} padded={false}>
-            {patterns.map((saved, i) => (
-              <View key={saved.id}>
-                {i > 0 ? <Separator inset={space.lg} /> : null}
-                {renderItem(saved)}
-              </View>
-            ))}
-          </Section>
-        )
+            </Section>
+          )}
+        </>
       )}
+      <ImportPasteSheet visible={pasteOpen} onClose={() => setPasteOpen(false)} onImport={importText} />
     </Screen>
   );
 }

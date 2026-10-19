@@ -10,7 +10,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { type CropDragMode as Mode, dragCrop, type Rect } from '@/imaging/foreground';
+import { type CropDragMode as Mode, dragCrop, type Rect } from '@/imaging/geometry';
 import { radius, useTheme } from './theme';
 
 interface Props {
@@ -30,8 +30,12 @@ interface Props {
   onDragging?: (dragging: boolean) => void;
   /** A tap (not a drag) on the picture, in image pixels: "focus on what's here". */
   onTap?: (point: { x: number; y: number }) => void;
+  /** The point last tapped (image pixels), marked on the picture so it's clear what the crop focused on. */
+  focus?: { x: number; y: number } | null;
   maxHeight?: number;
 }
+
+const FOCUS_RING = 22;
 
 /** Movement (in points) below which a press counts as a tap, not a drag. */
 const TAP_SLOP = 6;
@@ -42,7 +46,19 @@ const WEB_NO_TOUCH_SCROLL = { touchAction: 'none' } as unknown as ViewStyle;
 const HANDLE_HIT = 44;
 const HANDLE_DOT = 18;
 
-export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop, onChange, onDragging, onTap, maxHeight = 440 }: Props) {
+export function CropEditor({
+  uri,
+  backdrop,
+  badge,
+  imageWidth,
+  imageHeight,
+  crop,
+  onChange,
+  onDragging,
+  onTap,
+  focus,
+  maxHeight = 440,
+}: Props) {
   const t = useTheme();
   const [available, setAvailable] = useState(0);
   const [draft, setDraft] = useState<Rect | null>(null);
@@ -82,13 +98,15 @@ export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop
     d.current = dragCrop(d.from, mode, dx, dy, imageWidth, imageHeight);
     setDraft(d.current);
   };
-  const finish = () => {
+  /** `cancelled`: the touch was taken away (e.g. by the system): a drag still lands, but it never counts as a tap. */
+  const finish = (cancelled = false) => {
     const d = drag.current;
     drag.current = null;
     setDraft(null);
     if (!d) return;
     if (d.moved >= TAP_SLOP) onDragging?.(false);
     if (d.moved < TAP_SLOP) {
+      if (cancelled) return;
       if (d.at && onTap) onTap({ x: Math.min(imageWidth - 1, Math.max(0, d.at.x)), y: Math.min(imageHeight - 1, Math.max(0, d.at.y)) });
       return;
     }
@@ -117,7 +135,7 @@ export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop
             <DragZone
               onGrant={(e) => grant(e, { left: 0, top: 0 })}
               onMove={(e) => move(null, e)}
-              onEnd={() => finish()}
+              onEnd={finish}
               style={StyleSheet.absoluteFill}
             />
           ) : null}
@@ -157,7 +175,7 @@ export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop
           <DragZone
             onGrant={(e) => grant(e, { left: box.left, top: box.top })}
             onMove={(e) => move('move', e)}
-            onEnd={() => finish()}
+            onEnd={finish}
             style={[styles.abs, styles.box, box]}>
             <View pointerEvents="none" style={[styles.third, { left: '33.33%', top: 0, bottom: 0, width: StyleSheet.hairlineWidth }]} />
             <View pointerEvents="none" style={[styles.third, { left: '66.66%', top: 0, bottom: 0, width: StyleSheet.hairlineWidth }]} />
@@ -170,7 +188,7 @@ export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop
               key={c}
               onGrant={(e) => grant(e, null)}
               onMove={(e) => move(c, e)}
-              onEnd={() => finish()}
+              onEnd={finish}
               style={[
                 styles.abs,
                 styles.handle,
@@ -182,6 +200,18 @@ export function CropEditor({ uri, backdrop, badge, imageWidth, imageHeight, crop
               <View style={[styles.dot, { borderColor: t.tint }]} />
             </DragZone>
           ))}
+          {/* Where the user tapped */}
+          {focus ? (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.abs,
+                styles.focusRing,
+                { left: focus.x * k - FOCUS_RING / 2, top: focus.y * k - FOCUS_RING / 2, borderColor: t.tint },
+              ]}>
+              <View style={[styles.focusDot, { backgroundColor: t.tint }]} />
+            </View>
+          ) : null}
           {badge ? (
             <View pointerEvents="none" style={styles.badge}>
               {badge}
@@ -203,7 +233,7 @@ function DragZone({
 }: {
   onGrant: (e: GestureResponderEvent) => void;
   onMove: (e: GestureResponderEvent) => void;
-  onEnd: () => void;
+  onEnd: (cancelled?: boolean) => void;
   style: StyleProp<ViewStyle>;
   children?: ReactNode;
 }) {
@@ -215,8 +245,8 @@ function DragZone({
       onResponderTerminationRequest={() => false}
       onResponderGrant={onGrant}
       onResponderMove={onMove}
-      onResponderRelease={onEnd}
-      onResponderTerminate={onEnd}>
+      onResponderRelease={() => onEnd()}
+      onResponderTerminate={() => onEnd(true)}>
       {children}
     </View>
   );
@@ -230,4 +260,14 @@ const styles = StyleSheet.create({
   third: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.6)' },
   handle: { width: HANDLE_HIT, height: HANDLE_HIT, alignItems: 'center', justifyContent: 'center' },
   dot: { width: HANDLE_DOT, height: HANDLE_DOT, borderRadius: HANDLE_DOT / 2, backgroundColor: '#FFFFFF', borderWidth: 3 },
+  focusRing: {
+    width: FOCUS_RING,
+    height: FOCUS_RING,
+    borderRadius: FOCUS_RING / 2,
+    borderWidth: 2,
+    backgroundColor: 'rgba(255,255,255,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  focusDot: { width: 6, height: 6, borderRadius: 3 },
 });

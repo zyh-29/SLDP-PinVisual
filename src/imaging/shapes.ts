@@ -9,7 +9,7 @@
  *    coverage, instead of sampling the wobbly pixels.
  */
 import type { Pattern, PinValue } from '@/domain/pattern';
-import type { Rect } from './foreground';
+import type { Rect } from './geometry';
 
 export interface Point {
   x: number;

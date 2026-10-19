@@ -1,29 +1,14 @@
-import Slider from '@react-native-community/slider';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { AccessibilityInfo, Platform, StyleSheet, Switch, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { AccessibilityInfo, Platform, StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
-import { cellsToString, countRaised, type Pattern, togglePin } from '@/domain/pattern';
-import { type RasterImage, toGrayscale } from '@/imaging/convert';
-import {
-  DEFAULT_MIN_PIECE_RATIO,
-  DEFAULT_PIN_FILL,
-  estimateBackground,
-  findForeground,
-  fullRect,
-  inkFromGray,
-  inkFromMask,
-  cellSizePx,
-  thickenThinLines,
-  patternFromSamples,
-  type Rect,
-  renderCrop,
-  sampleCrop,
-  toRgb,
-} from '@/imaging/foreground';
+import { cellsToString, type Pattern, togglePin } from '@/domain/pattern';
+import { toGrayscale } from '@/imaging/convert';
+import { DEFAULT_PIN_FILL, toRgb } from '@/imaging/foreground';
+import { fullRect, type Point, type Rect } from '@/imaging/geometry';
 import {
   type ImageSource,
   type LiveCapture,
@@ -33,35 +18,26 @@ import {
   useImageDrop,
 } from '@/imaging/imageInput';
 import { loadImagePixels } from '@/imaging/loadImage';
-import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
-import { detectShape, fillHoles, renderShape } from '@/imaging/shapes';
-import { isPhotoLike, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
+import { renderCrop } from '@/imaging/pinSampling';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
+import { smartCutoutAvailable } from '@/imaging/segment';
 import { usePattern } from '@/state/PatternProvider';
+import { type GraphRange, type PickedImage, useImageConversion } from '@/state/useImageConversion';
 import { Button, Columns, Label, Screen, Section, Separator, StatusBanner } from '@/ui/components';
 import { CropEditor } from '@/ui/CropEditor';
+import { GraphRangeControl } from '@/ui/GraphRangeControl';
 import { Icon } from '@/ui/Icon';
+import { DropOverlay, LiveBadge } from '@/ui/ImageOverlays';
+import { ImageResult } from '@/ui/ImageResult';
 import { LiveVideo } from '@/ui/LiveVideo';
-import { PinGrid } from '@/ui/PinGrid';
 import { SavePatternSheet } from '@/ui/SavePatternSheet';
+import { SliderRow, SwitchRow } from '@/ui/SettingRows';
 import { radius, space, useTheme } from '@/ui/theme';
-
-interface Picked {
-  uri: string;
-  /** Downscaled PNG on the device, for Smart Cut-Out (phones). */
-  fileUri?: string;
-  raster: RasterImage;
-  rgb: Uint8ClampedArray;
-  gray: Float32Array;
-}
-
-/** Above this edge unevenness a photo's background is busy enough to switch Smart Cut-Out on by itself. */
-const BUSY_BACKGROUND = 28;
 
 export default function ImageScreen() {
   const t = useTheme();
   const { setPattern } = usePattern();
-  const [picked, setPicked] = useState<Picked | null>(null);
+  const [picked, setPicked] = useState<PickedImage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,126 +45,44 @@ export default function ImageScreen() {
   const [removeClutter, setRemoveClutter] = useState(true);
   /** null = automatic: chosen from each image (and crop) by the triangle method on colour distances. */
   const [toleranceOverride, setToleranceOverride] = useState<number | null>(null);
-  const tolerance = toleranceOverride ?? 'auto';
   /** Higher raises more pins. A pin is raised when at least (100 - sensitivity)% of it is subject. */
   const [sensitivity, setSensitivity] = useState(100 - Math.round(DEFAULT_PIN_FILL * 100));
-  const pinFill = (100 - sensitivity) / 100;
   const [snap, setSnap] = useState(true);
   /** null = automatic: Smart Cut-Out runs when the background is busy. */
   const [cutoutOverride, setCutoutOverride] = useState<boolean | null>(null);
-  const [cutout, setCutout] = useState<{ for: Picked; mask: Float32Array | null; error?: string } | null>(null);
   /** null = automatic (smart crop). */
   const [manualCrop, setManualCrop] = useState<Rect | null>(null);
   /** A point the user tapped on the picture: the smart crop focuses on what's there (e.g. one picture in a grid). */
-  const [focus, setFocus] = useState<{ x: number; y: number } | null>(null);
+  const [focus, setFocus] = useState<Point | null>(null);
   const [dragging, setDragging] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   /** The user's pin edits and lock state, tied to the picture they were made on (see the pin lock below). */
-  const [editState, setEditState] = useState<{ picked: Picked; auto: string; pattern: Pattern | null; unlocked: boolean } | null>(null);
+  const [editState, setEditState] = useState<{ picked: PickedImage; auto: string; pattern: Pattern | null; unlocked: boolean } | null>(
+    null,
+  );
   /** null = automatic: axes and gridlines are removed when the image looks like a graph. */
   const [linesOverride, setLinesOverride] = useState<boolean | null>(null);
   const [live, setLive] = useState<LiveCapture | null>(null);
+  /** Graphs: how much of the graph the pins show (around the curve's vertex or middle), at its true proportions. */
+  const [graphRange, setGraphRange] = useState<GraphRange>('5');
 
   // Stop screen sharing when the session is replaced or the screen goes away.
   useEffect(() => () => live?.stop(), [live]);
 
-  const w = picked?.raster.width ?? 0;
-  const h = picked?.raster.height ?? 0;
-  const minPieceRatio = removeClutter ? DEFAULT_MIN_PIECE_RATIO : 0;
-  const removeLines = linesOverride ?? 'auto';
+  const c = useImageConversion(picked, live, {
+    removeBackground,
+    removeClutter,
+    toleranceOverride,
+    pinFill: (100 - sensitivity) / 100,
+    snap,
+    cutoutOverride,
+    manualCrop,
+    focus,
+    linesOverride,
+    graphRange,
+  });
+  const { width: w, height: h, fg, result, graph, shape } = c;
 
-  // Smart Cut-Out (AI subject segmentation, on-device) only for photos with a busy background. Screenshots,
-  // graphs and drawings (lots of perfectly flat colour) never get it automatically: the AI keeps one solid
-  // object and would throw away thin curves.
-  const photoLike = useMemo(() => (picked ? isPhotoLike(picked.rgb, w, h) : false), [picked, w, h]);
-  const busyPhoto = useMemo(
-    () => (picked && photoLike ? estimateBackground(picked.rgb, w, h).noise > BUSY_BACKGROUND : false),
-    [picked, photoLike, w, h],
-  );
-  const cutoutOn = removeBackground && smartCutoutAvailable && !live && (cutoutOverride ?? busyPhoto);
-  const cuttingOut = cutoutOn && cutout?.for !== picked;
-  const subjectMask = cutoutOn && cutout?.for === picked ? (cutout.mask ?? undefined) : undefined;
-  useEffect(() => {
-    if (!cutoutOn || !picked || cutout?.for === picked) return;
-    let cancelled = false;
-    segmentSubject({ rgb: picked.rgb, width: picked.raster.width, height: picked.raster.height, fileUri: picked.fileUri })
-      .then((mask) => !cancelled && setCutout({ for: picked, mask }))
-      .catch((e) => !cancelled && setCutout({ for: picked, mask: null, error: e instanceof Error ? e.message : String(e) }));
-    return () => {
-      cancelled = true;
-    };
-  }, [cutoutOn, picked, cutout]);
-
-  // Smart crop: what part of the image should become pins (coloured curves, a shape, the object on a card).
-  const smartOptions = useMemo<SmartCropOptions>(
-    () => ({ tolerance, minPieceRatio, removeLines }),
-    [tolerance, minPieceRatio, removeLines],
-  );
-  const smart = useMemo(
-    () => (picked && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, undefined, focus ?? undefined) : null),
-    [picked, subjectMask, w, h, smartOptions, focus],
-  );
-  // Inside the user's own box the same logic picks the subject, so stray UI caught by the box is ignored.
-  const smartInCrop = useMemo(
-    () => (picked && manualCrop && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, manualCrop) : null),
-    [picked, manualCrop, subjectMask, w, h, smartOptions],
-  );
-  const chosen = manualCrop ? (smartInCrop?.kind === 'none' ? null : smartInCrop) : smart;
-  const fullImage = useMemo(() => fullRect(w, h), [w, h]);
-  const autoContext = smart?.context ?? fullImage;
-  // The analysed area: around the chosen subject (its edge shows the background), else the user's box or the whole image.
-  const region = chosen?.context ?? manualCrop ?? fullImage;
-  // Graph curves mean axes and gridlines around them should go.
-  const lines = linesOverride ?? (chosen?.kind === 'curves' || smart?.kind === 'curves' ? true : 'auto');
-  // The subject's pixels when they are known exactly: the AI cut-out, or the graph curves' own pixels.
-  const knownSubject = subjectMask ?? (removeBackground ? chosen?.mask : undefined);
-  const fg = useMemo(
-    () =>
-      picked
-        ? findForeground(picked.rgb, w, h, {
-            tolerance,
-            minPieceRatio,
-            removeLines: lines,
-            region,
-            backgroundRegions: manualCrop ? [autoContext] : undefined,
-            subjectMask: knownSubject,
-          })
-        : null,
-    [picked, w, h, tolerance, minPieceRatio, lines, region, manualCrop, autoContext, knownSubject],
-  );
-  const autoBox = smart ? smart.box : (fg?.subject ?? fullImage);
-  /** The crop box shown to the user. */
-  const crop = manualCrop ?? autoBox;
-  /** What the pins use: the chosen subject's tight box (inside the user's box, if any), so empty margins don't waste pins. */
-  const sampleBox = chosen?.box ?? (manualCrop ? (fg?.subject ?? manualCrop) : autoBox);
-  // Graphs have arbitrary x and y scales, so they stretch to use every pin.
-  const stretch = removeBackground && (!!fg?.linesRemoved || (chosen ?? smart)?.kind === 'curves');
-
-  // Shapes (not graphs): close drawn outlines, then look for a clean triangle, square, circle...
-  const shapesApply = removeBackground && !stretch;
-  const filledMask = useMemo(() => (fg && shapesApply ? fillHoles(fg.mask, w, h, sampleBox) : null), [fg, shapesApply, w, h, sampleBox]);
-  const shape = useMemo(() => (filledMask ? detectShape(filledMask, w, h, sampleBox) : null), [filledMask, w, h, sampleBox]);
-  const pinMask = useMemo(
-    // Shapes are always shown filled: on 40 pins a solid shape is the easiest to feel.
-    () => filledMask ?? fg?.mask ?? null,
-    [filledMask, fg],
-  );
-
-  const ink = useMemo(() => {
-    if (!picked || !fg || !pinMask) return null;
-    if (!removeBackground) return inkFromGray(picked.gray);
-    const cell = cellSizePx(sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch);
-    const stroke = fg.strokeWidth;
-    return inkFromMask(thickenThinLines(pinMask, w, h, stroke, cell));
-  }, [picked, fg, pinMask, removeBackground, sampleBox, stretch, w, h]);
-  const samples = useMemo(
-    () => (ink ? sampleCrop(ink, w, h, sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch) : null),
-    [ink, w, h, sampleBox, stretch],
-  );
-  const result = useMemo(() => {
-    if (shape && snap && shapesApply) return renderShape(shape, GRID.rows, GRID.cols, GRID.pinPitchRatio, 'filled', pinFill);
-    return samples ? patternFromSamples(samples, GRID.rows, GRID.cols, pinFill, false) : null;
-  }, [shape, snap, shapesApply, pinFill, samples]);
   // Pin lock. Locked (default): the pins follow the image. Unlocked: the user taps pins, and those edits win over
   // every setting. Edits (and the unlock) belong to the picture they were made on: a new picture discards them and
   // locks again. During a live share that means the screen changed enough to change the automatic pins.
@@ -213,14 +107,10 @@ export default function ImageScreen() {
     AccessibilityInfo.announceForAccessibility('Pins reset to the image');
   };
 
-  const cleanedUri = useMemo(
-    () => (picked && fg ? rgbToPngDataUri(renderCrop(picked.rgb, w, h, removeBackground ? pinMask : null, sampleBox)) : null),
-    [picked, fg, pinMask, w, h, removeBackground, sampleBox],
-  );
-
   const resetForNewImage = () => {
     setManualCrop(null);
     setFocus(null);
+    c.resetGraph();
     setLinesOverride(null);
     setCutoutOverride(null);
     setToleranceOverride(null);
@@ -273,7 +163,7 @@ export default function ImageScreen() {
         onFrame: (raster) => {
           setPicked({ uri: '', raster, rgb: toRgb(raster), gray: toGrayscale(raster) });
           // Keep the user's crop while sharing, unless the shared window shrank under it.
-          setManualCrop((c) => (c && (c.x + c.width > raster.width + 0.5 || c.y + c.height > raster.height + 0.5) ? null : c));
+          setManualCrop((r) => (r && (r.x + r.width > raster.width + 0.5 || r.y + r.height > raster.height + 0.5) ? null : r));
         },
         onEnd: freeze,
       });
@@ -358,13 +248,14 @@ export default function ImageScreen() {
                     badge={live ? <LiveBadge /> : undefined}
                     imageWidth={w}
                     imageHeight={h}
-                    crop={crop}
+                    crop={c.crop}
                     onChange={setManualCrop}
+                    focus={manualCrop ? null : focus}
                     onTap={(point) => {
-                      // Tap a picture: the smart crop focuses on it (your own box gives way to it).
+                      // Tap a picture, a curve or a subject: the smart crop focuses on it (your own box gives way to it).
                       setManualCrop(null);
                       setFocus(point);
-                      AccessibilityInfo.announceForAccessibility('Cropped to the tapped picture');
+                      AccessibilityInfo.announceForAccessibility('Cropped to what you tapped');
                     }}
                     onDragging={setDragging}
                   />
@@ -434,21 +325,21 @@ export default function ImageScreen() {
 
                 <Section title="What the pins see">
                   <View style={[styles.frame, { aspectRatio: gridAspect, borderColor: t.separator }]}>
-                    {cleanedUri ? (
+                    {c.cleanedUri ? (
                       <Image
-                        source={{ uri: cleanedUri }}
-                        contentFit={stretch ? 'fill' : 'contain'}
+                        source={{ uri: c.cleanedUri }}
+                        contentFit={c.stretch ? 'fill' : 'contain'}
                         style={StyleSheet.absoluteFill}
                         accessibilityLabel={removeBackground ? 'Cropped image with the background removed' : 'Cropped image'}
                       />
                     ) : null}
                   </View>
-                  {cuttingOut ? (
+                  {c.cuttingOut ? (
                     <StatusBanner tone="progress" title="Cutting out subject…" />
-                  ) : cutoutOn && cutout?.error ? (
-                    <StatusBanner tone="warning" title="Smart Cut-Out unavailable" message={cutout.error} />
+                  ) : c.cutoutError ? (
+                    <StatusBanner tone="warning" title="Smart Cut-Out unavailable" message={c.cutoutError} />
                   ) : removeBackground && !fg.subject ? (
-                    <StatusBanner tone="warning" title="No subject found" message={cutoutOn ? undefined : 'Try a lower Tolerance.'} />
+                    <StatusBanner tone="warning" title="No subject found" message={c.cutoutOn ? undefined : 'Try a lower Tolerance.'} />
                   ) : null}
                 </Section>
               </>
@@ -456,6 +347,12 @@ export default function ImageScreen() {
             right={
               <>
                 <Section title="Conversion">
+                  {graph ? (
+                    <>
+                      <GraphRangeControl graph={graph} range={graphRange} onChange={setGraphRange} readingNumbers={c.readingNumbers} />
+                      <Separator />
+                    </>
+                  ) : null}
                   <SwitchRow
                     title="Remove Background"
                     hint="Anything that differs from the edge colour counts as the subject"
@@ -464,13 +361,13 @@ export default function ImageScreen() {
                   />
                   {removeBackground ? (
                     <>
-                      {smartCutoutAvailable && !live && (busyPhoto || cutoutOverride !== null) ? (
+                      {smartCutoutAvailable && !live && (c.busyPhoto || cutoutOverride !== null) ? (
                         <>
                           <Separator />
                           <SwitchRow
                             title="Smart Cut-Out"
                             hint="Uses on-device AI to separate the main subject from a busy background"
-                            value={cutoutOn}
+                            value={c.cutoutOn}
                             onChange={setCutoutOverride}
                           />
                         </>
@@ -493,7 +390,7 @@ export default function ImageScreen() {
                         value={removeClutter}
                         onChange={setRemoveClutter}
                       />
-                      {shapesApply && shape ? (
+                      {c.shapesApply && shape ? (
                         <>
                           <Separator />
                           <SwitchRow
@@ -507,7 +404,7 @@ export default function ImageScreen() {
                     </>
                   ) : null}
                   {/* Tolerance only matters when the subject is separated by colour (not by a curve's colour or the AI). */}
-                  {removeBackground && !knownSubject && fg ? (
+                  {removeBackground && !c.subjectKnown ? (
                     <>
                       <Separator />
                       <SliderRow
@@ -536,66 +433,17 @@ export default function ImageScreen() {
                   />
                 </Section>
 
-                {result ? (
-                  <Section title="Result">
-                    <PinGrid pattern={shown ?? result} onToggle={pinsUnlocked ? togglePinAt : undefined} />
-                    {/* Under the grid, a toolbar laid out like the button row below it: the lock (and Reset after an edit)
-                        span the same width as Use This Pattern, and the live pin count sits in the Save column. */}
-                    <View style={styles.resultBar}>
-                      <View style={styles.resultTools}>
-                        <Button
-                          title={pinsUnlocked ? 'Unlocked' : 'Locked'}
-                          icon={pinsUnlocked ? 'unlock' : 'lock'}
-                          variant={pinsUnlocked ? 'secondary' : 'destructive'}
-                          compact
-                          style={styles.pill}
-                          onPress={toggleLock}
-                          accessibilityLabel={pinsUnlocked ? 'Pins unlocked' : 'Pins locked'}
-                          accessibilityHint={
-                            pinsUnlocked ? 'Locks the pins so taps do nothing' : 'Unlocks the pins so you can raise or lower each one'
-                          }
-                        />
-                        {edit?.pattern ? (
-                          <Button
-                            title="Reset"
-                            icon="undo"
-                            variant="secondary"
-                            compact
-                            style={styles.pill}
-                            onPress={resetPins}
-                            accessibilityLabel="Reset pins"
-                            accessibilityHint="Discards your pin changes and follows the image again"
-                          />
-                        ) : null}
-                      </View>
-                      <Label
-                        variant="headline"
-                        secondary
-                        numberOfLines={1}
-                        accessibilityLabel={`${shown ? countRaised(shown) : 0} of ${GRID.rows * GRID.cols} pins raised`}
-                        style={[styles.sideColumn, styles.pinCount]}>
-                        {shown ? countRaised(shown) : 0} of {GRID.rows * GRID.cols}
-                      </Label>
-                    </View>
-                    <View style={styles.buttonRow}>
-                      <Button
-                        title="Use This Pattern"
-                        icon="edit"
-                        style={{ flex: 1 }}
-                        onPress={use}
-                        accessibilityHint="Replaces the preview on the Display tab, where you can edit and send it."
-                      />
-                      <Button
-                        title="Save"
-                        icon="save"
-                        variant="secondary"
-                        style={styles.sideColumn}
-                        onPress={() => setSaveOpen(true)}
-                        accessibilityLabel="Save Pattern"
-                        accessibilityHint="Saves this pattern so you can load it later from the Saved tab."
-                      />
-                    </View>
-                  </Section>
+                {shown ? (
+                  <ImageResult
+                    pattern={shown}
+                    unlocked={pinsUnlocked}
+                    edited={!!edit?.pattern}
+                    onToggleLock={toggleLock}
+                    onTogglePin={togglePinAt}
+                    onReset={resetPins}
+                    onUse={use}
+                    onSave={() => setSaveOpen(true)}
+                  />
                 ) : null}
               </>
             }
@@ -620,112 +468,6 @@ export default function ImageScreen() {
   );
 }
 
-function LiveBadge() {
-  return (
-    <View style={styles.liveBadge} accessible accessibilityLabel="Live">
-      <View style={styles.liveDot} />
-      <Label variant="caption" style={{ color: '#FFFFFF', fontWeight: '600' }}>
-        Live
-      </Label>
-    </View>
-  );
-}
-
-/** Shown while an image file is dragged over the page (web). */
-function DropOverlay() {
-  const t = useTheme();
-  return (
-    <View pointerEvents="none" style={[styles.dropOverlay, { backgroundColor: t.background }]}>
-      <View style={[styles.dropZone, { borderColor: t.tint, backgroundColor: t.tintSoft }]}>
-        <Icon name="photo" color={t.tint} size={40} />
-        <Label variant="title3" style={{ color: t.tint }}>
-          Drop Image
-        </Label>
-      </View>
-    </View>
-  );
-}
-
-function SwitchRow({ title, hint, value, onChange }: { title: string; hint: string; value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <View style={styles.switchRow}>
-      <Label variant="body" style={{ flex: 1 }}>
-        {title}
-      </Label>
-      <Switch value={value} onValueChange={onChange} accessibilityLabel={title} accessibilityHint={hint} />
-    </View>
-  );
-}
-
-function SliderRow(p: {
-  title: string;
-  value: number;
-  display: string;
-  min: number;
-  max: number;
-  step: number;
-  hint: string;
-  onChange: (v: number) => void;
-  /** When given, an "Auto" button returns the setting to automatic. */
-  onAuto?: () => void;
-}) {
-  const t = useTheme();
-  const set = (v: number) => p.onChange(Math.min(p.max, Math.max(p.min, Math.round(v / p.step) * p.step)));
-  return (
-    <View style={{ gap: space.xs }}>
-      <View style={styles.sliderHeader}>
-        <Label variant="body">{p.title}</Label>
-        <View style={styles.sliderValue}>
-          {p.onAuto ? (
-            <Button title="Auto" variant="plain" compact onPress={p.onAuto} accessibilityHint={`Sets ${p.title} automatically again`} />
-          ) : null}
-          <Label variant="body" secondary style={{ fontVariant: ['tabular-nums'] }}>
-            {p.display}
-          </Label>
-        </View>
-      </View>
-      <View style={styles.sliderRow}>
-        <Button
-          title=""
-          accessibilityLabel={`Decrease ${p.title}`}
-          icon="minus"
-          variant="secondary"
-          compact
-          style={styles.stepButton}
-          onPress={() => set(p.value - p.step)}
-        />
-        <Slider
-          style={{ flex: 1, height: 44 }}
-          minimumValue={p.min}
-          maximumValue={p.max}
-          step={p.step}
-          value={p.value}
-          onValueChange={set}
-          minimumTrackTintColor={t.tint}
-          maximumTrackTintColor={t.fill}
-          accessibilityLabel={p.title}
-          accessibilityHint={p.hint}
-          accessibilityValue={{
-            min: p.min,
-            max: p.max,
-            now: p.value,
-            text: p.display,
-          }}
-        />
-        <Button
-          title=""
-          accessibilityLabel={`Increase ${p.title}`}
-          icon="plus"
-          variant="secondary"
-          compact
-          style={styles.stepButton}
-          onPress={() => set(p.value + p.step)}
-        />
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   empty: { alignItems: 'center', gap: space.sm, paddingVertical: space.lg },
   emptyIcon: {
@@ -737,14 +479,6 @@ const styles = StyleSheet.create({
     marginBottom: space.sm,
   },
   buttonRow: { flexDirection: 'row', gap: space.sm },
-  resultBar: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  /** Same width as Use This Pattern; the lock and Reset share it equally. */
-  resultTools: { flex: 1, flexDirection: 'row', gap: space.sm },
-  /** Same width as Save, so the two rows line up; the pin count is centred in it. */
-  sideColumn: { width: 100, flexShrink: 0 },
-  pinCount: { textAlign: 'center', fontVariant: ['tabular-nums'] },
-  /** Compact capsule buttons: each starts at its label's width, then they share the rest of the row. */
-  pill: { flexGrow: 1, flexShrink: 1, flexBasis: 'auto', borderRadius: radius.pill, paddingHorizontal: space.sm },
   frame: {
     width: '100%',
     maxWidth: 480,
@@ -753,42 +487,5 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
     backgroundColor: '#FFFFFF',
-  },
-  sliderHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 32 },
-  sliderValue: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  sliderRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  stepButton: { width: 44, paddingHorizontal: 0 },
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    minHeight: 44,
-  },
-  liveBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: radius.pill,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF3B30' },
-  dropOverlay: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    padding: space.lg,
-  },
-  dropZone: {
-    flex: 1,
-    borderWidth: 2,
-    borderStyle: 'dashed',
-    borderRadius: radius.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: space.sm,
   },
 });

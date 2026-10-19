@@ -20,29 +20,11 @@
  *  7. Sampling: the crop is placed on the grid (aspect ratio kept, or
  *     stretched for graphs) and each pin gets the share of its area that is
  *     content ("ink").
+ * Steps 6 and 7 are in pinSampling.ts; mask helpers in masks.ts, rectangles in geometry.ts.
  */
-import type { Pattern, PinValue } from '@/domain/pattern';
 import type { RasterImage } from './convert';
-
-export interface Rgb {
-  r: number;
-  g: number;
-  b: number;
-}
-
-/** A rectangle in source-pixel coordinates. */
-export interface Rect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface Component {
-  /** Number of pixels. */
-  area: number;
-  box: Rect;
-}
+import { bounds, fullRect, type Rect, type Rgb } from './geometry';
+import { type Component, labelComponents } from './masks';
 
 /** A long thin straight line (axis or gridline). */
 export interface StraightLine {
@@ -139,15 +121,6 @@ function median(values: number[]): number {
 
 const dist = (rgb: ArrayLike<number>, i: number, c: Rgb) => Math.hypot(rgb[i] - c.r, rgb[i + 1] - c.g, rgb[i + 2] - c.b);
 
-/** Integer pixel bounds of a rect, clamped to the image. */
-function bounds(r: Rect, width: number, height: number) {
-  const x0 = Math.max(0, Math.floor(r.x));
-  const y0 = Math.max(0, Math.floor(r.y));
-  const x1 = Math.min(width, Math.max(x0 + 1, Math.ceil(r.x + r.width)));
-  const y1 = Math.min(height, Math.max(y0 + 1, Math.ceil(r.y + r.height)));
-  return { x0, y0, x1, y1 };
-}
-
 /**
  * Median colour of the outer ring of pixels (about 2% of the short side) of
  * `region`, or of the whole image.
@@ -181,49 +154,6 @@ export function estimateBackground(
   let noise = 0;
   for (const i of idx) noise += dist(rgb, i, color);
   return { color, noise: idx.length ? noise / idx.length : 0 };
-}
-
-/** 8-connected pieces of the mask. Returns a label per pixel (0 = background, 1.. = piece) and piece stats. */
-export function labelComponents(mask: Uint8Array, width: number, height: number): { labels: Int32Array; components: Component[] } {
-  const labels = new Int32Array(width * height);
-  const components: Component[] = [];
-  const stack: number[] = [];
-  for (let start = 0; start < mask.length; start++) {
-    if (!mask[start] || labels[start]) continue;
-    const label = components.length + 1;
-    let area = 0;
-    let x0 = width,
-      y0 = height,
-      x1 = -1,
-      y1 = -1;
-    labels[start] = label;
-    stack.push(start);
-    while (stack.length) {
-      const p = stack.pop()!;
-      const x = p % width;
-      const y = (p - x) / width;
-      area++;
-      if (x < x0) x0 = x;
-      if (x > x1) x1 = x;
-      if (y < y0) y0 = y;
-      if (y > y1) y1 = y;
-      for (let dy = -1; dy <= 1; dy++) {
-        const ny = y + dy;
-        if (ny < 0 || ny >= height) continue;
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx = x + dx;
-          if (nx < 0 || nx >= width) continue;
-          const q = ny * width + nx;
-          if (mask[q] && !labels[q]) {
-            labels[q] = label;
-            stack.push(q);
-          }
-        }
-      }
-    }
-    components.push({ area, box: { x: x0, y: y0, width: x1 - x0 + 1, height: y1 - y0 + 1 } });
-  }
-  return { labels, components };
 }
 
 /**
@@ -690,39 +620,6 @@ function dropNeutralClutter(rgb: ArrayLike<number>, labels: Int32Array, componen
   });
 }
 
-export function fullRect(width: number, height: number): Rect {
-  return { x: 0, y: 0, width, height };
-}
-
-/** Clamps a crop to the image and enforces a minimum size. */
-export function clampRect(r: Rect, width: number, height: number, minSize = 4): Rect {
-  const w = Math.min(width, Math.max(minSize, r.width));
-  const h = Math.min(height, Math.max(minSize, r.height));
-  return {
-    x: Math.min(width - w, Math.max(0, r.x)),
-    y: Math.min(height - h, Math.max(0, r.y)),
-    width: w,
-    height: h,
-  };
-}
-
-export type CropDragMode = 'move' | 'tl' | 'tr' | 'bl' | 'br';
-
-/** Applies a drag (in image pixels) to the crop it started from. */
-export function dragCrop(start: Rect, mode: CropDragMode, dx: number, dy: number, imgW: number, imgH: number): Rect {
-  const min = Math.max(4, Math.min(imgW, imgH) * 0.06);
-  if (mode === 'move') return clampRect({ ...start, x: start.x + dx, y: start.y + dy }, imgW, imgH, min);
-  let left = start.x;
-  let top = start.y;
-  let right = start.x + start.width;
-  let bottom = start.y + start.height;
-  if (mode === 'tl' || mode === 'bl') left = Math.min(right - min, Math.max(0, left + dx));
-  if (mode === 'tr' || mode === 'br') right = Math.max(left + min, Math.min(imgW, right + dx));
-  if (mode === 'tl' || mode === 'tr') top = Math.min(bottom - min, Math.max(0, top + dy));
-  if (mode === 'bl' || mode === 'br') bottom = Math.max(top + min, Math.min(imgH, bottom + dy));
-  return { x: left, y: top, width: right - left, height: bottom - top };
-}
-
 /** The subject box plus an optional margin (share of its larger side), kept inside the image. No margin by default: on a 40-pin grid every row counts. */
 export function smartCrop(fg: Foreground, margin = 0): Rect {
   if (!fg.subject) return fg.region;
@@ -733,191 +630,4 @@ export function smartCrop(fg: Foreground, margin = 0): Rect {
   const x1 = Math.min(fg.width, s.x + s.width + m);
   const y1 = Math.min(fg.height, s.y + s.height + m);
   return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
-}
-
-/** Per-pixel ink 0..1 from the mask. */
-export function inkFromMask(mask: Uint8Array): Float32Array {
-  const out = new Float32Array(mask.length);
-  for (let i = 0; i < mask.length; i++) out[i] = mask[i];
-  return out;
-}
-
-/** Per-pixel ink 0..1 from darkness (used when background removal is off). */
-export function inkFromGray(gray: Float32Array): Float32Array {
-  const out = new Float32Array(gray.length);
-  for (let i = 0; i < gray.length; i++) out[i] = (255 - gray[i]) / 255;
-  return out;
-}
-
-export interface CellSamples {
-  /** Share of each pin's area that is content, 0..1 (row-major). */
-  ink: Float32Array;
-  /** Share of each pin's area that the crop covers at all (the rest is padding). */
-  covered: Float32Array;
-}
-
-/**
- * Places the crop on the grid and area-averages the ink under each pin, with
- * exact fractional pixel coverage. `stretch` fills the whole grid (graphs);
- * otherwise the aspect ratio is kept and the crop is centred.
- */
-export function sampleCrop(
-  ink: Float32Array,
-  width: number,
-  height: number,
-  crop: Rect,
-  rows: number,
-  cols: number,
-  pinPitchRatio = 1,
-  stretch = false,
-): CellSamples {
-  const gridW = cols * pinPitchRatio;
-  const gridH = rows;
-  // Grid units per source pixel.
-  const fit = Math.min(gridW / crop.width, gridH / crop.height);
-  const sx = stretch ? gridW / crop.width : fit;
-  const sy = stretch ? gridH / crop.height : fit;
-  const offX = (gridW - crop.width * sx) / 2;
-  const offY = (gridH - crop.height * sy) / 2;
-  const {
-    x0: cx0,
-    y0: cy0,
-    x1: cx1,
-    y1: cy1,
-  } = {
-    x0: Math.max(0, crop.x),
-    y0: Math.max(0, crop.y),
-    x1: Math.min(width, crop.x + crop.width),
-    y1: Math.min(height, crop.y + crop.height),
-  };
-  const cellArea = (pinPitchRatio / sx) * (1 / sy);
-
-  const inkOut = new Float32Array(rows * cols);
-  const covOut = new Float32Array(rows * cols);
-  for (let r = 0; r < rows; r++) {
-    const y0 = Math.max(cy0, crop.y + (r - offY) / sy);
-    const y1 = Math.min(cy1, crop.y + (r + 1 - offY) / sy);
-    for (let c = 0; c < cols; c++) {
-      const x0 = Math.max(cx0, crop.x + (c * pinPitchRatio - offX) / sx);
-      const x1 = Math.min(cx1, crop.x + ((c + 1) * pinPitchRatio - offX) / sx);
-      let sum = 0;
-      let covered = 0;
-      if (x1 > x0 && y1 > y0) {
-        for (let py = Math.floor(y0); py < Math.ceil(y1); py++) {
-          const wy = Math.min(py + 1, y1) - Math.max(py, y0);
-          if (wy <= 0) continue;
-          for (let px = Math.floor(x0); px < Math.ceil(x1); px++) {
-            const wx = Math.min(px + 1, x1) - Math.max(px, x0);
-            if (wx <= 0) continue;
-            sum += ink[py * width + px] * wx * wy;
-            covered += wx * wy;
-          }
-        }
-      }
-      inkOut[r * cols + c] = sum / cellArea;
-      covOut[r * cols + c] = covered / cellArea;
-    }
-  }
-  return { ink: inkOut, covered: covOut };
-}
-
-/** Size of one pin's cell in source pixels for this crop (width, height). */
-export function cellSizePx(crop: Rect, rows: number, cols: number, pinPitchRatio = 1, stretch = false): { w: number; h: number } {
-  const gridW = cols * pinPitchRatio;
-  const fit = Math.min(gridW / crop.width, rows / crop.height);
-  const sx = stretch ? gridW / crop.width : fit;
-  const sy = stretch ? rows / crop.height : fit;
-  return { w: pinPitchRatio / sx, h: 1 / sy };
-}
-
-/** Grows every content pixel into a (2rx+1) x (2ry+1) block. Separable, O(pixels). */
-export function dilate(mask: Uint8Array, width: number, height: number, rx: number, ry: number): Uint8Array {
-  const pass = (src: Uint8Array, horizontal: boolean, r: number) => {
-    if (r <= 0) return src;
-    const out = new Uint8Array(src.length);
-    const lines = horizontal ? height : width;
-    const len = horizontal ? width : height;
-    const at = (line: number, i: number) => (horizontal ? line * width + i : i * width + line);
-    for (let line = 0; line < lines; line++) {
-      // Running count of content pixels in the window [i - r, i + r].
-      let count = 0;
-      for (let i = 0; i < Math.min(r, len); i++) count += src[at(line, i)];
-      for (let i = 0; i < len; i++) {
-        if (i + r < len) count += src[at(line, i + r)];
-        if (i - r - 1 >= 0) count -= src[at(line, i - r - 1)];
-        out[at(line, i)] = count > 0 ? 1 : 0;
-      }
-    }
-    return out;
-  };
-  return pass(pass(mask, true, Math.round(rx)), false, Math.round(ry));
-}
-
-/**
- * Thin-line drawings (graphs, outlines, handwriting) barely cover a pin's
- * area, so they would vanish. This thickens strokes to about half a pin in
- * each direction, so a line running through a pin raises it. It also closes
- * small gaps, e.g. where gridlines were removed. Returns the mask unchanged
- * for filled shapes.
- */
-export function thickenThinLines(
-  mask: Uint8Array,
-  width: number,
-  height: number,
-  stroke: number,
-  cell: { w: number; h: number },
-): Uint8Array {
-  // Thin compared with the pin's longer side (stretched graphs have long, flat pins); each direction is grown separately.
-  if (stroke <= 0 || stroke >= 0.25 * Math.max(cell.w, cell.h)) return mask;
-  const rx = Math.max(0, 0.25 * cell.w - stroke / 2);
-  const ry = Math.max(0, 0.25 * cell.h - stroke / 2);
-  if (Math.round(rx) === 0 && Math.round(ry) === 0) return mask;
-  return dilate(mask, width, height, rx, ry);
-}
-
-/**
- * Raises pins whose content share reaches `pinFill`. Invert raises the
- * background instead; padding outside the crop always stays lowered.
- */
-export function patternFromSamples(s: CellSamples, rows: number, cols: number, pinFill: number, invert: boolean): Pattern {
-  const cells: PinValue[] = [];
-  for (let i = 0; i < s.ink.length; i++) {
-    const value = invert ? s.covered[i] - s.ink[i] : s.ink[i];
-    cells.push(value >= pinFill && value > 0 ? 1 : 0);
-  }
-  return { rows, cols, cells };
-}
-
-/**
- * RGB pixels of the crop for the "what the pins see" preview. With a mask,
- * removed background is drawn as a light checkerboard (the usual sign for
- * "transparent"). Returns 8-bit RGB, 3 channels.
- */
-export function renderCrop(
-  rgb: ArrayLike<number>,
-  width: number,
-  height: number,
-  mask: Uint8Array | null,
-  crop: Rect,
-): { width: number; height: number; data: Uint8Array } {
-  const { x0, y0, x1, y1 } = bounds(crop, width, height);
-  const w = x1 - x0;
-  const h = y1 - y0;
-  const square = Math.max(3, Math.round(Math.max(w, h) / 32));
-  const data = new Uint8Array(w * h * 3);
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
-      const p = y * width + x;
-      const o = ((y - y0) * w + (x - x0)) * 3;
-      if (mask && !mask[p]) {
-        const v = (Math.floor((x - x0) / square) + Math.floor((y - y0) / square)) % 2 ? 236 : 255;
-        data[o] = data[o + 1] = data[o + 2] = v;
-        continue;
-      }
-      data[o] = rgb[p * 3];
-      data[o + 1] = rgb[p * 3 + 1];
-      data[o + 2] = rgb[p * 3 + 2];
-    }
-  }
-  return { width: w, height: h, data };
 }

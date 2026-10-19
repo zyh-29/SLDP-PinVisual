@@ -1,6 +1,10 @@
 import type { RasterImage } from '../convert';
-import { cellSizePx, findForeground, inkFromMask, patternFromSamples, type Rect, sampleCrop, thickenThinLines, toRgb } from '../foreground';
-import { findColouredCurves, findPlotArea, flatness, isPhotoLike, smartSubject } from '../smartCrop';
+import { cellSizePx, inkFromMask, patternFromSamples, sampleCrop, thickenThinLines } from '../pinSampling';
+import { findForeground, toRgb } from '../foreground';
+import type { Rect } from '../geometry';
+import { findColouredCurves } from '../curves';
+import { findPlotArea } from '../plotGrid';
+import { flatness, isPhotoLike, smartSubject } from '../smartCrop';
 
 type C = [number, number, number];
 
@@ -450,6 +454,18 @@ describe('tap to focus (a grid of pictures, e.g. image search results)', () => {
     // Tap near the card's corner, on its plain background, not on the shape itself.
     const result = smartSubject(rgb, img.width, img.height, opts, undefined, { x: c.x + 15, y: c.y + 15 });
     expect(near(result.box, expected(i), 3)).toBe(true);
+  });
+
+  it.each([0, 1, 2, 3, 4, 5])('tapping card %i on its shape, or on the card’s very edge, gives the same crop', (i) => {
+    const c = cardAt(i);
+    for (const tap of [
+      { x: c.x + 90, y: c.y + 90 },
+      { x: c.x + 1, y: c.y + CARD - 2 },
+      { x: c.x + CARD - 2, y: c.y + 1 },
+    ]) {
+      const result = smartSubject(rgb, img.width, img.height, opts, undefined, tap);
+      expect(near(result.box, expected(i), 3)).toBe(true);
+    }
   });
 
   it('a tap on the page between cards picks the nearest card', () => {

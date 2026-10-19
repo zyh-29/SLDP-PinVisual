@@ -1,21 +1,8 @@
 import { imageToPattern, type RasterImage } from '../convert';
-import {
-  AUTO_MIN,
-  autoTolerance,
-  cellSizePx,
-  dilate,
-  dragCrop,
-  estimateBackground,
-  findForeground,
-  inkFromMask,
-  labelComponents,
-  patternFromSamples,
-  sampleCrop,
-  smartCrop,
-  strokeWidth,
-  thickenThinLines,
-  toRgb,
-} from '../foreground';
+import { AUTO_MIN, autoTolerance, estimateBackground, findForeground, smartCrop, strokeWidth, toRgb } from '../foreground';
+import { cellSizePx, inkFromMask, patternFromSamples, sampleCrop, thickenThinLines } from '../pinSampling';
+import { dilate, labelComponents } from '../masks';
+import { dragCrop } from '../geometry';
 
 type Rgb3 = [number, number, number];
 
