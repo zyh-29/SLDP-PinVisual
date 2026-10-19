@@ -112,7 +112,9 @@ No server code or rewrite rules are needed: the build also writes the page at
 `/image`, `/saved`, `/device` and `404.html` (`scripts/web-routes.mjs`), so
 opening or refreshing any tab works on any static host (GitHub Pages, Netlify,
 Vercel, Cloudflare Pages, a plain web server). Check the build first with
-`npx expo serve` (root builds only). Rebuild after changing the folder: it is
+`npx expo serve` (root builds only). **Vercel:** import the GitHub repo at
+vercel.com/new and press Deploy; `vercel.json` holds the build settings, and
+every push to `main` redeploys. Rebuild after changing the folder: it is
 fixed at build time. The AI cut-out files (`ort/`, `models/`, about 15 MB) load
 only when a busy photo needs them. Saved patterns stay in each visitor's
 browser.
