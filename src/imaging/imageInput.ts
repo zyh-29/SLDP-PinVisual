@@ -31,6 +31,7 @@ export interface LiveCapture {
   flip: () => Promise<void>;
   snapshot: () => Promise<string>;
   focusAt: (x: number, y: number) => Promise<boolean>;
+  reportCost: (ms: number) => void;
 }
 
 export async function startLiveCapture(_o: {

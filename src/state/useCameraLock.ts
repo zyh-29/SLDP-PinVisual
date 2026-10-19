@@ -14,7 +14,7 @@ import { useEffect, useState } from 'react';
 import type { Point, Rect } from '@/imaging/geometry';
 import type { LiveCapture } from '@/imaging/imageInput';
 import type { Focus } from '@/imaging/smartCrop';
-import { smallGray, TargetTracker } from '@/imaging/tracker';
+import { type SmallGray, smallGray, TargetTracker } from '@/imaging/tracker';
 import type { PickedImage } from './useImageConversion';
 
 const iou = (a: Rect, b: Rect) => {
@@ -37,6 +37,13 @@ class CameraLock {
   private byTap = false;
   private previous: Rect | null = null;
   private lens = { x: -1, y: -1, at: 0 };
+  /** The last frame shrunk for the tracker: follow() and onTarget() see the same frame, so it's made once. */
+  private gray: { rgb: ArrayLike<number> | null; small: SmallGray | null } = { rgb: null, small: null };
+
+  private grayOf(rgb: ArrayLike<number>, width: number, height: number): SmallGray {
+    if (this.gray.rgb !== rgb || !this.gray.small) this.gray = { rgb, small: smallGray(rgb, width, height) };
+    return this.gray.small!;
+  }
 
   setCamera(camera: LiveCapture | null) {
     this.camera = camera;
@@ -44,7 +51,7 @@ class CameraLock {
 
   /** After a frame's smart crop: lock (auto or tapped) or sharpen the lock. True when it just locked. */
   onTarget(picked: PickedImage, target: Rect): boolean {
-    const gray = smallGray(picked.rgb, picked.raster.width, picked.raster.height);
+    const gray = this.grayOf(picked.rgb, picked.raster.width, picked.raster.height);
     if (this.pendingTap) {
       const at = this.pendingTap;
       this.pendingTap = null;
@@ -68,7 +75,7 @@ class CameraLock {
   /** A camera frame: where the locked item is now (see useCameraLock's follow). */
   follow(rgb: ArrayLike<number>, width: number, height: number): { focus: Focus; width: number } | null | undefined {
     if (!this.tracker.locked) return undefined;
-    const r = this.tracker.track(smallGray(rgb, width, height));
+    const r = this.tracker.track(this.grayOf(rgb, width, height));
     if (!r) {
       this.previous = null;
       return null;

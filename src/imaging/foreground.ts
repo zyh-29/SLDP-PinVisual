@@ -115,8 +115,31 @@ export function toRgb(img: RasterImage): Uint8ClampedArray {
 
 function median(values: number[]): number {
   if (!values.length) return 255;
-  const s = [...values].sort((a, b) => a - b);
-  return s[s.length >> 1];
+  // Quickselect: the middle value without sorting everything (this runs on every live camera frame).
+  const a = Float64Array.from(values);
+  const k = a.length >> 1;
+  let lo = 0;
+  let hi = a.length - 1;
+  while (lo < hi) {
+    const pivot = a[(lo + hi) >> 1];
+    let i = lo;
+    let j = hi;
+    while (i <= j) {
+      while (a[i] < pivot) i++;
+      while (a[j] > pivot) j--;
+      if (i <= j) {
+        const t = a[i];
+        a[i] = a[j];
+        a[j] = t;
+        i++;
+        j--;
+      }
+    }
+    if (k <= j) hi = j;
+    else if (k >= i) lo = i;
+    else break;
+  }
+  return a[k];
 }
 
 const dist = (rgb: ArrayLike<number>, i: number, c: Rgb) => Math.hypot(rgb[i] - c.r, rgb[i + 1] - c.g, rgb[i + 2] - c.b);

@@ -148,8 +148,11 @@ browser.
   blurred, because sensor noise would otherwise make every frame count as a
   photo and switch graph detection off; each pin is averaged over the last
   frames and only flips once it clearly changed, so noise and a shaking hand
-  don't make pins flicker; and frames are 640 px and at most 4 a second, so
-  a phone keeps up. **Lock:** once the camera finds an item (a graph, a
+  don't make pins flicker; and frames are 640 px and at most 4 a second,
+  paced to the phone: the analysis runs on the page's main thread (which
+  also shows the video), so each frame's cost is measured and a slower phone
+  (many Androids) gets longer gaps, keeping the main thread at most ~45% busy
+  and the preview smooth. **Lock:** once the camera finds an item (a graph, a
   shape, an object) on two frames in a row, it locks onto it (*Live · Locked*)
   and follows it as the phone moves, sideways, closer or further, until you
   tap another item, which it then locks onto instead (`src/imaging/tracker.ts`:

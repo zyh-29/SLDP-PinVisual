@@ -174,6 +174,11 @@ export interface LiveCapture {
    */
   snapshot: () => Promise<string>;
   /**
+   * How long the app took to analyse the last frame (ms, on the main thread). The capture paces itself to it:
+   * longer gaps between frames on slow phones, so the video and touches stay smooth.
+   */
+  reportCost: (ms: number) => void;
+  /**
    * Camera only: focus (and exposure) on this point of the picture, 0..1 across and down. False where the
    * browser gives no focus control (iPhones and most laptops focus by themselves).
    */
@@ -203,6 +208,8 @@ function nextFrame(video: FrameCallbackVideo): Promise<void> {
  * runs the whole conversion on every frame, and a camera picture has less fine detail anyway.
  */
 const WORKING_SIZE: Record<LiveSource, number> = { screen: 800, camera: 640 };
+/** The share of the main thread the analysis may use (see reportCost); the rest shows the video and takes touches. */
+const MAX_BUSY = 0.45;
 /** Shortest time between processed frames. A camera changes on every frame (noise), so it is paced a bit slower. */
 const MIN_INTERVAL: Record<LiveSource, number> = { screen: 200, camera: 250 };
 
@@ -383,8 +390,16 @@ export async function startLiveCapture(o: {
   // Labels and device lists are only complete once the camera is allowed.
   const cameras =
     kind === 'camera' ? (await navigator.mediaDevices.enumerateDevices().catch(() => [])).filter((d) => d.kind === 'videoinput').length : 0;
-  const minInterval = o.minIntervalMs ?? MIN_INTERVAL[kind];
+  const baseInterval = o.minIntervalMs ?? MIN_INTERVAL[kind];
+  // Paced to the device: each frame's analysis runs on the page's main thread, which also shows the video and
+  // handles touches. A slow phone (many Androids) is given longer between frames, so the main thread is never
+  // busy more than about 45% of the time; a fast one (iPhones, laptops) keeps the full rate. (Frames stay
+  // 640 px: smaller ones lose thin curves and gridlines, and the pins become unsteady.)
+  let minInterval = baseInterval;
   const workingSize = WORKING_SIZE[kind];
+  let cost = 0;
+  /** The capture's own share of the last frame (drawing it, cleaning it, the app's frame callback), ms. */
+  let prep = 0;
   const video: FrameCallbackVideo = document.createElement('video');
   video.srcObject = stream;
   video.muted = true;
@@ -427,6 +442,14 @@ export async function startLiveCapture(o: {
   const process = () => {
     if (stopped) return;
     lastRun = performance.now();
+    try {
+      processFrame();
+    } finally {
+      prep = performance.now() - lastRun;
+    }
+  };
+
+  const processFrame = () => {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     if (!ctx || !vw || !vh) return;
@@ -500,6 +523,13 @@ export async function startLiveCapture(o: {
       focusPoint = null;
       await video.play().catch(() => {});
     },
+    reportCost: (ms) => {
+      if (stopped || !(ms > 0)) return;
+      const total = ms + prep;
+      cost = cost ? 0.7 * cost + 0.3 * total : total;
+      // Started every cost / 0.45 ms, the main thread is busy at most 45% of the time.
+      minInterval = Math.max(baseInterval, Math.min(1500, cost / MAX_BUSY));
+    },
     focusAt: async (x, y) => {
       if (kind !== 'camera' || stopped) return false;
       focusPoint = { x, y };
@@ -555,7 +585,7 @@ export async function startLiveCapture(o: {
     };
     video.requestVideoFrameCallback(loop);
   } else {
-    poll = setInterval(onNewFrame, minInterval);
+    poll = setInterval(onNewFrame, baseInterval);
   }
   // The first frame: process it the moment it is decoded.
   video.addEventListener('loadeddata', onNewFrame, { once: true });

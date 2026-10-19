@@ -52,23 +52,42 @@ export function labelComponents(mask: Uint8Array, width: number, height: number)
 
 /** Grows every content pixel into a (2rx+1) x (2ry+1) block. Separable, O(pixels). */
 export function dilate(mask: Uint8Array, width: number, height: number, rx: number, ry: number): Uint8Array {
-  const pass = (src: Uint8Array, horizontal: boolean, r: number) => {
+  // Plain index arithmetic, row by row in memory order: this runs many times per live camera frame.
+  const horizontal = (src: Uint8Array, r: number) => {
     if (r <= 0) return src;
     const out = new Uint8Array(src.length);
-    const lines = horizontal ? height : width;
-    const len = horizontal ? width : height;
-    const at = (line: number, i: number) => (horizontal ? line * width + i : i * width + line);
-    for (let line = 0; line < lines; line++) {
-      // Running count of content pixels in the window [i - r, i + r].
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      // Running count of content pixels in the window [x - r, x + r].
       let count = 0;
-      for (let i = 0; i < Math.min(r, len); i++) count += src[at(line, i)];
-      for (let i = 0; i < len; i++) {
-        if (i + r < len) count += src[at(line, i + r)];
-        if (i - r - 1 >= 0) count -= src[at(line, i - r - 1)];
-        out[at(line, i)] = count > 0 ? 1 : 0;
+      const first = Math.min(r, width);
+      for (let x = 0; x < first; x++) count += src[row + x];
+      for (let x = 0; x < width; x++) {
+        if (x + r < width) count += src[row + x + r];
+        if (x - r - 1 >= 0) count -= src[row + x - r - 1];
+        out[row + x] = count > 0 ? 1 : 0;
       }
     }
     return out;
   };
-  return pass(pass(mask, true, Math.round(rx)), false, Math.round(ry));
+  const vertical = (src: Uint8Array, r: number) => {
+    if (r <= 0) return src;
+    const out = new Uint8Array(src.length);
+    // One running count per column, moved down a row at a time.
+    const count = new Int32Array(width);
+    const first = Math.min(r, height);
+    for (let y = 0; y < first; y++) for (let x = 0; x < width; x++) count[x] += src[y * width + x];
+    for (let y = 0; y < height; y++) {
+      const add = y + r < height ? (y + r) * width : -1;
+      const sub = y - r - 1 >= 0 ? (y - r - 1) * width : -1;
+      const row = y * width;
+      for (let x = 0; x < width; x++) {
+        if (add >= 0) count[x] += src[add + x];
+        if (sub >= 0) count[x] -= src[sub + x];
+        out[row + x] = count[x] > 0 ? 1 : 0;
+      }
+    }
+    return out;
+  };
+  return vertical(horizontal(mask, Math.round(rx)), Math.round(ry));
 }

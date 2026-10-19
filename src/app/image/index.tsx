@@ -87,6 +87,8 @@ export default function ImageScreen() {
 
   // Live camera: stay locked onto the item found (or tapped) while the phone moves.
   const lock = useCameraLock(live);
+  /** When the frame being analysed arrived: its cost (arrival to on screen) paces the live capture. */
+  const frameStart = useRef(0);
   const c = useImageConversion(picked, live, {
     removeBackground,
     removeClutter,
@@ -102,6 +104,12 @@ export default function ImageScreen() {
   });
   const { width: w, height: h, fg, result, graph, shape } = c;
   useLockTarget(lock, picked, c.target);
+  // A live frame is on screen: tell the capture how long it took, so slow phones get more time between frames.
+  useEffect(() => {
+    if (!live || !frameStart.current) return;
+    live.reportCost(performance.now() - frameStart.current);
+    frameStart.current = 0;
+  }, [picked, live]);
 
   // Pin lock. Locked (default): the pins follow the image. Unlocked: the user taps pins, and those edits win over
   // every setting. Edits (and the unlock) belong to the picture they were made on: a new picture discards them and
@@ -188,6 +196,7 @@ export default function ImageScreen() {
       const session = await startLiveCapture({
         source,
         onFrame: (raster) => {
+          frameStart.current = performance.now();
           const rgb = toRgb(raster);
           // The camera follows its locked item: the smart crop is pointed at where it is in this frame.
           if (source === 'camera') {

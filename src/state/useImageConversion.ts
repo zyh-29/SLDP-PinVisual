@@ -74,7 +74,8 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   // Smart Cut-Out (AI subject segmentation, on-device) only for photos with a busy background. Screenshots,
   // graphs and drawings (lots of perfectly flat colour) never get it automatically: the AI keeps one solid
   // object and would throw away thin curves.
-  const photoLike = useMemo(() => (picked ? isPhotoLike(picked.rgb, w, h) : false), [picked, w, h]);
+  // Not while live (Smart Cut-Out is off then): no point paying for it on every frame.
+  const photoLike = useMemo(() => (picked && !live ? isPhotoLike(picked.rgb, w, h) : false), [picked, live, w, h]);
   const busyPhoto = useMemo(
     () => (picked && photoLike ? estimateBackground(picked.rgb, w, h).noise > BUSY_BACKGROUND : false),
     [picked, photoLike, w, h],
