@@ -1,12 +1,13 @@
 # PinVisual BLE Protocol v1 (proposed)
 
 This is what the ESP32 firmware must implement to work with the app. It is a
-**proposal**: the app and its built-in mock board implement it, but no real
+**proposal**: the app and its test firmware model implement it, but no real
 firmware has been tested against it yet.
 
 Source of truth in the app: `src/protocol/messages.ts`, `src/protocol/chunking.ts`,
-`src/protocol/crc16.ts`. The mock board in `src/device/mock/MockFirmware.ts` is a
-working reference implementation of the firmware side (in TypeScript).
+`src/protocol/crc16.ts`. The test firmware model in
+`src/device/__tests__/support/MockFirmware.ts` is a working reference implementation of
+the firmware side (in TypeScript), used by the automated tests only.
 
 ---
 

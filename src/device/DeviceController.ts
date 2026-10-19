@@ -3,23 +3,20 @@ import { CommandClient, type CommandProgress, type CommandResult } from '@/proto
 import type { Command } from '@/protocol/messages';
 import type { DeviceDriver, DeviceLink, DiscoveredDevice, ScanHandle } from './types';
 
-export type DeviceMode = 'ble' | 'mock';
-
 export type ConnectionState =
   | { status: 'disconnected'; error?: string }
   | { status: 'connecting'; deviceName: string }
-  | { status: 'connected'; deviceName: string; deviceId: string; isMock: boolean; mtu: number; maxWriteSize: number };
+  | { status: 'connected'; deviceName: string; deviceId: string; mtu: number; maxWriteSize: number };
 
 export type CommandKind = Command['kind'];
 
 export type CommandState =
   | { status: 'idle' }
   | { status: 'sending'; kind: CommandKind; progress: CommandProgress | null }
-  | { status: 'succeeded'; kind: CommandKind; commandId: number; attempts: number; isMock: boolean; at: number }
+  | { status: 'succeeded'; kind: CommandKind; commandId: number; attempts: number; at: number }
   | { status: 'failed'; kind: CommandKind; message: string; at: number };
 
 export interface DeviceSnapshot {
-  mode: DeviceMode;
   connection: ConnectionState;
   command: CommandState;
   scanning: boolean;
@@ -44,12 +41,11 @@ export class DeviceController {
   private connectAttempt = 0;
 
   constructor(
-    private readonly drivers: Record<DeviceMode, DeviceDriver>,
-    initialMode: DeviceMode = 'ble',
+    /** The board connection (Bluetooth: react-native-ble-plx on phones, Web Bluetooth in browsers). */
+    readonly driver: DeviceDriver,
     private readonly scanDurationMs = 15_000,
   ) {
     this.snapshot = {
-      mode: initialMode,
       connection: { status: 'disconnected' },
       command: { status: 'idle' },
       scanning: false,
@@ -74,21 +70,8 @@ export class DeviceController {
     this.listeners.forEach((l) => l());
   }
 
-  get driver(): DeviceDriver {
-    return this.drivers[this.snapshot.mode];
-  }
-
   get isBusy(): boolean {
     return this.snapshot.command.status === 'sending';
-  }
-
-  // ---- mode ----
-  async setMode(mode: DeviceMode) {
-    if (mode === this.snapshot.mode) return;
-    if (this.isBusy) return;
-    this.stopScan();
-    await this.disconnect();
-    this.set({ mode, discovered: [], scanError: null, connection: { status: 'disconnected' }, command: { status: 'idle' } });
   }
 
   // ---- scanning ----
@@ -157,7 +140,6 @@ export class DeviceController {
           status: 'connected',
           deviceName: link.name,
           deviceId: link.id,
-          isMock: link.isMock,
           mtu: link.mtu,
           maxWriteSize: link.transport.maxWriteSize,
         },
@@ -217,10 +199,7 @@ export class DeviceController {
       return { ok: false, commandId: null, attempts: 0, failure: 'busy', message: 'Another command is still in progress.' };
     }
     if (!client || !link || this.snapshot.connection.status !== 'connected') {
-      const message =
-        this.snapshot.mode === 'mock'
-          ? 'Mock device is not connected. Connect it on the Device tab.'
-          : 'No board connected. Connect to the board on the Device tab first.';
+      const message = 'No board connected. Connect to the board on the Device tab first.';
       this.set({ command: { status: 'failed', kind: command.kind, message, at: Date.now() } });
       return { ok: false, commandId: null, attempts: 0, failure: 'invalid', message };
     }
@@ -240,7 +219,6 @@ export class DeviceController {
           kind: command.kind,
           commandId: result.commandId,
           attempts: result.attempts,
-          isMock: link.isMock,
           at: Date.now(),
         },
         lastAcknowledgedPattern: command.kind === 'pattern' ? command.pattern : null,

@@ -106,8 +106,8 @@ function SidebarStatus() {
   const t = useTheme();
   const { state } = useDevice();
   const s = connectionSummary(state.connection);
-  const fg = s.kind === 'mock' ? t.warning : s.kind === 'real' ? t.success : s.kind === 'busy' ? t.tint : t.textSecondary;
-  const icon: IconName = s.kind === 'mock' ? 'mock' : s.kind === 'real' ? 'connected' : s.kind === 'busy' ? 'connecting' : 'disconnected';
+  const fg = s.kind === 'real' ? t.success : s.kind === 'busy' ? t.tint : t.textSecondary;
+  const icon: IconName = s.kind === 'real' ? 'connected' : s.kind === 'busy' ? 'connecting' : 'disconnected';
   return (
     <View
       style={[styles.status, { backgroundColor: t.card, borderColor: t.separator }]}
@@ -119,7 +119,7 @@ function SidebarStatus() {
       <View style={{ flex: 1 }}>
         <Text style={[type.subhead, { color: fg, fontWeight: '600' }]}>{s.short}</Text>
         <Text style={[type.caption, { color: t.textSecondary }]} numberOfLines={2}>
-          {s.kind === 'mock' ? 'Simulated. No hardware.' : s.kind === 'real' && state.connection.status === 'connected' ? state.connection.deviceName : 'Open Device to connect'}
+          {s.kind === 'real' && state.connection.status === 'connected' ? state.connection.deviceName : 'Open Device to connect'}
         </Text>
       </View>
     </View>

@@ -1,5 +1,5 @@
 /**
- * The one device interface shared by the mock and Bluetooth implementations.
+ * The device interface the Bluetooth implementations (native and web) share.
  * UI code only talks to DeviceController, which only talks to these types.
  */
 
@@ -24,7 +24,6 @@ export interface DiscoveredDevice {
 export interface DeviceLink {
   readonly id: string;
   readonly name: string;
-  readonly isMock: boolean;
   readonly mtu: number;
   readonly transport: Transport;
   disconnect(): Promise<void>;
@@ -37,7 +36,6 @@ export interface ScanHandle {
 }
 
 export interface DeviceDriver {
-  readonly kind: 'ble' | 'mock';
   /**
    * True when the OS/browser shows its own device chooser (Web Bluetooth).
    * The controller then connects to the chosen device straight away.

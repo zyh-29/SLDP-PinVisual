@@ -4,7 +4,7 @@
  *
  * Works in Chrome and Edge on desktop and Android, on https:// or localhost.
  * Safari, Firefox and every iOS browser have no Web Bluetooth. They get a
- * clear message, and mock mode still works.
+ * clear message.
  *
  * NOT VERIFIED AGAINST HARDWARE.
  */
@@ -50,7 +50,7 @@ function bluetooth(): WbBluetooth | null {
 }
 
 const UNSUPPORTED =
-  'This browser cannot use Bluetooth. Use Chrome or Edge on a laptop or Android phone, or the mobile app. Mock mode works in every browser.';
+  'This browser cannot use Bluetooth. Use Chrome or Edge on a laptop or Android phone, or the mobile app.';
 
 function errorText(e: unknown): string {
   if (e instanceof DOMException && e.name === 'NotFoundError') return 'No board was chosen.';
@@ -62,7 +62,6 @@ const withTimeout = <T>(p: Promise<T>, ms: number, what: string) =>
   Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${what} timed out`)), ms))]);
 
 export class BleDriver implements DeviceDriver {
-  readonly kind = 'ble' as const;
   readonly selectsWithSystemPicker = true;
   /** Devices the user picked this session, by id (Web Bluetooth cannot look them up later). */
   private picked = new Map<string, WbDevice>();
@@ -177,7 +176,6 @@ export class BleDriver implements DeviceDriver {
     return {
       id: deviceId,
       name: device.name ?? name,
-      isMock: false,
       mtu: DEFAULT_MTU,
       transport,
       async disconnect() {

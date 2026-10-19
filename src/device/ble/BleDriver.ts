@@ -87,12 +87,11 @@ async function waitForPoweredOn(m: BleManager, timeoutMs = 4000): Promise<string
 }
 
 export class BleDriver implements DeviceDriver {
-  readonly kind = 'ble' as const;
 
   async availability(): Promise<string | null> {
     if (Platform.OS === 'web') return 'Bluetooth is not available on web.';
     if (!getManager()) {
-      return 'Bluetooth needs the development build. It is not available in Expo Go - use Mock mode there.';
+      return 'Bluetooth needs the development build. It is not available in Expo Go.';
     }
     return null;
   }
@@ -230,7 +229,6 @@ export class BleDriver implements DeviceDriver {
     return {
       id: deviceId,
       name: device.name ?? name,
-      isMock: false,
       mtu,
       transport,
       async disconnect() {

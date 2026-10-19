@@ -9,16 +9,14 @@ import { radius, type, useTheme } from './theme';
 /** iOS 26+ wraps header items in its own glass capsule, so the pill drops its background there. */
 const SYSTEM_DRAWS_CAPSULE = Platform.OS === 'ios' && parseInt(String(Platform.Version), 10) >= 26;
 
-export function connectionSummary(c: ConnectionState): { short: string; long: string; kind: 'off' | 'busy' | 'real' | 'mock' } {
+export function connectionSummary(c: ConnectionState): { short: string; long: string; kind: 'off' | 'busy' | 'real' } {
   switch (c.status) {
     case 'disconnected':
       return { short: 'Not Connected', long: 'No board connected', kind: 'off' };
     case 'connecting':
       return { short: 'Connecting…', long: `Connecting to ${c.deviceName}`, kind: 'busy' };
     case 'connected':
-      return c.isMock
-        ? { short: 'Mock Device', long: 'Mock device connected. Simulated, no hardware.', kind: 'mock' }
-        : { short: 'Connected', long: `Connected to board ${c.deviceName}`, kind: 'real' };
+      return { short: 'Connected', long: `Connected to board ${c.deviceName}`, kind: 'real' };
   }
 }
 
@@ -31,7 +29,6 @@ export function ConnectionPill() {
     off: { fg: t.textSecondary, bg: t.fill, icon: 'disconnected' as IconName },
     busy: { fg: t.tint, bg: t.tintSoft, icon: null },
     real: { fg: t.success, bg: t.successSoft, icon: 'connected' as IconName },
-    mock: { fg: t.warning, bg: t.warningSoft, icon: 'mock' as IconName },
   }[s.kind];
 
   return (

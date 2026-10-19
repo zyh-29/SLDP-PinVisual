@@ -129,7 +129,7 @@ export function cellsFromString(s: string, rows: number, cols: number): Pattern 
   return { rows, cols, cells: Array.from(s, (ch) => (ch === '1' ? 1 : 0)) };
 }
 
-/** Suggested servo wiring for a pin index (documentation / mock display only). */
+/** Suggested servo wiring for a pin index (documentation only). */
 export function servoForPin(index: number): { board: number; i2cAddress: number; channel: number } {
   const board = Math.floor(index / SERVO_LAYOUT.channelsPerBoard);
   return {

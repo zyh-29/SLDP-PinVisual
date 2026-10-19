@@ -104,7 +104,7 @@ export function encodeCommand(commandId: number, command: Command): Uint8Array {
     : encodeReset(commandId);
 }
 
-/** ACK payload: acknowledged type(u8) status(u8). Used by firmware + mock. */
+/** ACK payload: acknowledged type(u8) status(u8). Used by the firmware (and the test firmware model). */
 export function encodeAck(commandId: number, ackedType: number, status: number): Uint8Array {
   return frame(MessageType.Ack, commandId, Uint8Array.of(ackedType, status));
 }
@@ -169,7 +169,7 @@ export function decodeAck(bytes: Uint8Array): Ack | null {
   return { commandId: message.commandId, ackedType: message.payload[0], status: message.payload[1] };
 }
 
-/** Validates a SET_PATTERN payload against the board's grid (used by firmware + mock). */
+/** Validates a SET_PATTERN payload against the board's grid (used by the firmware and the test firmware model). */
 export function validateSetPatternPayload(
   payload: Uint8Array,
   boardRows: number,

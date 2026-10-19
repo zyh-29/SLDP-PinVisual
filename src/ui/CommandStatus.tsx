@@ -33,9 +33,7 @@ export function CommandStatus({
     }
     case 'succeeded':
       if (command.kind === 'pattern') {
-        return command.isMock ? (
-          <StatusBanner tone="success" title="Mock board received pattern" message="Simulated acknowledgement. No hardware was involved." />
-        ) : (
+        return (
           <StatusBanner
             tone="success"
             title="Board received pattern"
@@ -43,9 +41,7 @@ export function CommandStatus({
           />
         );
       }
-      return command.isMock ? (
-        <StatusBanner tone="success" title="Mock board acknowledged reset" message="Simulated. No hardware was involved." />
-      ) : (
+      return (
         <StatusBanner
           tone="success"
           title="Board acknowledged reset"

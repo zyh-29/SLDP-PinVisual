@@ -15,7 +15,7 @@ boards. It runs fully offline, with no accounts and no cloud.
 | Feature | State |
 |---|---|
 | Manual grid editing, Clear Grid | ✅ Working; tested in the iOS simulator (Expo Go) |
-| Send Pattern / Reset Physical Pins to **mock device** | ✅ Working; covered by automated tests (not tapped through in the simulator) |
+| Send Pattern / Reset Physical Pins | ✅ Covered by automated tests against a simulated board (test-only); needs a real board to try in the app |
 | Protocol: framing, CRC, chunking, command IDs, retries, timeouts, ACK matching | ✅ Implemented and unit-tested against the simulated firmware |
 | Image → pins (background removal, axis/grid removal for graphs, label removal, smart + manual crop, thin-line thickening, live screen sharing on web) | ✅ Unit-tested, and clicked through in the web app with a textbook-style triangle diagram; the photo picker and crop dragging still need a manual test on a phone |
 | Shape snapping (triangle … hexagon, circle/oval), drawn filled | ✅ Unit-tested and checked in the web app |
@@ -23,7 +23,7 @@ boards. It runs fully offline, with no accounts and no cloud.
 | Letter recognition | ⏳ Planned |
 | Save / load / delete patterns on the phone | ✅ Store logic unit-tested; UI rendered in the simulator |
 | **Real Bluetooth** (scan, connect, write, notify) | ⚠️ Implemented, **never run**: needs a development build, a physical phone, and firmware |
-| **Web app** layout (laptop 1280/1440, tablet 820, phone 390) | ✅ Checked in headless Chrome: no horizontal overflow, no console errors; mock connect → toggle → send → reset clicked through end to end |
+| **Web app** layout (laptop 1280/1440, tablet 820, phone 390) | ✅ Checked in headless Chrome: no horizontal overflow, no console errors |
 | **Web Bluetooth** (Chrome/Edge) | ⚠️ Implemented, **never run** against a board |
 | BLE UUIDs | ⛔ **Placeholders** until the firmware defines them |
 | Physical pin positions | ⛔ Not verifiable: the hardware has no position sensing. The app only reports that the board acknowledged a command. |
@@ -37,21 +37,20 @@ src/
   domain/pattern.ts    Grid model, pin order, bit packing
   protocol/            Message encoding, CRC-16, chunking, CommandClient (acks, retries)
   device/
-    types.ts           DeviceDriver + Transport interfaces, shared by mock and BLE
+    types.ts           DeviceDriver + Transport interfaces (BLE on phones and on the web)
     DeviceController   Connection state, the one-command-at-a-time lock, send/reset
     ble/BleDriver      react-native-ble-plx (iOS/Android); BleDriver.web.ts = Web Bluetooth
-    mock/              Simulated board that runs the same protocol (MockFirmware)
+    __tests__/support  Simulated board for the automated tests only (MockFirmware); not in the app
   imaging/             Pixel conversion (pure), PNG decoding, image loading (.web.ts = canvas)
   storage/             Saved patterns (AsyncStorage, local only)
   state/               React providers and hooks
   ui/                  Theme, components, AppTabs (native tabs) / AppTabs.web (sidebar), layout breakpoints
 ```
 
-The **mock device** connects through the same `DeviceDriver`/`Transport`
-interface as Bluetooth and runs a software copy of the firmware protocol. Mock
-mode is always labelled "Mock Device" and never shown as "Connected". From the
-Device tab you can make the simulated board slow, lossy, silent or faulty to
-test retries, timeouts and error handling.
+The app only connects to real boards over Bluetooth. The automated tests use a
+simulated board (`src/device/__tests__/support`) that runs a software copy of the
+firmware protocol through the same `DeviceDriver`/`Transport` interface, and can be
+slow, lossy, silent or faulty to test retries, timeouts and error handling.
 
 ## Setup
 
@@ -90,7 +89,7 @@ looks for a development build by default, because `expo-dev-client` is
 installed. Without one it fails with `No development build ... is installed`.
 
 Bluetooth cannot run in Expo Go. The app detects this and says so on the Device
-tab. Mock mode, the grid, image conversion and saved patterns all work.
+tab. The grid, image conversion and saved patterns all work.
 
 ### Web app (laptops, tablets and phones in a browser)
 
@@ -127,8 +126,7 @@ browser.
 - **Bluetooth on web** uses Web Bluetooth (`src/device/ble/BleDriver.web.ts`) in
   **Chrome or Edge** on desktop and Android. The browser shows its own device
   chooser, and the app connects to the board you pick. Safari, Firefox and
-  every iOS browser have no Web Bluetooth, so the Device tab says so and mock
-  mode still works. Web Bluetooth doesn't report the MTU, so the app uses safe
+  every iOS browser have no Web Bluetooth, so the Device tab says so. Web Bluetooth doesn't report the MTU, so the app uses safe
   20-byte writes.
 - **Images on web** are read with a canvas (`src/imaging/loadImage.web.ts`).
   The conversion code is the same as in the mobile app.
@@ -178,8 +176,7 @@ The simulator cannot test the following:
   sizes, SF Symbols (Material Symbols on Android), light and dark mode.
 - Text colours are tuned for WCAG AA contrast.
 - Status never relies on colour alone. Raised pins are solid domes and lowered
-  pins are hollow rings. Every status has an icon and text, and mock mode has
-  its own icon and label.
+  pins are hollow rings. Every status has an icon and text.
 - Grid cells are at least 40 pt and fill the width. On very narrow screens or
   large grids, the grid scrolls sideways instead of shrinking.
 - Screen readers: each pin is announced as "Row r, column c", value "raised" or

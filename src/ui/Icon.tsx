@@ -11,7 +11,6 @@ const ICONS = {
   connected: { ios: 'checkmark.circle.fill', android: 'bluetooth_connected', web: 'bluetooth_connected' },
   disconnected: { ios: 'circle.slash', android: 'bluetooth_disabled', web: 'bluetooth_disabled' },
   connecting: { ios: 'ellipsis.circle', android: 'bluetooth_searching', web: 'bluetooth_searching' },
-  mock: { ios: 'testtube.2', android: 'science', web: 'science' },
   send: { ios: 'arrow.up.circle.fill', android: 'upload', web: 'upload' },
   reset: { ios: 'arrow.down.to.line', android: 'vertical_align_bottom', web: 'vertical_align_bottom' },
   clear: { ios: 'eraser', android: 'ink_eraser', web: 'ink_eraser' },

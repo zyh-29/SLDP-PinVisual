@@ -1,18 +1,17 @@
 import { GRID } from '@/config/hardware';
 import { DEFAULT_MTU, maxWriteSizeForMtu } from '@/protocol/chunking';
-import type { DeviceDriver, DeviceLink, ScanHandle, Transport } from '../types';
+import type { DeviceDriver, DeviceLink, ScanHandle, Transport } from '../../types';
 import { type MockBehavior, MockFirmware } from './MockFirmware';
 
 export const MOCK_DEVICE_ID = 'mock-device';
 export const MOCK_DEVICE_NAME = 'Mock Board (simulated)';
 
 /**
- * Simulated board. Uses the default BLE MTU (23 bytes -> 20-byte writes) so
+ * Simulated board, for tests only (the app connects to real boards over Bluetooth). Uses the default BLE MTU (23 bytes -> 20-byte writes) so
  * chunking is exercised exactly as on a real link that never negotiated a
  * larger MTU.
  */
 export class MockDriver implements DeviceDriver {
-  readonly kind = 'mock' as const;
   behavior: MockBehavior = 'normal';
   /** The firmware model of the currently connected mock link, if any. */
   firmware: MockFirmware | null = null;
@@ -72,7 +71,6 @@ export class MockDriver implements DeviceDriver {
     return {
       id: MOCK_DEVICE_ID,
       name: MOCK_DEVICE_NAME,
-      isMock: true,
       mtu: DEFAULT_MTU,
       transport,
       disconnect: async () => {

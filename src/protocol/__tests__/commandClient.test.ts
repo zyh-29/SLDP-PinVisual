@@ -1,5 +1,5 @@
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
-import { MockFirmware, type MockBehavior } from '@/device/mock/MockFirmware';
+import { MockFirmware, type MockBehavior } from '@/device/__tests__/support/MockFirmware';
 import type { Transport } from '@/device/types';
 import { CommandClient } from '../CommandClient';
 import { AckStatus, encodeAck, MessageType } from '../messages';

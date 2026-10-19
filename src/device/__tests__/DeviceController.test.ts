@@ -1,10 +1,10 @@
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
 import { DeviceController } from '../DeviceController';
-import { MOCK_DEVICE_ID, MOCK_DEVICE_NAME, MockDriver } from '../mock/MockDriver';
 import type { DeviceDriver } from '../types';
+import { MOCK_DEVICE_ID, MOCK_DEVICE_NAME, MockDriver } from './support/MockDriver';
 
+/** Bluetooth where it can't run (e.g. Expo Go). */
 const unavailableBle: DeviceDriver = {
-  kind: 'ble',
   availability: async () => 'Bluetooth needs the development build.',
   ensureReady: async () => null,
   scan: () => ({ stop() {} }),
@@ -13,9 +13,10 @@ const unavailableBle: DeviceDriver = {
   },
 };
 
+/** A controller talking to a simulated board (test double for a Bluetooth link). */
 function setup() {
   const mock = new MockDriver();
-  const controller = new DeviceController({ ble: unavailableBle, mock }, 'mock');
+  const controller = new DeviceController(mock);
   return { mock, controller };
 }
 
@@ -29,14 +30,14 @@ describe('DeviceController', () => {
     expect(controller.getSnapshot().command).toMatchObject({ status: 'failed', kind: 'reset' });
   });
 
-  it('labels the mock connection as mock and reports acknowledged sends', async () => {
+  it('connects and reports acknowledged sends', async () => {
     const { controller, mock } = setup();
     await controller.connect({ id: MOCK_DEVICE_ID, name: MOCK_DEVICE_NAME });
-    expect(controller.getSnapshot().connection).toMatchObject({ status: 'connected', isMock: true });
+    expect(controller.getSnapshot().connection).toMatchObject({ status: 'connected', deviceName: MOCK_DEVICE_NAME });
 
     const res = await controller.sendPattern(pattern);
     expect(res.ok).toBe(true);
-    expect(controller.getSnapshot().command).toMatchObject({ status: 'succeeded', kind: 'pattern', isMock: true });
+    expect(controller.getSnapshot().command).toMatchObject({ status: 'succeeded', kind: 'pattern' });
     expect(controller.getSnapshot().lastAcknowledgedPattern).toEqual(pattern);
     expect(mock.firmware?.simulatedPins).toEqual(pattern);
 
@@ -54,18 +55,9 @@ describe('DeviceController', () => {
   });
 
   it('surfaces why Bluetooth is unavailable instead of pretending to scan', async () => {
-    const { controller } = setup();
-    await controller.setMode('ble');
+    const controller = new DeviceController(unavailableBle);
     await controller.startScan();
     expect(controller.getSnapshot().scanError).toMatch(/development build/);
     expect(controller.getSnapshot().scanning).toBe(false);
-  });
-
-  it('disconnects when switching modes', async () => {
-    const { controller } = setup();
-    await controller.connect({ id: MOCK_DEVICE_ID, name: MOCK_DEVICE_NAME });
-    await controller.setMode('ble');
-    expect(controller.getSnapshot().connection.status).toBe('disconnected');
-    expect(controller.getSnapshot().mode).toBe('ble');
   });
 });
