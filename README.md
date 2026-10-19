@@ -149,7 +149,26 @@ browser.
   photo and switch graph detection off; each pin is averaged over the last
   frames and only flips once it clearly changed, so noise and a shaking hand
   don't make pins flicker; and frames are 640 px and at most 4 a second, so
-  a phone keeps up. Phones open the back camera; **Flip Camera** appears
+  a phone keeps up. **Lock:** once the camera finds an item (a graph, a
+  shape, an object) on two frames in a row, it locks onto it (*Live · Locked*)
+  and follows it as the phone moves, sideways, closer or further, until you
+  tap another item, which it then locks onto instead (`src/imaging/tracker.ts`:
+  each frame it searches near the item's last place, at a few sizes, for the
+  best match to a small picture of it; normalised cross-correlation). The
+  smart crop is pointed at the item every frame, the lens is asked to focus
+  on it, and a locked graph keeps its units as you zoom: its scale is resized
+  by how much bigger the tracked graph has become. Auto Crop or dragging the
+  crop box releases the lock; so does the item staying out of view for ~3 s.
+  **Focus:** phones with several back cameras sometimes
+  give the browser a fixed-focus one (ultra-wide, depth), so the app checks
+  and, if needed, switches to a back camera that can autofocus (remembered
+  for next time), and keeps focus and exposure continuous. Tapping the
+  picture also focuses the lens there (Chrome on Android; iPhones focus by
+  themselves). Each frame's sharpness is measured; while the lens refocuses,
+  blurry frames are skipped (the pins keep the last sharp result, and the
+  badge says *Focusing…*), and after about 2 s of blur a tip suggests moving
+  back a little. **Capture** refocuses first and keeps the sharpest of the
+  next frames (waiting up to about 2 s for one as sharp as the live view). Phones open the back camera; **Flip Camera** appears
   when there is a front one too. **Capture** takes a photo (the camera's full
   picture, cleaned like the live frames) and carries on with it as a still
   picture, keeping whatever you tapped or cropped; Smart Cut-Out can then help

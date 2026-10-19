@@ -1,5 +1,5 @@
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
-import { denoiseFrame, steadyPins } from '../cameraFrame';
+import { denoiseFrame, FocusGate, sharpness, steadyPins } from '../cameraFrame';
 import { toRgb } from '../foreground';
 import { smartSubject, isPhotoLike } from '../smartCrop';
 
@@ -81,6 +81,82 @@ describe('camera frames', () => {
     const tiny = new Uint8ClampedArray([1, 2, 3, 4]);
     denoiseFrame(tiny, 1, 1);
     expect(Array.from(tiny)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe('focus: sharpness and the blur gate', () => {
+  /** A page of thin dark strokes; `blur` box-blurs it that many times (a camera out of focus). */
+  function page(blur: number) {
+    const W = 160;
+    const H = 120;
+    const d = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const ink = x % 16 < 2 || (y % 20 < 2 && x > 30) || Math.abs(y - 0.5 * x) < 1.2;
+        d.set(ink ? [40, 40, 40, 255] : [235, 235, 230, 255], (y * W + x) * 4);
+      }
+    for (let i = 0; i < blur; i++) denoiseFrame(d, W, H);
+    return sharpness(d, W, H);
+  }
+
+  it('drops steadily as the picture goes out of focus', () => {
+    const s = [0, 1, 3, 6].map(page);
+    for (let i = 1; i < s.length; i++) expect(s[i]).toBeLessThan(s[i - 1] * 0.8);
+    expect(s[3]).toBeLessThan(s[0] * 0.2);
+  });
+
+  it('tells a blurred frame from a sharp one through camera noise (640 x 360 frames, noise on both)', () => {
+    const W = 640;
+    const H = 360;
+    const make = (blur: number, seed: number) => {
+      const n = noise(seed);
+      const d = new Uint8ClampedArray(W * H * 4);
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          const ink = (x > 200 && x < 440 && y > 80 && y < 280) || (x % 40 < 3 && y > 300);
+          d.set(ink ? [240, 140, 30, 255] : [150, 110, 75, 255], (y * W + x) * 4);
+        }
+      for (let i = 0; i < blur; i++) denoiseFrame(d, W, H); // 3 x 3 blur, many times: a defocused lens
+      for (let i = 0; i < d.length; i++) if (i % 4 !== 3) d[i] += n(10);
+      return sharpness(d, W, H);
+    };
+    const sharp = [1, 2, 3].map((s) => make(0, s));
+    const blurred = [1, 2, 3].map((s) => make(12, s));
+    expect(Math.max(...blurred)).toBeLessThan(Math.min(...sharp) * 0.5);
+  });
+
+  it('skips a blurry frame while the camera refocuses, then uses the sharp ones again', () => {
+    const g = new FocusGate();
+    const sharp = page(0);
+    const blurred = page(4);
+    expect(g.accept(sharp)).toBe(true);
+    expect(g.accept(sharp * 0.95)).toBe(true);
+    expect(g.accept(blurred)).toBe(false);
+    expect(g.blurryFor).toBe(1);
+    expect(g.accept(sharp)).toBe(true);
+    expect(g.blurryFor).toBe(0);
+  });
+
+  it('never freezes: after a few blurry frames in a row it uses one anyway', () => {
+    const g = new FocusGate(0.5, 3);
+    g.accept(1000);
+    const used = Array.from({ length: 8 }, () => g.accept(100));
+    expect(used.slice(0, 3)).toEqual([false, false, false]);
+    expect(used[3]).toBe(true);
+    expect(g.blurryFor).toBeGreaterThanOrEqual(4);
+  });
+
+  it('a plainer new scene is soon accepted as sharp (the best decays)', () => {
+    const g = new FocusGate();
+    g.accept(1000);
+    let n = 1;
+    g.accept(300);
+    while (g.blurryFor > 0 && n < 40) {
+      g.accept(300);
+      n++;
+    }
+    // About 7 frames (under 2 s at 4 frames a second).
+    expect(n).toBeLessThanOrEqual(8);
   });
 });
 

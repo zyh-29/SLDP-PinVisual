@@ -38,6 +38,79 @@ export function denoiseFrame(rgba: Uint8ClampedArray, width: number, height: num
   }
 }
 
+/**
+ * How sharp a frame is: the mean squared brightness step between neighbouring pixels, measured on a copy
+ * averaged into blocks (about 120 blocks on the short side). Edges in focus are steep, so it is high; while the
+ * camera hunts for focus (or the hand moves) edges smear and it drops. The blocks matter: sensor noise is just as
+ * strong on a blurred frame, and pixel by pixel it would drown the difference; averaging removes the noise but
+ * keeps the edges. Only meaningful compared with other frames of the same scene.
+ */
+export function sharpness(rgba: ArrayLike<number>, width: number, height: number): number {
+  const b = Math.max(1, Math.round(Math.min(width, height) / 120));
+  const w = Math.floor(width / b);
+  const h = Math.floor(height / b);
+  if (w < 2 || h < 2) return 0;
+  const lum = new Float32Array(w * h);
+  for (let y = 0; y < h * b; y++)
+    for (let x = 0; x < w * b; x++) {
+      const p = (y * width + x) * 4;
+      lum[Math.floor(y / b) * w + Math.floor(x / b)] += 0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2];
+    }
+  let sum = 0;
+  for (let y = 0; y < h - 1; y++)
+    for (let x = 0; x < w - 1; x++) {
+      const i = y * w + x;
+      const dx = lum[i + 1] - lum[i];
+      const dy = lum[i + w] - lum[i];
+      sum += dx * dx + dy * dy;
+    }
+  return sum / ((w - 1) * (h - 1) * b ** 4);
+}
+
+/**
+ * Decides which live frames are sharp enough to use. A frame counts as blurry when its sharpness is below
+ * `ratio` of the recent best (the best decays a little each frame, so a new, plainer scene is soon accepted).
+ * Blurry frames are skipped, keeping the last sharp result on the pins, but never more than `maxSkip` in a row,
+ * so the pins can't freeze.
+ */
+export class FocusGate {
+  private best = 0;
+  private skipped = 0;
+  /** Blurry frames in a row (skipped or not). */
+  blurryFor = 0;
+
+  constructor(
+    private readonly ratio = 0.5,
+    private readonly maxSkip = 3,
+    private readonly decay = 0.92,
+  ) {}
+
+  /** True to use this frame. */
+  accept(s: number): boolean {
+    this.best = Math.max(s, this.best * this.decay);
+    const blurry = s < this.best * this.ratio;
+    this.blurryFor = blurry ? this.blurryFor + 1 : 0;
+    if (!blurry || this.skipped >= this.maxSkip) {
+      this.skipped = 0;
+      return true;
+    }
+    this.skipped++;
+    return false;
+  }
+
+  /** The recent best sharpness: what "in focus" looks like for this scene right now. */
+  get recentBest() {
+    return this.best;
+  }
+
+  /** A new scene (another camera): forget the old best. */
+  reset() {
+    this.best = 0;
+    this.skipped = 0;
+    this.blurryFor = 0;
+  }
+}
+
 export interface SteadyPins {
   /** Running average per pin, 0..1. */
   avg: Float32Array;

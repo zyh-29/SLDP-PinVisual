@@ -8,7 +8,7 @@ import { GRID } from '@/config/hardware';
 import { cellsToString, type Pattern, togglePin } from '@/domain/pattern';
 import { toGrayscale } from '@/imaging/convert';
 import { DEFAULT_PIN_FILL, toRgb } from '@/imaging/foreground';
-import { fullRect, type Point, type Rect } from '@/imaging/geometry';
+import { fullRect, type Rect } from '@/imaging/geometry';
 import {
   type ImageSource,
   type LiveCapture,
@@ -24,6 +24,8 @@ import { renderCrop } from '@/imaging/pinSampling';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { smartCutoutAvailable } from '@/imaging/segment';
 import { usePattern } from '@/state/PatternProvider';
+import type { Focus } from '@/imaging/smartCrop';
+import { useCameraLock, useLockTarget } from '@/state/useCameraLock';
 import { type GraphRange, type PickedImage, useImageConversion } from '@/state/useImageConversion';
 import { Button, Columns, Label, Screen, Section, Separator, StatusBanner } from '@/ui/components';
 import { CropEditor } from '@/ui/CropEditor';
@@ -64,7 +66,7 @@ export default function ImageScreen() {
   /** null = automatic (smart crop). */
   const [manualCrop, setManualCrop] = useState<Rect | null>(null);
   /** A point the user tapped on the picture: the smart crop focuses on what's there (e.g. one picture in a grid). */
-  const [focus, setFocus] = useState<Point | null>(null);
+  const [focus, setFocus] = useState<Focus | null>(null);
   const [dragging, setDragging] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   /** The user's pin edits and lock state, tied to the picture they were made on (see the pin lock below). */
@@ -74,12 +76,17 @@ export default function ImageScreen() {
   /** null = automatic: axes and gridlines are removed when the image looks like a graph. */
   const [linesOverride, setLinesOverride] = useState<boolean | null>(null);
   const [live, setLive] = useState<LiveCapture | null>(null);
+  /** Live camera focus: 0 sharp, 1 refocusing, 2 can't get sharp. */
+  const [focusTrouble, setFocusTrouble] = useState<0 | 1 | 2>(0);
+  const cameraTrouble = live?.kind === 'camera' ? focusTrouble : 0;
   /** Graphs: how much of the graph the pins show (around the curve's vertex or middle), at its true proportions. */
   const [graphRange, setGraphRange] = useState<GraphRange>('5');
 
   // Stop screen sharing when the session is replaced or the screen goes away.
   useEffect(() => () => live?.stop(), [live]);
 
+  // Live camera: stay locked onto the item found (or tapped) while the phone moves.
+  const lock = useCameraLock(live);
   const c = useImageConversion(picked, live, {
     removeBackground,
     removeClutter,
@@ -91,8 +98,10 @@ export default function ImageScreen() {
     focus,
     linesOverride,
     graphRange,
+    trackedWidth: lock.width,
   });
   const { width: w, height: h, fg, result, graph, shape } = c;
+  useLockTarget(lock, picked, c.target);
 
   // Pin lock. Locked (default): the pins follow the image. Unlocked: the user taps pins, and those edits win over
   // every setting. Edits (and the unlock) belong to the picture they were made on: a new picture discards them and
@@ -119,6 +128,7 @@ export default function ImageScreen() {
   };
 
   const resetForNewImage = () => {
+    lock.release();
     setManualCrop(null);
     setFocus(null);
     c.resetGraph();
@@ -132,7 +142,7 @@ export default function ImageScreen() {
   const load = async (
     source: ImageSource,
     /** A capture from the live camera: keeps what the user tapped or cropped (given at `fromWidth`), rescaled. */
-    keep?: { focus: Point | null; crop: Rect | null; fromWidth: number },
+    keep?: { focus: Focus | null; crop: Rect | null; fromWidth: number },
   ) => {
     setError(null);
     setLoading(true);
@@ -144,7 +154,7 @@ export default function ImageScreen() {
       resetForNewImage();
       if (keep && keep.fromWidth > 0) {
         const k = raster.width / keep.fromWidth;
-        if (keep.focus) setFocus({ x: keep.focus.x * k, y: keep.focus.y * k });
+        if (keep.focus) setFocus({ ...keep.focus, x: keep.focus.x * k, y: keep.focus.y * k });
         if (keep.crop) setManualCrop({ x: keep.crop.x * k, y: keep.crop.y * k, width: keep.crop.width * k, height: keep.crop.height * k });
       }
       AccessibilityInfo.announceForAccessibility(
@@ -178,11 +188,19 @@ export default function ImageScreen() {
       const session = await startLiveCapture({
         source,
         onFrame: (raster) => {
-          setPicked({ uri: '', raster, rgb: toRgb(raster), gray: toGrayscale(raster) });
+          const rgb = toRgb(raster);
+          // The camera follows its locked item: the smart crop is pointed at where it is in this frame.
+          if (source === 'camera') {
+            const at = lock.follow(rgb, raster.width, raster.height);
+            if (at !== undefined) setFocus(at);
+          }
+          setPicked({ uri: '', raster, rgb, gray: toGrayscale(raster) });
           // Keep the user's crop while sharing, unless the shared window shrank under it.
           setManualCrop((r) => (r && (r.x + r.width > raster.width + 0.5 || r.y + r.height > raster.height + 0.5) ? null : r));
         },
         onEnd: freeze,
+        // 0 in focus, 1 refocusing (a frame or two), 2 struggling (about 2 s): shown on the picture.
+        onFocus: (blurryFor) => setFocusTrouble(blurryFor >= 8 ? 2 : blurryFor >= 2 ? 1 : 0),
       });
       if (!session) return;
       live?.stop();
@@ -323,20 +341,40 @@ export default function ImageScreen() {
                   <CropEditor
                     uri={picked.uri}
                     backdrop={live ? <LiveVideo video={live.video} /> : undefined}
-                    badge={live ? <LiveBadge /> : undefined}
+                    badge={live ? <LiveBadge focusing={cameraTrouble > 0} locked={lock.locked} /> : undefined}
                     imageWidth={w}
                     imageHeight={h}
                     crop={c.crop}
-                    onChange={setManualCrop}
+                    onChange={(r) => {
+                      // Your own box is fixed in the picture: the camera stops following an item.
+                      lock.release();
+                      setManualCrop(r);
+                    }}
                     focus={manualCrop ? null : focus}
                     onTap={(point) => {
                       // Tap a picture, a curve or a subject: the smart crop focuses on it (your own box gives way to it).
                       setManualCrop(null);
-                      setFocus(point);
-                      AccessibilityInfo.announceForAccessibility('Cropped to what you tapped');
+                      setFocus({ ...point, tap: true });
+                      if (live?.kind === 'camera') {
+                        // Lock onto the tapped item from now on (another graph may have other units: read them again),
+                        // and focus the lens there (where the browser allows it).
+                        lock.tap(point);
+                        c.resetGraph();
+                        if (w && h) live.focusAt(point.x / w, point.y / h).catch(() => {});
+                      }
+                      AccessibilityInfo.announceForAccessibility(
+                        live?.kind === 'camera' ? 'Locked onto what you tapped' : 'Cropped to what you tapped',
+                      );
                     }}
                     onDragging={setDragging}
                   />
+                  {cameraTrouble === 2 ? (
+                    <StatusBanner
+                      tone="neutral"
+                      title="Hard to focus"
+                      message="Hold the phone a little further back (about 15 cm or more), keep it still, and tap what you want sharp."
+                    />
+                  ) : null}
                   <View style={styles.buttonRow}>
                     <Button
                       title="Auto Crop"
@@ -346,6 +384,7 @@ export default function ImageScreen() {
                       style={{ flex: 1 }}
                       disabled={!manualCrop && !focus}
                       onPress={() => {
+                        lock.release();
                         setManualCrop(null);
                         setFocus(null);
                       }}

@@ -40,6 +40,19 @@ export interface SmartCropResult {
   kind: SubjectKind;
   /** Graphs: the axes, scale and key point found, and the window shown (see graph.ts). */
   graph?: GraphInfo;
+  /**
+   * The item itself, for following it with the live camera (tracker.ts): a graph's whole plot (not just its
+   * curves or the Graph Range window), else the subject's box.
+   */
+  target: Rect;
+}
+
+/**
+ * A point to focus on. `tap: true` (a real tap): on a curve it picks that curve alone. Otherwise (the live
+ * camera keeping its lock on an item) it only says which item, never narrowing a graph to one curve.
+ */
+export interface Focus extends Point {
+  tap?: boolean;
 }
 
 /** Showing a portion of a graph (e.g. x from -5 to 5 around its vertex) instead of the whole curve. */
@@ -51,6 +64,13 @@ export interface GraphView {
   rows: number;
   cols: number;
   pinPitchRatio: number;
+  /**
+   * The live camera, locked onto one graph: moving closer or further changes the grid's size in pixels but not
+   * the graph's units, so the measured scale is kept and resized however much the zoom changes.
+   */
+  anyZoom?: boolean;
+  /** Live camera: the locked graph's width now (frame pixels, as tracked), to resize the scale with (see GraphScale.atWidth). */
+  targetWidth?: number;
 }
 
 export interface GraphInfo {
@@ -225,7 +245,7 @@ export function smartSubject(
   o: SmartCropOptions,
   region: Rect = fullRect(width, height),
   /** A point the user tapped (image pixels): the subject containing it wins, e.g. one picture in a grid of results. */
-  focus?: Point,
+  focus?: Focus,
   /** For graphs: show this portion instead of the whole curve. */
   view?: GraphView,
 ): SmartCropResult {
@@ -246,31 +266,38 @@ function subjectIn(
   height: number,
   o: SmartCropOptions,
   region: Rect,
-  focus: Point | undefined,
+  focus: Focus | undefined,
   view: GraphView | undefined,
 ): SmartCropResult {
   const wants = (r: Rect) => !focus || contains(expand(r, 0.05, width, height), focus);
   /** Graphs: read the axes, then (with a known scale) narrow the box to the window around the key point. */
-  const windowed = (result: SmartCropResult, mask: Float32Array, known: Grid | null): SmartCropResult => {
+  const windowed = (detected: SmartCropResult, mask: Float32Array, known: Grid | null): SmartCropResult => {
+    let result = detected;
     if (!view) return result;
     const grid = known ?? gridFor(findGrids(rgb, width, height, region), result.box);
     if (!grid || !overlaps(grid.plot, result.box)) return result;
     const axes = readAxes(grid);
-    const scale = view.scale ? rescale(view.scale, axes) : null;
+    const scale = !view.scale
+      ? null
+      : view.anyZoom && view.scale.atWidth && view.targetWidth
+        ? zoomed(view.scale, view.targetWidth / view.scale.atWidth)
+        : rescale(view.scale, axes, view.anyZoom);
     const found = curveKeyPoint(mask, width, height, axes, rgb);
     const key = found && scale ? tidyKeyPoint(found, axes, scale) : found;
     const info: GraphInfo = { axes, key, scale, window: null, fit: null };
+    result = { ...result, target: grid.plot };
     if (view.range === 'whole' || !key || !scale) return { ...result, graph: info };
     const win = graphWindow(key, scale, view.range, axes.plot, view.rows, view.cols, view.pinPitchRatio);
     return { ...result, box: win.box, context: clip(union(result.context, win.box), region), graph: { ...info, window: win.box, fit: win.fit } };
   };
   // Curves are found at full size: shrinking would fade a thin line below the colour threshold. They count when the
   // area around them is flat (a screen or diagram), whatever else is on screen (a photo wallpaper, other windows).
-  const curves = findCurves(rgb, width, height, region, focus);
+  // Only a real tap picks one curve by colour; the camera's lock just keeps to the item.
+  const curves = findCurves(rgb, width, height, region, focus?.tap ? focus : undefined);
   if (curves && wants(curves.box)) {
     const context = clip(expand(curves.box, 0.08, width, height), region);
     if (!isPhotoLike(rgb, width, height, context) && !enclosesFill(rgb, width, curves))
-      return windowed({ box: curves.box, context, kind: 'curves', mask: curves.mask }, curves.mask, null);
+      return windowed({ box: curves.box, context, kind: 'curves', mask: curves.mask, target: curves.box }, curves.mask, null);
   }
   // Graphs whose curve has no colour (black, grey): find the plot area by its grid, then the curve inside it.
   // Several plots on the page (and no tap): the biggest.
@@ -287,7 +314,7 @@ function subjectIn(
     // UI inside the plot (Desmos' zoom buttons, framed boxes) is not part of the graph.
     const { mask, box } = dropFramedPieces(fg.mask, width, height);
     // A curve is long. Only short pieces left (the axis numbers and tick marks of an empty graph): no curve.
-    if (box && hasLongStroke(mask, width, height, plot)) return windowed({ box, context: plot, kind: 'curves', mask }, mask, grid);
+    if (box && hasLongStroke(mask, width, height, plot)) return windowed({ box, context: plot, kind: 'curves', mask, target: plot }, mask, grid);
   }
   // Shapes and objects: decided on a smaller copy (fast enough for live sharing; a few pixels don't matter on 40 pins).
   const k = Math.max(1, Math.round(Math.max(width, height) / ANALYSIS_SIZE));
@@ -297,7 +324,12 @@ function subjectIn(
   const smallFocus = focus && (k > 1 ? { x: focus.x / k, y: focus.y / k } : focus);
   const res = analyse(small.rgb, small.width, small.height, o, isWhole ? undefined : smallRegion, 0, smallFocus);
   const up = (r: Rect) => clip(k > 1 ? scaleRect(r, k, width, height) : r, region);
-  return { box: up(res.box), context: up(res.context), kind: res.kind };
+  return { box: up(res.box), context: up(res.context), kind: res.kind, target: up(res.box) };
+}
+
+/** A scale measured earlier, for the same graph seen `f` times larger (the camera came closer). */
+function zoomed(s: GraphScale, f: number): GraphScale {
+  return { ...s, pxPerUnitX: s.pxPerUnitX * f, pxPerUnitY: s.pxPerUnitY * f, majorX: s.majorX * f, majorY: s.majorY * f };
 }
 
 /** Of several plots, the one covering most of `box` (a page can hold several graphs); null when there are none. */
@@ -373,7 +405,7 @@ function analyse(
   });
   const scored = scoreCandidates(rgb, fg.mask, width, height, r);
   const candidates = scored.candidates.sort((a, b) => b.score - a.score);
-  if (!candidates.length) return { box: r, context: r, kind: 'none' };
+  if (!candidates.length) return { box: r, context: r, kind: 'none', target: r };
   // With a tapped point: the piece under the finger, else the most specific one containing it (a thumbnail in a
   // grid), else the nearest. A finger's reach: 2% of the region's diagonal.
   const reach = Math.max(2, Math.hypot(r.width, r.height) * 0.02);
@@ -400,5 +432,5 @@ function analyse(
     const similar = Math.hypot(c.colour.r - best.colour.r, c.colour.g - best.colour.g, c.colour.b - best.colour.b) < 60;
     if (near && similar && c.score >= best.score * 0.15) box = union(box, c.box);
   }
-  return { box, context: r, kind: 'shape' };
+  return { box, context: r, kind: 'shape', target: box };
 }

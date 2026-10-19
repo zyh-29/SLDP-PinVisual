@@ -6,7 +6,7 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { denoiseFrame } from './cameraFrame';
+import { denoiseFrame, FocusGate, sharpness } from './cameraFrame';
 import type { RasterImage } from './convert';
 
 export interface ImageSource {
@@ -173,10 +173,30 @@ export interface LiveCapture {
    * the camera's full picture, shrunk to the photo working size and denoised like live frames.
    */
   snapshot: () => Promise<string>;
+  /**
+   * Camera only: focus (and exposure) on this point of the picture, 0..1 across and down. False where the
+   * browser gives no focus control (iPhones and most laptops focus by themselves).
+   */
+  focusAt: (x: number, y: number) => Promise<boolean>;
 }
 
 /** The size picked photos are analysed at (loadImage.web.ts): a capture is taken at that size, so nothing is lost. */
 const SNAPSHOT_SIZE = 800;
+/** Frames a capture chooses the sharpest from (about half a second)... */
+const SNAPSHOT_TRIES = 6;
+/** ...or, while none is as sharp as the live view recently was, up to this many (about 2 s). */
+const SNAPSHOT_MAX_TRIES = 16;
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Resolves on the video's next new frame (or after 80 ms where the browser can't say), at least 60 ms apart. */
+function nextFrame(video: FrameCallbackVideo): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => setTimeout(resolve, 60);
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(done);
+    else setTimeout(resolve, 80);
+  });
+}
 
 /**
  * Longest side of frames. A shared screen: 800, for thin lines and small text. A camera: 640, because a phone
@@ -199,25 +219,128 @@ function cameraError(e: unknown): Error {
   return e instanceof Error ? e : new Error(String(e));
 }
 
-async function openCamera(facing: CameraFacing): Promise<MediaStream> {
-  // 1280 x 720 is plenty (frames are shrunk to 640 anyway) and every phone camera offers it.
-  const video: MediaTrackConstraints = { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } };
+/** The camera controls this file uses. Chrome on Android reports them; iPhones and most laptops don't (they focus by themselves). */
+interface FocusCapabilities {
+  focusMode?: string[];
+  exposureMode?: string[];
+  whiteBalanceMode?: string[];
+}
+const capabilitiesOf = (track: MediaStreamTrack | undefined) => (track?.getCapabilities?.() ?? {}) as FocusCapabilities;
+
+/** The camera can focus by itself, or doesn't say (then it is trusted: iPhones focus on their own). */
+const autofocuses = (stream: MediaStream) => {
+  const modes = capabilitiesOf(stream.getVideoTracks()[0]).focusMode;
+  return !modes || modes.includes('continuous') || modes.includes('single-shot');
+};
+
+/** The back camera that focused well, remembered so the search below happens once per phone. */
+const CAMERA_KEY = 'pinvisual.camera.environment';
+const remembered = () => {
   try {
-    return await navigator.mediaDevices.getUserMedia({ video, audio: false });
+    return localStorage.getItem(CAMERA_KEY);
+  } catch {
+    return null;
+  }
+};
+const remember = (id: string | undefined) => {
+  try {
+    if (id) localStorage.setItem(CAMERA_KEY, id);
+  } catch {
+    // Private mode or blocked storage: the search just runs again next time.
+  }
+};
+
+// 1280 x 720 is plenty (frames are shrunk to 640, captures to 800) and every phone camera offers it.
+const SIZE: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } };
+const getCamera = (video: MediaTrackConstraints) => navigator.mediaDevices.getUserMedia({ video: { ...SIZE, ...video }, audio: false });
+const stopStream = (s: MediaStream) => s.getTracks().forEach((t) => t.stop());
+
+/**
+ * Opens a camera that can focus. Phones with several back cameras (wide, ultra-wide, telephoto, depth) often hand
+ * Chrome one that is fixed-focus, so close-up pictures stay blurry whatever happens. When the browser's choice
+ * says it can't autofocus, the other back cameras are tried one at a time (phones can't open two at once) and
+ * the first that can is used, and remembered.
+ */
+async function openCamera(facing: CameraFacing): Promise<MediaStream> {
+  if (facing === 'environment') {
+    const saved = remembered();
+    if (saved) {
+      const s = await getCamera({ deviceId: { exact: saved } }).catch(() => null);
+      if (s && autofocuses(s)) return s;
+      if (s) stopStream(s);
+    }
+  }
+  let stream: MediaStream;
+  try {
+    stream = await getCamera({ facingMode: { ideal: facing } });
   } catch (e) {
     // Some laptops reject the size or facing hints: any camera will do.
-    if (e instanceof DOMException && e.name === 'OverconstrainedError')
-      return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    if (e instanceof DOMException && e.name === 'OverconstrainedError') return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     throw e;
   }
+  const current = stream.getVideoTracks()[0]?.getSettings().deviceId;
+  if (facing !== 'environment' || autofocuses(stream)) {
+    if (facing === 'environment' && capabilitiesOf(stream.getVideoTracks()[0]).focusMode) remember(current);
+    return stream;
+  }
+  // Device labels (e.g. "camera2 2, facing back") are only filled in once the camera is allowed, which it now is.
+  const others = (await navigator.mediaDevices.enumerateDevices())
+    .filter((d) => d.kind === 'videoinput' && d.deviceId !== current && (!d.label || /back|rear|environment/i.test(d.label)));
+  stopStream(stream);
+  for (const d of others) {
+    const s = await getCamera({ deviceId: { exact: d.deviceId } }).catch(() => null);
+    if (!s) continue;
+    const track = s.getVideoTracks()[0];
+    const back = !track?.getSettings().facingMode || track.getSettings().facingMode === 'environment';
+    if (back && autofocuses(s)) {
+      remember(d.deviceId);
+      return s;
+    }
+    stopStream(s);
+  }
+  // None focuses better: back to the browser's choice.
+  return getCamera({ facingMode: { ideal: facing } });
 }
 
-/** Keeps the camera focusing by itself where the browser allows it (Chrome on Android). */
+/** Camera controls (focus, points of interest) are in the Image Capture spec, not yet in TypeScript's DOM types. */
+const extra = (set: Record<string, unknown>) => set as unknown as MediaTrackConstraintSet;
+
+/** Lets the camera keep focus, exposure and colour adjusting by themselves, where the browser allows it. */
 async function tuneCamera(stream: MediaStream) {
   const track = stream.getVideoTracks()[0];
-  const caps = (track?.getCapabilities?.() ?? {}) as { focusMode?: string[] };
-  if (caps.focusMode?.includes('continuous'))
-    await track.applyConstraints({ advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet] }).catch(() => {});
+  const caps = capabilitiesOf(track);
+  const set: Record<string, string> = {};
+  if (caps.focusMode?.includes('continuous')) set.focusMode = 'continuous';
+  if (caps.exposureMode?.includes('continuous')) set.exposureMode = 'continuous';
+  if (caps.whiteBalanceMode?.includes('continuous')) set.whiteBalanceMode = 'continuous';
+  if (Object.keys(set).length) await track.applyConstraints({ advanced: [extra(set)] }).catch(() => {});
+}
+
+/**
+ * Focuses (and meters exposure) on a point of the picture, 0..1 across and down: a single focus sweep there,
+ * then back to continuous focus around the same point. Chrome on Android; elsewhere it does nothing and returns
+ * false (iPhones focus on their own).
+ */
+async function focusCameraAt(stream: MediaStream, x: number, y: number): Promise<boolean> {
+  const track = stream.getVideoTracks()[0];
+  if (!track) return false;
+  const caps = capabilitiesOf(track);
+  const supported = navigator.mediaDevices.getSupportedConstraints() as Record<string, boolean>;
+  const point = { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
+  const where = supported.pointsOfInterest ? { pointsOfInterest: [point] } : {};
+  const sweep = caps.focusMode?.includes('single-shot') ? 'single-shot' : caps.focusMode?.includes('continuous') ? 'continuous' : null;
+  if (!sweep) return false;
+  try {
+    await track.applyConstraints({ advanced: [extra({ ...where, focusMode: sweep })] });
+  } catch {
+    return false;
+  }
+  if (sweep === 'single-shot' && caps.focusMode?.includes('continuous'))
+    setTimeout(() => {
+      if (track.readyState === 'live')
+        track.applyConstraints({ advanced: [extra({ ...where, focusMode: 'continuous' })] }).catch(() => {});
+    }, 1500);
+  return true;
 }
 
 /**
@@ -233,9 +356,14 @@ export async function startLiveCapture(o: {
   source?: LiveSource;
   onFrame: (frame: RasterImage) => void;
   onEnd: () => void;
+  /** Camera only: how many frames in a row were blurry (0 = in focus), after each frame. */
+  onFocus?: (blurryFor: number) => void;
   minIntervalMs?: number;
 }): Promise<LiveCapture | null> {
   const kind = o.source ?? 'screen';
+  const gate = new FocusGate();
+  /** Where the user last asked the camera to focus (0..1), kept across refocusing and capture. */
+  let focusPoint: { x: number; y: number } | null = null;
   let facing: CameraFacing = 'environment';
   let stream: MediaStream;
   try {
@@ -316,7 +444,13 @@ export async function startLiveCapture(o: {
     for (let i = 0; i < data.length; i += 61) signature = (signature * 33 + data[i]) | 0;
     if (signature !== lastSignature) {
       lastSignature = signature;
-      if (kind === 'camera') denoiseFrame(data, width, height);
+      if (kind === 'camera') {
+        // While the camera refocuses (or the hand moves), frames smear: keep the last sharp result on the pins.
+        const use = gate.accept(sharpness(data, width, height));
+        o.onFocus?.(gate.blurryFor);
+        if (!use) return;
+        denoiseFrame(data, width, height);
+      }
       o.onFrame({ width, height, data, channels: 4 });
     }
   };
@@ -362,12 +496,22 @@ export async function startLiveCapture(o: {
       stream.getVideoTracks()[0]?.addEventListener('ended', ended);
       video.srcObject = stream;
       lastSignature = -1;
+      gate.reset();
+      focusPoint = null;
       await video.play().catch(() => {});
     },
+    focusAt: async (x, y) => {
+      if (kind !== 'camera' || stopped) return false;
+      focusPoint = { x, y };
+      return focusCameraAt(stream, x, y);
+    },
     snapshot: async () => {
+      if (stopped || !video.videoWidth || !video.videoHeight) throw new Error('The camera has no picture yet.');
+      // Focus once more where the user tapped (or the middle), give the lens a moment, then keep the sharpest of
+      // the next few frames: one taken mid-refocus or mid-shake would be blurred.
+      if (await focusCameraAt(stream, focusPoint?.x ?? 0.5, focusPoint?.y ?? 0.5)) await wait(450);
       const vw = video.videoWidth;
       const vh = video.videoHeight;
-      if (stopped || !vw || !vh) throw new Error('The camera has no picture yet.');
       const scale = Math.min(1, SNAPSHOT_SIZE / Math.max(vw, vh));
       const shot = document.createElement('canvas');
       shot.width = Math.max(1, Math.round(vw * scale));
@@ -375,9 +519,24 @@ export async function startLiveCapture(o: {
       const sctx = shot.getContext('2d', { willReadFrequently: true });
       if (!sctx) throw new Error('Canvas is not available in this browser.');
       sctx.imageSmoothingQuality = 'high';
-      sctx.drawImage(video, 0, 0, shot.width, shot.height);
+      let img: ImageData | null = null;
+      let best = -1;
+      // "Sharp" is what the live view recently reached (same measure, scaled from 640 to 800 px frames is close
+      // enough). Keep looking, up to about 2 s, until a frame gets near it: a lens still hunting gets a moment more.
+      const target = gate.recentBest * 0.7;
+      for (let i = 0; i < SNAPSHOT_MAX_TRIES && !stopped; i++) {
+        if (i) await nextFrame(video);
+        sctx.drawImage(video, 0, 0, shot.width, shot.height);
+        const frame = sctx.getImageData(0, 0, shot.width, shot.height);
+        const s = sharpness(frame.data, shot.width, shot.height);
+        if (s > best) {
+          best = s;
+          img = frame;
+        }
+        if (i + 1 >= SNAPSHOT_TRIES && best >= target) break;
+      }
+      if (!img) throw new Error('The camera has no picture yet.');
       // Denoised like the live frames, so a photographed graph is still found as a graph.
-      const img = sctx.getImageData(0, 0, shot.width, shot.height);
       denoiseFrame(img.data, shot.width, shot.height);
       sctx.putImageData(img, 0, 0);
       // PNG: lossless, so the cleaned pixels arrive exactly as they are.

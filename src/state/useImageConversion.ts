@@ -11,14 +11,14 @@ import { readAxisNumbers } from '@/imaging/axisNumbers';
 import { type SteadyPins, steadyPins } from '@/imaging/cameraFrame';
 import type { RasterImage } from '@/imaging/convert';
 import { DEFAULT_MIN_PIECE_RATIO, estimateBackground, findForeground } from '@/imaging/foreground';
-import { fullRect, type Point, type Rect } from '@/imaging/geometry';
+import { fullRect, type Rect } from '@/imaging/geometry';
 import { type GraphScale, labelBands, scaleFromGrid, scaleFromLabels } from '@/imaging/graph';
 import type { LiveCapture } from '@/imaging/imageInput';
 import { cellSizePx, inkFromGray, inkFromMask, patternFromSamples, renderCrop, sampleCrop, thickenThinLines } from '@/imaging/pinSampling';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
 import { detectShape, fillHoles, renderShape } from '@/imaging/shapes';
-import { type GraphView, isPhotoLike, keepPieceAt, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
+import { type Focus, type GraphView, isPhotoLike, keepPieceAt, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
 
 export interface PickedImage {
   uri: string;
@@ -44,18 +44,21 @@ export interface ConversionSettings {
   cutoutOverride: boolean | null;
   /** null = automatic (smart crop). */
   manualCrop: Rect | null;
-  /** A tapped point: the smart crop focuses on what's there. */
-  focus: Point | null;
+  /** A tapped point (or, with the live camera, where its locked item is now): the smart crop focuses on what's there. */
+  focus: Focus | null;
   /** null = automatic: axes and gridlines are removed when the image looks like a graph. */
   linesOverride: boolean | null;
   graphRange: GraphRange;
+  /** Live camera: the locked item's width now (frame pixels, as tracked), so a graph's scale follows the zoom. */
+  trackedWidth: number | null;
 }
 
 /** Above this edge unevenness a photo's background is busy enough to switch Smart Cut-Out on by itself. */
 const BUSY_BACKGROUND = 28;
 
 export function useImageConversion(picked: PickedImage | null, live: LiveCapture | null, s: ConversionSettings) {
-  const { removeBackground, removeClutter, toleranceOverride, pinFill, snap, cutoutOverride, manualCrop, focus, linesOverride, graphRange } = s;
+  const { removeBackground, removeClutter, toleranceOverride, pinFill, snap, cutoutOverride, manualCrop, focus, linesOverride, graphRange, trackedWidth } =
+    s;
   const [cutout, setCutout] = useState<{ for: PickedImage; mask: Float32Array | null; error?: string } | null>(null);
   /** Graphs: pixels per unit, read from the axis numbers (or the grid). Kept across live frames while the zoom is unchanged. */
   const [graphScale, setGraphScale] = useState<GraphScale | null>(null);
@@ -107,8 +110,11 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
       rows: GRID.rows,
       cols: GRID.cols,
       pinPitchRatio: GRID.pinPitchRatio,
+      // The camera stays locked on one graph while it moves closer or further: keep its scale, resized.
+      anyZoom: live?.kind === 'camera',
+      targetWidth: live?.kind === 'camera' ? (trackedWidth ?? undefined) : undefined,
     }),
-    [graphRange, graphScale],
+    [graphRange, graphScale, live, trackedWidth],
   );
   const smart = useMemo(
     () => (picked && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, undefined, focus ?? undefined, graphView) : null),
@@ -128,9 +134,15 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
       .catch(() => null)
       .then((found) => {
         // A newer request (another zoom level or picture) wins.
-        if (scaleRequest.current === scaleKey) setGraphScale(found ?? scaleFromGrid(axes));
+        const s = found ?? scaleFromGrid(axes);
+        // Remember how wide the locked graph was, so the scale can follow the camera's zoom from now on.
+        if (scaleRequest.current === scaleKey) setGraphScale(s && trackedWidth ? { ...s, atWidth: trackedWidth } : s);
       });
-  }, [readingNumbers, graph, scaleKey, picked, live, w]);
+  }, [readingNumbers, graph, scaleKey, picked, live, w, trackedWidth]);
+  // Locked on after the scale was measured: tie the scale as it is now to the tracked width, so from here on it
+  // follows the zoom through the tracker (React's "adjust state while rendering" pattern).
+  const current = graph?.scale;
+  if (current && trackedWidth && graphScale && !graphScale.atWidth) setGraphScale({ ...current, atWidth: trackedWidth });
   // Inside the user's own box the same logic picks the subject, so stray UI caught by the box is ignored.
   const smartInCrop = useMemo(
     () => (picked && manualCrop && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, manualCrop) : null),
@@ -228,6 +240,8 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     subjectKnown: !!knownSubject,
     graph,
     readingNumbers,
+    /** The item the smart crop picked (a graph's plot, a shape), for the camera to lock onto. */
+    target: !manualCrop && smart && smart.kind !== 'none' ? smart.target : null,
     fg,
     crop,
     stretch,

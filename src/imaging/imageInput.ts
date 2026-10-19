@@ -30,11 +30,13 @@ export interface LiveCapture {
   facing?: CameraFacing;
   flip: () => Promise<void>;
   snapshot: () => Promise<string>;
+  focusAt: (x: number, y: number) => Promise<boolean>;
 }
 
 export async function startLiveCapture(_o: {
   source?: LiveSource;
   onFrame: (frame: RasterImage) => void;
+  onFocus?: (blurryFor: number) => void;
   onEnd: () => void;
   minIntervalMs?: number;
 }): Promise<LiveCapture | null> {

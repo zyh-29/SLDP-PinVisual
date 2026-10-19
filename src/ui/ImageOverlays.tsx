@@ -4,13 +4,17 @@ import { Label } from './components';
 import { Icon } from './Icon';
 import { radius, space, useTheme } from './theme';
 
-/** A red "Live" badge for the crop picture during a screen share. */
-export function LiveBadge() {
+/**
+ * A red "Live" badge for the crop picture during a screen share or camera: "Focusing…" while the camera
+ * refocuses, "Locked" while the camera follows one item.
+ */
+export function LiveBadge({ focusing = false, locked = false }: { focusing?: boolean; locked?: boolean }) {
+  const label = focusing ? 'Focusing…' : locked ? 'Live · Locked' : 'Live';
   return (
-    <View style={styles.liveBadge} accessible accessibilityLabel="Live">
-      <View style={styles.liveDot} />
+    <View style={styles.liveBadge} accessible accessibilityLabel={focusing ? 'Live, focusing' : locked ? 'Live, locked on an item' : 'Live'}>
+      <View style={[styles.liveDot, focusing && { backgroundColor: '#FFCC00' }]} />
       <Label variant="caption" style={{ color: '#FFFFFF', fontWeight: '600' }}>
-        Live
+        {label}
       </Label>
     </View>
   );

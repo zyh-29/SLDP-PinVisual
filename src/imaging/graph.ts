@@ -168,6 +168,11 @@ export interface GraphScale {
   majorY: number;
   /** 'labels': from the printed numbers. 'grid': assumed one unit per major grid square. */
   from: 'labels' | 'grid';
+  /**
+   * Live camera: how wide the locked graph was (frame pixels, as tracked) when this scale was measured. Its
+   * width now tells how much closer or further the phone is, far more steadily than gridlines in a noisy frame.
+   */
+  atWidth?: number;
 }
 
 /** Graphing tools number their gridlines in steps of 1, 2 or 5 (minor lines also 2.5) times a power of 10. */
@@ -274,8 +279,9 @@ export function scaleFromGrid(axes: GraphAxes): GraphScale | null {
  * A scale measured earlier (numbers are read once, not every frame of a live share) applied to the current
  * grid: valid while the zoom is unchanged (grid spacing within 6%); a pan doesn't change it.
  */
-export function rescale(scale: GraphScale, axes: GraphAxes): GraphScale | null {
-  const close = (a: number | null, b: number) => a !== null && Math.abs(a / b - 1) <= 0.06;
+export function rescale(scale: GraphScale, axes: GraphAxes, anyZoom = false): GraphScale | null {
+  // `anyZoom` (the camera locked onto this graph): any size from 40% to 250% is the same graph seen closer or further.
+  const close = (a: number | null, b: number) => a !== null && (anyZoom ? a / b >= 0.4 && a / b <= 2.5 : Math.abs(a / b - 1) <= 0.06);
   if (!close(axes.majorX, scale.majorX) && !close(axes.majorY, scale.majorY)) return null;
   const mx = close(axes.majorX, scale.majorX) ? axes.majorX! : scale.majorX;
   const my = close(axes.majorY, scale.majorY) ? axes.majorY! : scale.majorY;

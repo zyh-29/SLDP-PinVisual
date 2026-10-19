@@ -73,7 +73,7 @@ describe('a worksheet with two graphs side by side', () => {
     ['left', { x: 60, y: 300 }, L],
     ['right', { x: 740, y: 60 }, R],
   ])('a tap on the %s graph crops to that graph only', (_name, tap, plot) => {
-    const r = smartSubject(rgb, img.width, img.height, opts, undefined, tap);
+    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { ...tap, tap: true });
     expect(r.kind).toBe('curves');
     expect(inside(r.box, plot)).toBe(true);
   });
@@ -121,7 +121,7 @@ describe('Graph Range on a worksheet with two graphs (at the 800 px the browser 
   });
 
   it('reads one plot’s axes and grid, not both merged (a curve crossing a gridline must not hide it)', () => {
-    const r = smartSubject(rgb, W, H, opts, undefined, { x: 60, y: 300 }, view(null));
+    const r = smartSubject(rgb, W, H, opts, undefined, { tap: true, x: 60, y: 300 }, view(null));
     const axes = r.graph!.axes;
     expect(inside(axes.plot, L, 3)).toBe(true);
     expect(axes.originX).toBeCloseTo(189, -0.5);
@@ -131,7 +131,7 @@ describe('Graph Range on a worksheet with two graphs (at the 800 px the browser 
   });
 
   it('the tapped parabola gets ±5 units around its vertex, vertex in the top row', () => {
-    const r = smartSubject(rgb, W, H, opts, undefined, { x: 60, y: 300 }, view({ ppu: 30 }));
+    const r = smartSubject(rgb, W, H, opts, undefined, { tap: true, x: 60, y: 300 }, view({ ppu: 30 }));
     expect(r.graph!.key!.kind).toBe('vertex');
     expect(r.graph!.fit).toBe('exact');
     expect(r.box.width).toBeCloseTo(300, -1);
@@ -142,7 +142,7 @@ describe('Graph Range on a worksheet with two graphs (at the 800 px the browser 
   });
 
   it('a straight line (clipped by the plot’s top and bottom) is centred where it crosses the y-axis, not on a fake bend', () => {
-    const r = smartSubject(rgb, W, H, opts, undefined, { x: 740, y: 60 }, view({ ppu: 30 }));
+    const r = smartSubject(rgb, W, H, opts, undefined, { tap: true, x: 740, y: 60 }, view({ ppu: 30 }));
     expect(r.graph!.key!.kind).toBe('intercept');
     expect(r.box.x + r.box.width / 2).toBeCloseTo(610, -1);
   });
@@ -176,7 +176,7 @@ describe('one graph with two curves', () => {
 
   it('a tap on the blue line takes the blue line only', () => {
     const x = 100;
-    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { x, y: line(x) + 3 });
+    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { tap: true, x, y: line(x) + 3 });
     expect(r.kind).toBe('curves');
     expect(colourCount(r.mask, BLUE)).toBeGreaterThan(100);
     expect(colourCount(r.mask, RED)).toBe(0);
@@ -184,14 +184,14 @@ describe('one graph with two curves', () => {
 
   it('a tap on the red parabola takes the red parabola only', () => {
     const x = 300;
-    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { x, y: parabola(x) - 2 });
+    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { tap: true, x, y: parabola(x) - 2 });
     expect(colourCount(r.mask, RED)).toBeGreaterThan(100);
     expect(colourCount(r.mask, BLUE)).toBe(0);
   });
 
   it('a tap on empty graph paper keeps both curves', () => {
     // Far (100+ px) from both curves.
-    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { x: 450, y: 330 });
+    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { tap: true, x: 450, y: 330 });
     expect(colourCount(r.mask, RED)).toBeGreaterThan(100);
     expect(colourCount(r.mask, BLUE)).toBeGreaterThan(100);
   });
@@ -210,7 +210,7 @@ describe('a small shape inside a big shape’s box', () => {
   const discBox: Rect = { x: disc.x - disc.r, y: disc.y - disc.r, width: 2 * disc.r + 1, height: 2 * disc.r + 1 };
 
   it('a tap just beside the disc picks the disc, not the arc whose box holds the tap', () => {
-    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { x: disc.x - disc.r - 5, y: disc.y });
+    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { tap: true, x: disc.x - disc.r - 5, y: disc.y });
     expect(near(r.box, discBox, 3)).toBe(true);
   });
 
@@ -218,7 +218,7 @@ describe('a small shape inside a big shape’s box', () => {
     // A point on the arc (radius 250 around (60, 330)).
     const a = (-60 * Math.PI) / 180;
     const tap = { x: 60 + 250 * Math.cos(a), y: 330 + 250 * Math.sin(a) };
-    const r = smartSubject(rgb, img.width, img.height, opts, undefined, tap);
+    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { ...tap, tap: true });
     expect(r.box.width).toBeGreaterThan(150);
     expect(near(r.box, discBox, 10)).toBe(false);
   });
@@ -233,7 +233,7 @@ describe('taps that land on the very edge of the picture', () => {
     [299, 0],
     [0, 199],
   ])('tap at (%i, %i) still finds the shape', (x, y) => {
-    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { x, y });
+    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { tap: true, x, y });
     expect(near(r.box, { x: 110, y: 60, width: 81, height: 81 }, 3)).toBe(true);
   });
 });
@@ -295,7 +295,7 @@ describe('a tap on a graph also places the Graph Range window on the tapped curv
       pinPitchRatio: 1,
     };
     const x = 470;
-    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { x, y: line(x) }, view);
+    const r = smartSubject(rgb, img.width, img.height, opts, undefined, { tap: true, x, y: line(x) }, view);
     expect(r.graph?.key).toBeTruthy();
     // The red line's own key point (where it is), not the green parabola's vertex at (300, 200).
     expect(r.graph!.key!.x).toBeGreaterThanOrEqual(415);
