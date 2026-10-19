@@ -73,7 +73,13 @@ class CameraLock {
   }
 
   /** A camera frame: where the locked item is now (see useCameraLock's follow). */
-  follow(rgb: ArrayLike<number>, width: number, height: number): { focus: Focus; width: number } | null | undefined {
+  follow(
+    rgb: ArrayLike<number>,
+    width: number,
+    height: number,
+    /** Where a point of this picture is in the camera's view (0..1): differs when the picture is a flattened page. */
+    toLens: (p: Point) => Point = (p) => ({ x: p.x / width, y: p.y / height }),
+  ): { focus: Focus; width: number } | null | undefined {
     if (!this.tracker.locked) return undefined;
     const r = this.tracker.track(this.grayOf(rgb, width, height));
     if (!r) {
@@ -82,8 +88,7 @@ class CameraLock {
     }
     // Keep the lens on the item as it moves.
     const now = Date.now();
-    const nx = r.point.x / width;
-    const ny = r.point.y / height;
+    const { x: nx, y: ny } = toLens(r.point);
     if (this.camera && (Math.hypot(nx - this.lens.x, ny - this.lens.y) > REFOCUS_MOVE || now - this.lens.at > REFOCUS_EVERY_MS)) {
       this.lens = { x: nx, y: ny, at: now };
       this.camera.focusAt(nx, ny).catch(() => {});
@@ -126,8 +131,8 @@ export function useCameraLock(live: LiveCapture | null) {
      * Each camera frame, before it is shown: where the locked item is now, as the point the smart crop should
      * focus on. `undefined`: nothing locked, leave the focus alone; `null`: the lock was just lost.
      */
-    follow: (rgb: ArrayLike<number>, w: number, h: number): Focus | null | undefined => {
-      const r = session.follow(rgb, w, h);
+    follow: (rgb: ArrayLike<number>, w: number, h: number, toLens?: (p: Point) => Point): Focus | null | undefined => {
+      const r = session.follow(rgb, w, h, toLens);
       if (r === undefined) return undefined;
       if (r === null) {
         setLocked(false);

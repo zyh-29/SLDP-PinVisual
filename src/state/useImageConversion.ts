@@ -9,6 +9,7 @@ import { GRID } from '@/config/hardware';
 import type { Pattern } from '@/domain/pattern';
 import { readAxisNumbers } from '@/imaging/axisNumbers';
 import { type SteadyPins, steadyPins } from '@/imaging/cameraFrame';
+import type { SurfaceView } from '@/imaging/surface';
 import type { RasterImage } from '@/imaging/convert';
 import { DEFAULT_MIN_PIECE_RATIO, estimateBackground, findForeground } from '@/imaging/foreground';
 import { fullRect, type Rect } from '@/imaging/geometry';
@@ -22,6 +23,13 @@ import { type Focus, type GraphView, isPhotoLike, keepPieceAt, type SmartCropOpt
 
 export interface PickedImage {
   uri: string;
+  /**
+   * Live camera looking at a flat surface: the picture is that surface flattened (surface.ts), and this maps it
+   * to the camera view shown behind the crop box.
+   */
+  surface?: SurfaceView;
+  /** Taken with the live camera (Capture): a real-world picture, whatever it shows. */
+  fromCamera?: boolean;
   /** Downscaled PNG on the device, for Smart Cut-Out (phones). */
   fileUri?: string;
   raster: RasterImage;
@@ -100,9 +108,14 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   }, [cutoutOn, picked, cutout]);
 
   // Smart crop: what part of the image should become pins (coloured curves, a shape, the object on a card).
+  // A flattened screen or page is a flat picture even though the camera made it look like a photo.
+  const flatSurface = !!picked?.surface;
+  // A camera picture (live, captured, or any real-world photo): backgrounds with several colours and shadows, and
+  // wood grain or cloth patterns that are not graph curves.
+  const camera = live?.kind === 'camera' || !!picked?.fromCamera || photoLike;
   const smartOptions = useMemo<SmartCropOptions>(
-    () => ({ tolerance, minPieceRatio, removeLines }),
-    [tolerance, minPieceRatio, removeLines],
+    () => ({ tolerance, minPieceRatio, removeLines, flatSurface, camera }),
+    [tolerance, minPieceRatio, removeLines, flatSurface, camera],
   );
   const graphView = useMemo<GraphView>(
     () => ({
@@ -130,7 +143,9 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     if (!readingNumbers || !graph || !scaleKey || !picked || scaleRequest.current === scaleKey) return;
     scaleRequest.current = scaleKey;
     const { axes } = graph;
-    readAxisNumbers(live ? { video: live.video } : { uri: picked.uri }, w, labelBands(axes))
+    // A flattened page (camera on a screen) is read from its own pixels: the bands are in its coordinates.
+    const source = picked.surface ? { pixels: { rgb: picked.rgb, width: w, height: h } } : live ? { video: live.video } : { uri: picked.uri };
+    readAxisNumbers(source, w, labelBands(axes))
       .then((readings) => scaleFromLabels(axes, readings))
       .catch(() => null)
       .then((found) => {
@@ -139,7 +154,7 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
         // Remember how wide the locked graph was, so the scale can follow the camera's zoom from now on.
         if (scaleRequest.current === scaleKey) setGraphScale(s && trackedWidth ? { ...s, atWidth: trackedWidth } : s);
       });
-  }, [readingNumbers, graph, scaleKey, picked, live, w, trackedWidth]);
+  }, [readingNumbers, graph, scaleKey, picked, live, w, h, trackedWidth]);
   // Locked on after the scale was measured: tie the scale as it is now to the tracked width, so from here on it
   // follows the zoom through the tracker (React's "adjust state while rendering" pattern).
   const current = graph?.scale;
@@ -168,9 +183,10 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
             region,
             backgroundRegions: manualCrop ? [autoContext] : undefined,
             subjectMask: knownSubject,
+            camera,
           })
         : null,
-    [picked, w, h, tolerance, minPieceRatio, lines, region, manualCrop, autoContext, knownSubject],
+    [picked, w, h, tolerance, minPieceRatio, lines, region, manualCrop, autoContext, knownSubject, camera],
   );
   const autoBox = smart ? smart.box : (fg?.subject ?? fullImage);
   /** The crop box shown to the user. */

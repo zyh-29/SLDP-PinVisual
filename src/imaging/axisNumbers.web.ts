@@ -11,10 +11,11 @@ import { type AxisReading, findLabelBoxes } from './graph';
 
 export const axisNumbersAvailable = typeof window !== 'undefined' && typeof WebAssembly === 'object';
 
-/** Where the picture comes from: the original image (URL) or the live share's video. */
+/** Where the picture comes from: the original image (URL), the live share's video, or pixels (a flattened page). */
 export interface AxisNumberSource {
   uri?: string;
   video?: HTMLVideoElement;
+  pixels?: { rgb: ArrayLike<number>; width: number; height: number };
 }
 
 interface TesseractWorker {
@@ -68,6 +69,23 @@ async function fullResolution(source: AxisNumberSource): Promise<HTMLCanvasEleme
   let el: CanvasImageSource;
   let w: number;
   let h: number;
+  if (source.pixels) {
+    const { rgb, width, height } = source.pixels;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    const img = new ImageData(width, height);
+    for (let p = 0; p < width * height; p++) {
+      img.data[p * 4] = rgb[p * 3];
+      img.data[p * 4 + 1] = rgb[p * 3 + 1];
+      img.data[p * 4 + 2] = rgb[p * 3 + 2];
+      img.data[p * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    return canvas;
+  }
   if (source.video && source.video.videoWidth > 0) {
     el = source.video;
     w = source.video.videoWidth;

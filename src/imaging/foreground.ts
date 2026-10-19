@@ -82,6 +82,12 @@ export interface ForegroundOptions {
    * `region`'s own edge and before the whole image's edge.
    */
   backgroundRegions?: Rect[];
+  /**
+   * A camera picture: the background may have several colours (a checked cloth, a two-tone desk) and shadows.
+   * Each pixel is then also compared with the main colours along the edge, allowing for shading, and anything
+   * close to one of them is background too (see edgePalette).
+   */
+  camera?: boolean;
 }
 
 export const DEFAULT_TOLERANCE = 40;
@@ -382,6 +388,79 @@ function ringPixels(width: number, height: number, region: Rect): number[] {
   return out;
 }
 
+/**
+ * The background's main colours along `region`'s edge (camera pictures): up to three, by k-means on a sample of
+ * the edge ring, each kept only if it covers at least 12% of the edge. A checked cloth gives two, a plain desk one.
+ */
+export function edgePalette(rgb: ArrayLike<number>, width: number, height: number, region: Rect): Rgb[] {
+  const ring = ringPixels(width, height, region);
+  if (ring.length < 30) return [];
+  const step = Math.max(1, Math.floor(ring.length / 2000));
+  const px: Rgb[] = [];
+  for (let i = 0; i < ring.length; i += step) {
+    const p = ring[i];
+    px.push({ r: rgb[p * 3], g: rgb[p * 3 + 1], b: rgb[p * 3 + 2] });
+  }
+  const d = (a: Rgb, b: Rgb) => Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
+  // Start from the median colour, then each next centre is the sample farthest from the centres so far.
+  const centres: Rgb[] = [{ r: median(px.map((c) => c.r)), g: median(px.map((c) => c.g)), b: median(px.map((c) => c.b)) }];
+  while (centres.length < 3) {
+    let far = px[0];
+    let fd = -1;
+    for (const c of px) {
+      const m = Math.min(...centres.map((k) => d(c, k)));
+      if (m > fd) {
+        fd = m;
+        far = c;
+      }
+    }
+    if (fd < 30) break;
+    centres.push({ ...far });
+  }
+  let counts: number[] = [];
+  for (let it = 0; it < 8; it++) {
+    const sums = centres.map(() => ({ r: 0, g: 0, b: 0, n: 0 }));
+    for (const c of px) {
+      let bi = 0;
+      for (let k = 1; k < centres.length; k++) if (d(c, centres[k]) < d(c, centres[bi])) bi = k;
+      sums[bi].r += c.r;
+      sums[bi].g += c.g;
+      sums[bi].b += c.b;
+      sums[bi].n++;
+    }
+    sums.forEach((s, k) => {
+      if (s.n) centres[k] = { r: s.r / s.n, g: s.g / s.n, b: s.b / s.n };
+    });
+    counts = sums.map((s) => s.n);
+  }
+  return centres.filter((_, k) => counts[k] >= px.length * 0.12);
+}
+
+/**
+ * Distance from the nearest background colour, allowing for shading: the same colour in a shadow or brighter
+ * light (40% darker to 25% brighter) is still that colour. Not on dark backgrounds, where "shaded" would also
+ * swallow a black object.
+ */
+export function paletteDistance(r: number, g: number, b: number, palette: Rgb[]): number {
+  let best = Infinity;
+  for (const c of palette) {
+    const cc = c.r * c.r + c.g * c.g + c.b * c.b || 1;
+    const lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+    const s = lum > 100 ? Math.min(1.25, Math.max(0.6, (r * c.r + g * c.g + b * c.b) / cc)) : 1;
+    best = Math.min(best, Math.hypot(r - s * c.r, g - s * c.g, b - s * c.b));
+  }
+  return best;
+}
+
+/** Mean distance of the edge ring's pixels from the background (the plane or the nearest palette colour). */
+function paletteNoise(rgb: ArrayLike<number>, width: number, height: number, region: Rect, palette: Rgb[], model: BackgroundModel): number {
+  const ring = ringPixels(width, height, region);
+  if (!ring.length) return model.noise;
+  let sum = 0;
+  for (const p of ring) sum += Math.min(residual(rgb, p, width, model.plane), paletteDistance(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2], palette));
+  return sum / ring.length;
+}
+
 /** Least-squares plane v = c0 + cx*x + cy*y through the given samples (3x3 normal equations). */
 function fitPlane(xs: number[], ys: number[], vs: number[]): [number, number, number] {
   let n = 0,
@@ -531,13 +610,16 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
   // Background. Candidates in order of preference: the region's own edge (a crop usually frames the
   // background), any hinted areas, then the whole image's edge. The first one that is not clearly messier
   // than the best wins (a tight crop whose edge runs through the subject loses).
-  const candidates = [...(o.region ? [region] : []), ...(o.backgroundRegions ?? []), fullRect(width, height)].map((r) =>
-    backgroundModel(rgb, width, height, r),
-  );
+  const tried = [...(o.region ? [region] : []), ...(o.backgroundRegions ?? []), fullRect(width, height)];
+  const candidates = tried.map((r) => backgroundModel(rgb, width, height, r));
   const best = Math.min(...candidates.map((c) => c.noise));
-  const model = candidates.find((c) => c.noise <= Math.max(best * 1.5, best + 8))!;
+  const chosen = candidates.findIndex((c) => c.noise <= Math.max(best * 1.5, best + 8));
+  const model = candidates[chosen];
+  // Camera: the main colours along the same edge, for several-coloured backgrounds and shadows.
+  const palette = o.camera ? edgePalette(rgb, width, height, tried[chosen]) : [];
   const background = model.color;
-  const borderNoise = model.noise;
+  // With a palette, the edge's spread is measured against it: a two-colour cloth is not "noisy", it is two colours.
+  const borderNoise = palette.length ? paletteNoise(rgb, width, height, tried[chosen], palette, model) : model.noise;
   const P = model.plane;
 
   // Distance of every pixel from the background model, then the cut-off (fixed, or chosen from these distances).
@@ -549,7 +631,8 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
         const dr = rgb[p * 3] - (P.r[0] + P.r[1] * x + P.r[2] * y);
         const dg = rgb[p * 3 + 1] - (P.g[0] + P.g[1] * x + P.g[2] * y);
         const db = rgb[p * 3 + 2] - (P.b[0] + P.b[1] * x + P.b[2] * y);
-        distances[i] = Math.hypot(dr, dg, db);
+        const d = Math.hypot(dr, dg, db);
+        distances[i] = palette.length ? Math.min(d, paletteDistance(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2], palette)) : d;
       }
   const tolerance = o.tolerance === 'auto' ? autoTolerance(distances, borderNoise) : o.tolerance;
   const mask = new Uint8Array(width * height);

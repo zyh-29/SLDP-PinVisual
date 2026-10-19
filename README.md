@@ -162,6 +162,17 @@ browser.
   on it, and a locked graph keeps its units as you zoom: its scale is resized
   by how much bigger the tracked graph has become. Auto Crop or dragging the
   crop box releases the lock; so does the item staying out of view for ~3 s.
+  **Screens and pages:** pointed at a laptop or phone screen, a sheet of
+  paper or a whiteboard, the camera finds its four corners (like a document
+  scanner, `src/imaging/surface.ts`) and straightens it from the
+  full-resolution video, so a graph on a screen seen from the side gets
+  straight gridlines and loses the room around it (*Live · Flat*). The crop
+  box and taps still work on the camera view. Captures of a screen or page
+  are straightened too. **Camera backgrounds** (`foreground.ts`, `camera`
+  option): the background may have several colours (a checked cloth) and
+  shadows, so it is modelled as the edge's main colours with shading
+  allowed; wood grain or patterned cloth is not taken for graph curves
+  (curves need a page-like background in raw camera frames).
   **Focus:** phones with several back cameras sometimes
   give the browser a fixed-focus one (ultra-wide, depth), so the app checks
   and, if needed, switches to a back camera that can autofocus (remembered

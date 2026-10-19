@@ -8,7 +8,7 @@ import { GRID } from '@/config/hardware';
 import { cellsToString, type Pattern, togglePin } from '@/domain/pattern';
 import { toGrayscale } from '@/imaging/convert';
 import { DEFAULT_PIN_FILL, toRgb } from '@/imaging/foreground';
-import { fullRect, type Rect } from '@/imaging/geometry';
+import { fullRect, type Point, type Rect } from '@/imaging/geometry';
 import {
   type ImageSource,
   type LiveCapture,
@@ -25,6 +25,7 @@ import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { smartCutoutAvailable } from '@/imaging/segment';
 import { usePattern } from '@/state/PatternProvider';
 import type { Focus } from '@/imaging/smartCrop';
+import { mapRect } from '@/imaging/surface';
 import { useCameraLock, useLockTarget } from '@/state/useCameraLock';
 import { type GraphRange, type PickedImage, useImageConversion } from '@/state/useImageConversion';
 import { Button, Columns, Label, Screen, Section, Separator, StatusBanner } from '@/ui/components';
@@ -89,6 +90,8 @@ export default function ImageScreen() {
   const lock = useCameraLock(live);
   /** When the frame being analysed arrived: its cost (arrival to on screen) paces the live capture. */
   const frameStart = useRef(0);
+  /** The camera is delivering a flattened surface (see onFrame). */
+  const onSurface = useRef(false);
   const c = useImageConversion(picked, live, {
     removeBackground,
     removeClutter,
@@ -103,6 +106,9 @@ export default function ImageScreen() {
     trackedWidth: lock.width,
   });
   const { width: w, height: h, fg, result, graph, shape } = c;
+  /** Live camera on a flat surface: the analysed picture is the flattened page (see onFrame). */
+  const surface = live?.kind === 'camera' ? picked?.surface : undefined;
+  const view = surface ? { width: surface.frameWidth, height: surface.frameHeight } : undefined;
   useLockTarget(lock, picked, c.target);
   // A live frame is on screen: tell the capture how long it took, so slow phones get more time between frames.
   useEffect(() => {
@@ -158,7 +164,7 @@ export default function ImageScreen() {
       const raster = await loadImagePixels(source.uri, source.width ?? 0, source.height ?? 0);
       live?.stop();
       setLive(null);
-      setPicked({ uri: source.uri, fileUri: raster.fileUri, raster, rgb: toRgb(raster), gray: toGrayscale(raster) });
+      setPicked({ uri: source.uri, fileUri: raster.fileUri, raster, rgb: toRgb(raster), gray: toGrayscale(raster), fromCamera: !!keep });
       resetForNewImage();
       if (keep && keep.fromWidth > 0) {
         const k = raster.width / keep.fromWidth;
@@ -195,15 +201,29 @@ export default function ImageScreen() {
     try {
       const session = await startLiveCapture({
         source,
-        onFrame: (raster) => {
+        onFrame: (raster, surface) => {
           frameStart.current = performance.now();
           const rgb = toRgb(raster);
+          // The camera found (or lost) a flat surface to flatten: pictures and coordinates switch between the camera
+          // view and the flattened page, so whatever was tapped, cropped or locked starts over.
+          if (!!surface !== onSurface.current) {
+            onSurface.current = !!surface;
+            lock.release();
+            setFocus(null);
+            setManualCrop(null);
+          }
           // The camera follows its locked item: the smart crop is pointed at where it is in this frame.
           if (source === 'camera') {
-            const at = lock.follow(rgb, raster.width, raster.height);
+            const toLens = surface
+              ? (p: Point) => {
+                  const f = surface.toFrame(p);
+                  return { x: f.x / surface.frameWidth, y: f.y / surface.frameHeight };
+                }
+              : undefined;
+            const at = lock.follow(rgb, raster.width, raster.height, toLens);
             if (at !== undefined) setFocus(at);
           }
-          setPicked({ uri: '', raster, rgb, gray: toGrayscale(raster) });
+          setPicked({ uri: '', raster, rgb, gray: toGrayscale(raster), surface });
           // Keep the user's crop while sharing, unless the shared window shrank under it.
           setManualCrop((r) => (r && (r.x + r.width > raster.width + 0.5 || r.y + r.height > raster.height + 0.5) ? null : r));
         },
@@ -350,17 +370,21 @@ export default function ImageScreen() {
                   <CropEditor
                     uri={picked.uri}
                     backdrop={live ? <LiveVideo video={live.video} /> : undefined}
-                    badge={live ? <LiveBadge focusing={cameraTrouble > 0} locked={lock.locked} /> : undefined}
-                    imageWidth={w}
-                    imageHeight={h}
-                    crop={c.crop}
+                    badge={
+                      live ? <LiveBadge focusing={cameraTrouble > 0} locked={lock.locked} flattened={!!surface} /> : undefined
+                    }
+                    // A flattened page is analysed, but the camera view is shown: boxes and taps are mapped between them.
+                    imageWidth={surface?.frameWidth ?? w}
+                    imageHeight={surface?.frameHeight ?? h}
+                    crop={surface ? mapRect(c.crop, surface.toFrame, view) : c.crop}
                     onChange={(r) => {
                       // Your own box is fixed in the picture: the camera stops following an item.
                       lock.release();
-                      setManualCrop(r);
+                      setManualCrop(surface ? mapRect(r, surface.toPage, { width: w, height: h }) : r);
                     }}
-                    focus={manualCrop ? null : focus}
-                    onTap={(point) => {
+                    focus={manualCrop || !focus ? null : surface ? surface.toFrame(focus) : focus}
+                    onTap={(seen) => {
+                      const point = surface ? surface.toPage(seen) : seen;
                       // Tap a picture, a curve or a subject: the smart crop focuses on it (your own box gives way to it).
                       setManualCrop(null);
                       setFocus({ ...point, tap: true });
@@ -369,7 +393,9 @@ export default function ImageScreen() {
                         // and focus the lens there (where the browser allows it).
                         lock.tap(point);
                         c.resetGraph();
-                        if (w && h) live.focusAt(point.x / w, point.y / h).catch(() => {});
+                        const vw = surface?.frameWidth ?? w;
+                        const vh = surface?.frameHeight ?? h;
+                        if (vw && vh) live.focusAt(seen.x / vw, seen.y / vh).catch(() => {});
                       }
                       AccessibilityInfo.announceForAccessibility(
                         live?.kind === 'camera' ? 'Locked onto what you tapped' : 'Cropped to what you tapped',

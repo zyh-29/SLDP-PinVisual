@@ -6,12 +6,16 @@ import { radius, space, useTheme } from './theme';
 
 /**
  * A red "Live" badge for the crop picture during a screen share or camera: "Focusing…" while the camera
- * refocuses, "Locked" while the camera follows one item.
+ * refocuses, "Flat" while it straightens a screen or page it found, "Locked" while it follows one item.
  */
-export function LiveBadge({ focusing = false, locked = false }: { focusing?: boolean; locked?: boolean }) {
-  const label = focusing ? 'Focusing…' : locked ? 'Live · Locked' : 'Live';
+export function LiveBadge({ focusing = false, locked = false, flattened = false }: { focusing?: boolean; locked?: boolean; flattened?: boolean }) {
+  // "Flat": the camera found a screen or page and straightens it before reading it.
+  const label = focusing ? 'Focusing…' : `Live${flattened ? ' · Flat' : ''}${locked ? ' · Locked' : ''}`;
+  const spoken = focusing
+    ? 'Live, focusing'
+    : `Live${flattened ? ', screen or page found and straightened' : ''}${locked ? ', locked on an item' : ''}`;
   return (
-    <View style={styles.liveBadge} accessible accessibilityLabel={focusing ? 'Live, focusing' : locked ? 'Live, locked on an item' : 'Live'}>
+    <View style={styles.liveBadge} accessible accessibilityLabel={spoken}>
       <View style={[styles.liveDot, focusing && { backgroundColor: '#FFCC00' }]} />
       <Label variant="caption" style={{ color: '#FFFFFF', fontWeight: '600' }}>
         {label}

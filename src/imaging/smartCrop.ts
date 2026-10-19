@@ -18,7 +18,7 @@
  *
  * Curves are found in curves.ts, plot areas in plotGrid.ts, graph windows in graph.ts.
  */
-import { dropFramedPieces, enclosesFill, findCurves, hasLongStroke } from './curves';
+import { CAMERA_CURVE_SATURATIONS, type CurveResult, dropFramedPieces, enclosesFill, findCurves, hasLongStroke } from './curves';
 import { findForeground } from './foreground';
 import { area, clip, contains, distanceTo, expand, fullRect, inset, overlaps, type Point, type Rect, type Rgb, union } from './geometry';
 import { curveKeyPoint, type GraphAxes, type GraphScale, graphWindow, type GraphWindow, type KeyPoint, readAxes, rescale, tidyKeyPoint } from './graph';
@@ -88,6 +88,17 @@ export interface SmartCropOptions {
   tolerance: number | 'auto';
   minPieceRatio: number;
   removeLines: boolean | 'auto';
+  /**
+   * The picture is a flattened surface (a screen or a page found in a camera picture, see surface.ts): a flat
+   * picture, even if camera noise and blur make it look like a photo, so graph detection stays on.
+   */
+  flatSurface?: boolean;
+  /**
+   * A live camera frame (not a flattened surface): long coloured streaks there are often wood grain or a
+   * patterned cloth, so curves only count on a page-like background (bright and neutral: paper, a whiteboard,
+   * a screen).
+   */
+  camera?: boolean;
 }
 
 const saturationOf = (c: Rgb) => Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b);
@@ -293,23 +304,31 @@ function subjectIn(
   // Curves are found at full size: shrinking would fade a thin line below the colour threshold. They count when the
   // area around them is flat (a screen or diagram), whatever else is on screen (a photo wallpaper, other windows).
   // Only a real tap picks one curve by colour; the camera's lock just keeps to the item.
-  const curves = findCurves(rgb, width, height, region, focus?.tap ? focus : undefined);
+  const tapped = focus?.tap ? focus : undefined;
+  const curves = o.flatSurface
+    ? CAMERA_CURVE_SATURATIONS.map((sat) => findCurves(rgb, width, height, region, tapped, sat)).reduce<CurveResult | null>(
+        (best, c) => (c && (!best || c.score > best.score) ? c : best),
+        null,
+      )
+    : findCurves(rgb, width, height, region, tapped);
   if (curves && wants(curves.box)) {
     const context = clip(expand(curves.box, 0.08, width, height), region);
-    if (!isPhotoLike(rgb, width, height, context) && !enclosesFill(rgb, width, curves))
+    const pageLike = !o.camera || o.flatSurface || pageBackground(rgb, width, height, context, curves.mask);
+    if (pageLike && (o.flatSurface || !isPhotoLike(rgb, width, height, context)) && !enclosesFill(rgb, width, curves))
       return windowed({ box: curves.box, context, kind: 'curves', mask: curves.mask, target: curves.box }, curves.mask, null);
   }
   // Graphs whose curve has no colour (black, grey): find the plot area by its grid, then the curve inside it.
   // Several plots on the page (and no tap): the biggest.
   const grid = gridFor(findGrids(rgb, width, height, region), region);
   const plot = grid?.plot;
-  if (grid && plot && wants(plot) && !isPhotoLike(rgb, width, height, plot)) {
+  if (grid && plot && wants(plot) && (o.flatSurface || !isPhotoLike(rgb, width, height, plot))) {
     // Inside the plot the background really is one colour; axes and gridlines are removed, labels dropped as small.
     const fg = findForeground(rgb, width, height, {
       tolerance: o.tolerance,
       minPieceRatio: o.minPieceRatio,
       removeLines: true,
       region: plot,
+      camera: o.camera,
     });
     // UI inside the plot (Desmos' zoom buttons, framed boxes) is not part of the graph.
     const { mask, box } = dropFramedPieces(fg.mask, width, height);
@@ -330,6 +349,29 @@ function subjectIn(
 /** A scale measured earlier, for the same graph seen `f` times larger (the camera came closer). */
 function zoomed(s: GraphScale, f: number): GraphScale {
   return { ...s, pxPerUnitX: s.pxPerUnitX * f, pxPerUnitY: s.pxPerUnitY * f, majorX: s.majorX * f, majorY: s.majorY * f };
+}
+
+/**
+ * Whether the area around curves looks like a page: its typical colour (median of a sample, curve pixels left out)
+ * is bright and nearly neutral. Paper, whiteboards and screens are; wood, cloth and carpets aren't.
+ */
+function pageBackground(rgb: ArrayLike<number>, width: number, height: number, r: Rect, curve: Float32Array): boolean {
+  const lum: number[] = [];
+  const sat: number[] = [];
+  const step = Math.max(1, Math.round(Math.sqrt((r.width * r.height) / 4000)));
+  for (let y = Math.max(0, Math.floor(r.y)); y < Math.min(height, r.y + r.height); y += step)
+    for (let x = Math.max(0, Math.floor(r.x)); x < Math.min(width, r.x + r.width); x += step) {
+      const p = y * width + x;
+      if (curve[p]) continue;
+      const R = rgb[p * 3];
+      const G = rgb[p * 3 + 1];
+      const B = rgb[p * 3 + 2];
+      lum.push(0.299 * R + 0.587 * G + 0.114 * B);
+      sat.push(Math.max(R, G, B) - Math.min(R, G, B));
+    }
+  if (!lum.length) return false;
+  const mid = (a: number[]) => a.sort((u, v) => u - v)[a.length >> 1];
+  return mid(lum) > 140 && mid(sat) < 40;
 }
 
 /** Of several plots, the one covering most of `box` (a page can hold several graphs); null when there are none. */
@@ -402,6 +444,7 @@ function analyse(
     minPieceRatio: o.minPieceRatio,
     removeLines: o.removeLines,
     region,
+    camera: o.camera,
   });
   const scored = scoreCandidates(rgb, fg.mask, width, height, r);
   const candidates = scored.candidates.sort((a, b) => b.score - a.score);
@@ -414,8 +457,14 @@ function analyse(
   // Cards: a nearly solid rectangle with something different inside it. Look inside.
   const fill = best.area / area(best.box);
   if (depth < 3 && fill >= 0.85 && best.box.width >= 12 && best.box.height >= 12 && area(best.box) < area(r) * 0.98) {
-    const inner = analyse(rgb, width, height, o, inset(best.box, 2), depth + 1, focus);
-    if (inner.kind !== 'none' && area(inner.box) <= area(best.box) * 0.8) return inner;
+    const within = inset(best.box, 2);
+    const inner = analyse(rgb, width, height, o, within, depth + 1, focus);
+    // What is on a card sits inside it. A small piece against the card's edge is its rim (light, shading, a worn
+    // corner), not a subject: the card itself is the subject then.
+    const b = inner.box;
+    const atEdge = b.x <= within.x + 2 || b.y <= within.y + 2 || b.x + b.width >= within.x + within.width - 2 || b.y + b.height >= within.y + within.height - 2;
+    const big = area(b) >= area(best.box) * 0.25;
+    if (inner.kind !== 'none' && area(b) <= area(best.box) * 0.8 && (!atEdge || big)) return inner;
   }
 
   // Nearby pieces of the same colour belong together (a broken outline, two halves of a drawing). After a tap only

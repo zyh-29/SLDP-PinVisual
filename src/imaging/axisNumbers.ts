@@ -10,6 +10,7 @@ export const axisNumbersAvailable = false;
 export interface AxisNumberSource {
   uri?: string;
   video?: unknown;
+  pixels?: { rgb: ArrayLike<number>; width: number; height: number };
 }
 
 export async function readAxisNumbers(

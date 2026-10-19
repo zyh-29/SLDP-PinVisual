@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { denoiseFrame, FocusGate, sharpness } from './cameraFrame';
 import type { RasterImage } from './convert';
+import { flatten, type Quad, SurfaceWatch, type SurfaceView } from './surface';
 
 export interface ImageSource {
   uri: string;
@@ -187,6 +188,8 @@ export interface LiveCapture {
 
 /** The size picked photos are analysed at (loadImage.web.ts): a capture is taken at that size, so nothing is lost. */
 const SNAPSHOT_SIZE = 800;
+/** A capture of a screen or page is taken from a picture this large, then flattened. */
+const SNAPSHOT_SURFACE_SIZE = 1600;
 /** Frames a capture chooses the sharpest from (about half a second)... */
 const SNAPSHOT_TRIES = 6;
 /** ...or, while none is as sharp as the live view recently was, up to this many (about 2 s). */
@@ -208,6 +211,10 @@ function nextFrame(video: FrameCallbackVideo): Promise<void> {
  * runs the whole conversion on every frame, and a camera picture has less fine detail anyway.
  */
 const WORKING_SIZE: Record<LiveSource, number> = { screen: 800, camera: 640 };
+/** A flat surface in view is read from the full-resolution video at up to this size across... */
+const HI_SIZE = 1000;
+/** ...and flattened into a page of at most this size: graphs on a screen need the detail. */
+const PAGE_SIZE = 800;
 /** The share of the main thread the analysis may use (see reportCost); the rest shows the video and takes touches. */
 const MAX_BUSY = 0.45;
 /** Shortest time between processed frames. A camera changes on every frame (noise), so it is paced a bit slower. */
@@ -361,7 +368,11 @@ async function focusCameraAt(stream: MediaStream, x: number, y: number): Promise
  */
 export async function startLiveCapture(o: {
   source?: LiveSource;
-  onFrame: (frame: RasterImage) => void;
+  /**
+   * Each new frame. Camera, looking at a flat surface (a screen, a page): `frame` is that surface flattened (as
+   * if scanned) and `surface` maps between it and the camera picture; otherwise `surface` is undefined.
+   */
+  onFrame: (frame: RasterImage, surface?: SurfaceView) => void;
   onEnd: () => void;
   /** Camera only: how many frames in a row were blurry (0 = in focus), after each frame. */
   onFocus?: (blurryFor: number) => void;
@@ -369,6 +380,12 @@ export async function startLiveCapture(o: {
 }): Promise<LiveCapture | null> {
   const kind = o.source ?? 'screen';
   const gate = new FocusGate();
+  const surfaces = new SurfaceWatch();
+  /** The surface in view at the last frame, with the frame width its corners are measured in (for Capture). */
+  let lastSurface: { quad: Quad; aspect: number; frameWidth: number } | null = null;
+  /** For reading the surface's area from the full-resolution video. */
+  const hiCanvas = document.createElement('canvas');
+  const hiCtx = hiCanvas.getContext('2d', { willReadFrequently: true });
   /** Where the user last asked the camera to focus (0..1), kept across refocusing and capture. */
   let focusPoint: { x: number; y: number } | null = null;
   let facing: CameraFacing = 'environment';
@@ -473,9 +490,67 @@ export async function startLiveCapture(o: {
         o.onFocus?.(gate.blurryFor);
         if (!use) return;
         denoiseFrame(data, width, height);
+        const page = flattenSurface(data, width, height, vw, vh);
+        if (page) {
+          o.onFrame(page.frame, page.surface);
+          return;
+        }
       }
       o.onFrame({ width, height, data, channels: 4 });
     }
+  };
+
+  /**
+   * A flat surface in view (a screen, a page): flattened from the full-resolution video, so a thin curve on a
+   * laptop screen keeps the detail the 640 px frame loses. Null when there's none.
+   */
+  const flattenSurface = (data: Uint8ClampedArray, width: number, height: number, vw: number, vh: number) => {
+    const rgb = new Uint8ClampedArray(width * height * 3);
+    for (let p = 0; p < width * height; p++) {
+      rgb[p * 3] = data[p * 4];
+      rgb[p * 3 + 1] = data[p * 4 + 1];
+      rgb[p * 3 + 2] = data[p * 4 + 2];
+    }
+    const found = surfaces.update(rgb, width, height);
+    lastSurface = found ? { quad: found.quad, aspect: found.aspect, frameWidth: width } : null;
+    if (!found || !hiCtx) return null;
+    // The surface's area in the video, read at up to 1000 px across (enough detail, bounded cost).
+    const k = vw / width;
+    const xs = found.quad.map((p) => p.x * k);
+    const ys = found.quad.map((p) => p.y * k);
+    const bx = Math.max(0, Math.floor(Math.min(...xs)));
+    const by = Math.max(0, Math.floor(Math.min(...ys)));
+    const bw = Math.min(vw, Math.ceil(Math.max(...xs))) - bx;
+    const bh = Math.min(vh, Math.ceil(Math.max(...ys))) - by;
+    if (bw < 16 || bh < 16) return null;
+    const r = Math.min(1, HI_SIZE / Math.max(bw, bh));
+    const hw = Math.max(1, Math.round(bw * r));
+    const hh = Math.max(1, Math.round(bh * r));
+    if (hiCanvas.width !== hw || hiCanvas.height !== hh) {
+      hiCanvas.width = hw;
+      hiCanvas.height = hh;
+    }
+    hiCtx.drawImage(video, bx, by, bw, bh, 0, 0, hw, hh);
+    const hi = hiCtx.getImageData(0, 0, hw, hh).data;
+    denoiseFrame(hi, hw, hh);
+    const hiRgb = new Uint8ClampedArray(hw * hh * 3);
+    for (let p = 0; p < hw * hh; p++) {
+      hiRgb[p * 3] = hi[p * 4];
+      hiRgb[p * 3 + 1] = hi[p * 4 + 1];
+      hiRgb[p * 3 + 2] = hi[p * 4 + 2];
+    }
+    // Frame pixel -> pixel of the area read, and back.
+    const toHi = (p: { x: number; y: number }) => ({ x: (p.x * k - bx) * r, y: (p.y * k - by) * r });
+    const fromHi = (p: { x: number; y: number }) => ({ x: (p.x / r + bx) / k, y: (p.y / r + by) / k });
+    const page = flatten(hiRgb, hw, hh, { ...found, quad: found.quad.map(toHi) as Quad }, PAGE_SIZE);
+    const surface: SurfaceView = {
+      frameWidth: width,
+      frameHeight: height,
+      quad: found.quad,
+      toFrame: (p) => fromHi(page.toPicture(p)),
+      toPage: (p) => page.toPage(toHi(p)),
+    };
+    return { frame: { width: page.width, height: page.height, data: page.rgb, channels: 3 as const }, surface };
   };
 
   /** A new frame arrived: process now, or once the minimum interval has passed (so the latest frame is never skipped). */
@@ -520,6 +595,7 @@ export async function startLiveCapture(o: {
       video.srcObject = stream;
       lastSignature = -1;
       gate.reset();
+      surfaces.reset();
       focusPoint = null;
       await video.play().catch(() => {});
     },
@@ -542,7 +618,9 @@ export async function startLiveCapture(o: {
       if (await focusCameraAt(stream, focusPoint?.x ?? 0.5, focusPoint?.y ?? 0.5)) await wait(450);
       const vw = video.videoWidth;
       const vh = video.videoHeight;
-      const scale = Math.min(1, SNAPSHOT_SIZE / Math.max(vw, vh));
+      // On a screen or page: the full picture, so the flattened page keeps its detail.
+      const surface = lastSurface;
+      const scale = Math.min(1, (surface ? SNAPSHOT_SURFACE_SIZE : SNAPSHOT_SIZE) / Math.max(vw, vh));
       const shot = document.createElement('canvas');
       shot.width = Math.max(1, Math.round(vw * scale));
       shot.height = Math.max(1, Math.round(vh * scale));
@@ -569,6 +647,27 @@ export async function startLiveCapture(o: {
       // Denoised like the live frames, so a photographed graph is still found as a graph.
       denoiseFrame(img.data, shot.width, shot.height);
       sctx.putImageData(img, 0, 0);
+      if (surface) {
+        // The photo is the surface flattened, as the live view analysed it.
+        const rgb = new Uint8ClampedArray(shot.width * shot.height * 3);
+        for (let p = 0; p < shot.width * shot.height; p++) {
+          rgb[p * 3] = img.data[p * 4];
+          rgb[p * 3 + 1] = img.data[p * 4 + 1];
+          rgb[p * 3 + 2] = img.data[p * 4 + 2];
+        }
+        const f = shot.width / surface.frameWidth;
+        const page = flatten(rgb, shot.width, shot.height, { ...surface, fill: 1, quad: surface.quad.map((q) => ({ x: q.x * f, y: q.y * f })) as Quad }, SNAPSHOT_SIZE);
+        const out = new ImageData(page.width, page.height);
+        for (let p = 0; p < page.width * page.height; p++) {
+          out.data[p * 4] = page.rgb[p * 3];
+          out.data[p * 4 + 1] = page.rgb[p * 3 + 1];
+          out.data[p * 4 + 2] = page.rgb[p * 3 + 2];
+          out.data[p * 4 + 3] = 255;
+        }
+        shot.width = page.width;
+        shot.height = page.height;
+        sctx.putImageData(out, 0, 0);
+      }
       // PNG: lossless, so the cleaned pixels arrive exactly as they are.
       const blob = await new Promise<Blob | null>((resolve) => shot.toBlob(resolve, 'image/png'));
       if (!blob) throw new Error('Could not capture the picture.');

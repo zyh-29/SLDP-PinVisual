@@ -36,7 +36,9 @@ export function findColouredCurves(
   return findCurves(rgb, width, height, region)?.box ?? null;
 }
 
-interface CurveResult {
+export interface CurveResult {
+  /** Total length of the curves kept (px): how much curve was found. */
+  score: number;
   box: Rect;
   /** Exactly the pixels of the accepted curves (1 = curve). */
   mask: Float32Array;
@@ -44,12 +46,27 @@ interface CurveResult {
 
 /** Saturation a pixel needs to count towards a curve. Low enough for curves dimmed by screen-capture colour smearing. */
 const CURVE_MIN_SATURATION = 35;
+/**
+ * The same on a screen photographed by a camera and flattened (surface.ts): a display and a lens wash colours out,
+ * so a thin curve blurred into white keeps only ~25 levels of colour, while the screen's own white has ~13. Which
+ * works best depends on the picture (a faint, small screen's tinted white starts to pass at 22), so both are
+ * tried and the one finding more curve wins.
+ */
+export const CAMERA_CURVE_SATURATIONS = [30, 22];
 
 /**
  * `focus`: a tapped point. On (or within a few pixels of) a curve, only that curve's colour is kept (tap the
  * blue line to drop the red parabola); anywhere else, every comparable curve is kept as usual.
  */
-export function findCurves(rgb: ArrayLike<number>, width: number, height: number, region: Rect, focus?: Point): CurveResult | null {
+export function findCurves(
+  rgb: ArrayLike<number>,
+  width: number,
+  height: number,
+  region: Rect,
+  focus?: Point,
+  /** Lower on a photographed screen (see CAMERA_CURVE_SATURATION). */
+  minSaturation = CURVE_MIN_SATURATION,
+): CurveResult | null {
   const x0 = Math.max(0, Math.floor(region.x));
   const y0 = Math.max(0, Math.floor(region.y));
   const x1 = Math.min(width, Math.ceil(region.x + region.width));
@@ -68,7 +85,7 @@ export function findCurves(rgb: ArrayLike<number>, width: number, height: number
       const r = rgb[p * 3];
       const g = rgb[p * 3 + 1];
       const b = rgb[p * 3 + 2];
-      if (Math.max(r, g, b) - Math.min(r, g, b) < CURVE_MIN_SATURATION || Math.max(r, g, b) < 60) continue;
+      if (Math.max(r, g, b) - Math.min(r, g, b) < minSaturation || Math.max(r, g, b) < 60) continue;
       const k = Math.floor(hue(r, g, b) / (360 / HUE_BINS)) % HUE_BINS;
       bins[k][p] = 1;
       counts[k]++;
@@ -93,13 +110,16 @@ export function findCurves(rgb: ArrayLike<number>, width: number, height: number
     // Join pieces up to ~4 px apart (thin steep curves fragment when a large screenshot is shrunk),
     // but measure size and thickness on the real pixels.
     const { labels, components } = labelComponents(dilate(bin, width, height, 2, 2), width, height);
-    const real = components.map(() => ({ area: 0, x0: Infinity, y0: Infinity, x1: -1, y1: -1 }));
+    const real = components.map(() => ({ area: 0, x0: Infinity, y0: Infinity, x1: -1, y1: -1, border: 0 }));
+    // Pixels this close to the searched area's edge are "on its border".
+    const band = Math.max(3, shortSide * 0.015);
     for (let p = 0; p < bin.length; p++) {
       if (!bin[p]) continue;
       const k = real[labels[p] - 1];
       const x = p % width;
       const y = (p - x) / width;
       k.area++;
+      if (x - x0 < band || x1 - 1 - x < band || y - y0 < band || y1 - 1 - y < band) k.border++;
       if (x < k.x0) k.x0 = x;
       if (x > k.x1) k.x1 = x;
       if (y < k.y0) k.y0 = y;
@@ -148,6 +168,9 @@ export function findCurves(rgb: ArrayLike<number>, width: number, height: number
       if (frame) return;
       // Dead-straight horizontal or vertical coloured lines are UI (borders, underlines, separators), not curves.
       if (kb.width <= 3 || kb.height <= 3) return;
+      // A stroke lying along the searched area's edge is its frame (a window border, a sliver of table at the
+      // edge of a flattened page), not a curve.
+      if (k.border > 0.7 * k.area) return;
       // A drawn stroke is solid along its path; scattered photo noise that only joins up after growing is not.
       const density = k.area / components[i].area;
       if (density < 0.12) return;
@@ -204,7 +227,7 @@ export function findCurves(rgb: ArrayLike<number>, width: number, height: number
     for (let p = 0; p < r.bin.length; p++) if (r.bin[p] && keep.has(r.labels[p])) mask[p] = 1;
     for (const l of keep) box = box ? union(box, r.boxes.get(l)!) : r.boxes.get(l)!;
   }
-  return { box: box!, mask };
+  return { box: box!, mask, score: chosen.reduce((t, c) => t + c.r.score, 0) };
 }
 
 /**
@@ -255,7 +278,19 @@ export function dropFramedPieces(source: Uint8Array, width: number, height: numb
  * from the strokes, at least 20% of the area is a *solid* region of another colour than the local background.
  * "Solid" means the pixel's whole 5 x 5 neighbourhood has that other colour, so thin things (gridlines, axes,
  * tick labels) never count, however dense the grid is. A triangle diagram's pale fill does.
+ * "Another colour" means another hue or a much darker or lighter one: a glare patch or uneven light on a
+ * photographed screen only brightens the same colour a little, and is not a fill.
  */
+/** A colour clearly different from `bg`: in hue (opponent colour axes), or by a large step in brightness. */
+function differsFrom(rgb: ArrayLike<number>, i: number, bg: { r: number; g: number; b: number }): boolean {
+  const r = rgb[i];
+  const g = rgb[i + 1];
+  const b = rgb[i + 2];
+  const chroma = Math.hypot(r - g - (bg.r - bg.g), (r + g) / 2 - b - ((bg.r + bg.g) / 2 - bg.b));
+  const light = Math.abs((r + g + b) / 3 - (bg.r + bg.g + bg.b) / 3);
+  return chroma > AUTO_MIN || light > 3 * AUTO_MIN;
+}
+
 export function enclosesFill(rgb: ArrayLike<number>, width: number, curves: CurveResult): boolean {
   const b = curves.box;
   const x0 = Math.floor(b.x);
@@ -291,7 +326,7 @@ export function enclosesFill(rgb: ArrayLike<number>, width: number, curves: Curv
       let nearStroke = false;
       for (let d = -2; d <= 2 && !nearStroke; d++) nearStroke = !!curves.mask[q + d] || !!curves.mask[q + d * width];
       if (!nearStroke) total++;
-      const other = !nearStroke && Math.hypot(rgb[q * 3] - bg.r, rgb[q * 3 + 1] - bg.g, rgb[q * 3 + 2] - bg.b) > AUTO_MIN;
+      const other = !nearStroke && differsFrom(rgb, q * 3, bg);
       notOther[y * bw + x] = other ? 0 : 1;
     }
   const notSolid = dilate(notOther, bw, bh, 2, 2);

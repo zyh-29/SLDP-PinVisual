@@ -3,6 +3,7 @@
  * (see imageInput.web.ts). Photos come from the image picker instead.
  */
 import type { RasterImage } from './convert';
+import type { SurfaceView } from './surface';
 
 export interface ImageSource {
   uri: string;
@@ -36,7 +37,7 @@ export interface LiveCapture {
 
 export async function startLiveCapture(_o: {
   source?: LiveSource;
-  onFrame: (frame: RasterImage) => void;
+  onFrame: (frame: RasterImage, surface?: SurfaceView) => void;
   onFocus?: (blurryFor: number) => void;
   onEnd: () => void;
   minIntervalMs?: number;
