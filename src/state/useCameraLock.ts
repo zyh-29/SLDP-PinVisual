@@ -79,7 +79,7 @@ class CameraLock {
     height: number,
     /** Where a point of this picture is in the camera's view (0..1): differs when the picture is a flattened page. */
     toLens: (p: Point) => Point = (p) => ({ x: p.x / width, y: p.y / height }),
-  ): { focus: Focus; width: number } | null | undefined {
+  ): { focus: Focus; box: Rect } | null | undefined {
     if (!this.tracker.locked) return undefined;
     const r = this.tracker.track(this.grayOf(rgb, width, height));
     if (!r) {
@@ -93,7 +93,7 @@ class CameraLock {
       this.lens = { x: nx, y: ny, at: now };
       this.camera.focusAt(nx, ny).catch(() => {});
     }
-    return { focus: { ...r.point, tap: this.byTap }, width: r.box.width };
+    return { focus: { ...r.point, tap: this.byTap }, box: r.box };
   }
 
   tap(point: Point) {
@@ -112,8 +112,8 @@ class CameraLock {
 export function useCameraLock(live: LiveCapture | null) {
   const [session] = useState(() => new CameraLock());
   const [locked, setLocked] = useState(false);
-  /** The locked item's width in the last frame (frame pixels). */
-  const [width, setWidth] = useState<number | null>(null);
+  /** Where the locked item is in the last frame (picture pixels). */
+  const [box, setBox] = useState<Rect | null>(null);
   const camera = live?.kind === 'camera' ? live : null;
   useEffect(() => {
     session.setCamera(camera);
@@ -126,7 +126,9 @@ export function useCameraLock(live: LiveCapture | null) {
     camera,
     locked: !!camera && locked,
     /** The locked item's width now (frame pixels): how close the camera is to it. */
-    width: camera && locked ? width : null,
+    width: camera && locked && box ? box.width : null,
+    /** Where the locked item is now: the smart crop only needs to look around it. */
+    box: camera && locked ? box : null,
     /**
      * Each camera frame, before it is shown: where the locked item is now, as the point the smart crop should
      * focus on. `undefined`: nothing locked, leave the focus alone; `null`: the lock was just lost.
@@ -136,19 +138,23 @@ export function useCameraLock(live: LiveCapture | null) {
       if (r === undefined) return undefined;
       if (r === null) {
         setLocked(false);
-        setWidth(null);
+        setBox(null);
         return null;
       }
-      setWidth(r.width);
+      setBox(r.box);
       return r.focus;
     },
-    /** A tap: lock onto whatever the smart crop finds there. */
-    tap: (point: Point) => session.tap(point),
+    /** A tap: lock onto whatever the smart crop finds there (searching the whole picture again until then). */
+    tap: (point: Point) => {
+      session.tap(point);
+      setLocked(false);
+      setBox(null);
+    },
     /** Lets go (Auto Crop, a hand-drawn crop box, a new picture). */
     release: () => {
       session.release();
       setLocked(false);
-      setWidth(null);
+      setBox(null);
     },
   };
 }

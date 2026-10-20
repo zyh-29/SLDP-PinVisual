@@ -21,7 +21,7 @@
 import { CAMERA_CURVE_SATURATIONS, type CurveResult, dropFramedPieces, enclosesFill, findCurves, hasLongStroke } from './curves';
 import { findForeground } from './foreground';
 import { area, clip, contains, distanceTo, expand, fullRect, inset, overlaps, type Point, type Rect, type Rgb, union } from './geometry';
-import { curveKeyPoint, type GraphAxes, type GraphScale, graphWindow, type GraphWindow, type KeyPoint, readAxes, rescale, tidyKeyPoint } from './graph';
+import { curveKeyPoint, followZoom, type GraphAxes, type GraphScale, graphWindow, type GraphWindow, type KeyPoint, readAxes, rescale, tidyKeyPoint } from './graph';
 import { dilate, labelComponents } from './masks';
 import { findGrids, type Grid } from './plotGrid';
 
@@ -71,6 +71,13 @@ export interface GraphView {
   anyZoom?: boolean;
   /** Live camera: the locked graph's width now (frame pixels, as tracked), to resize the scale with (see GraphScale.atWidth). */
   targetWidth?: number;
+  /**
+   * A live screen share: the scale follows the graph frame by frame as it is zoomed (see followZoom), so the
+   * curve keeps its size on the pins through the zoom, whether or not the numbers can be read.
+   */
+  followZoom?: boolean;
+  /** Moved by the user from where the key point puts the window: graph units, right and up. */
+  pan?: { x: number; y: number };
 }
 
 export interface GraphInfo {
@@ -285,21 +292,26 @@ function subjectIn(
   const windowed = (detected: SmartCropResult, mask: Float32Array, known: Grid | null): SmartCropResult => {
     let result = detected;
     if (!view) return result;
-    const grid = known ?? gridFor(findGrids(rgb, width, height, region), result.box);
+    // The axes and grid from the whole picture: the search may be limited to around a locked item (live camera),
+    // but the graph's scale must not depend on where that limit falls.
+    const grid = known ?? gridFor(findGrids(rgb, width, height, fullRect(width, height)), result.box);
     if (!grid || !overlaps(grid.plot, result.box)) return result;
     const axes = readAxes(grid);
     const scale = !view.scale
       ? null
       : view.anyZoom && view.scale.atWidth && view.targetWidth
         ? zoomed(view.scale, view.targetWidth / view.scale.atWidth)
-        : rescale(view.scale, axes, view.anyZoom);
+        : view.followZoom
+          ? (followZoom(view.scale, axes) ?? rescale(view.scale, axes))
+          : rescale(view.scale, axes, view.anyZoom);
     const found = curveKeyPoint(mask, width, height, axes, rgb);
     const key = found && scale ? tidyKeyPoint(found, axes, scale) : found;
     const info: GraphInfo = { axes, key, scale, window: null, fit: null };
     result = { ...result, target: grid.plot };
     if (view.range === 'whole' || !key || !scale) return { ...result, graph: info };
-    const win = graphWindow(key, scale, view.range, axes.plot, view.rows, view.cols, view.pinPitchRatio);
-    return { ...result, box: win.box, context: clip(union(result.context, win.box), region), graph: { ...info, window: win.box, fit: win.fit } };
+    const win = graphWindow(key, scale, view.range, axes.plot, view.rows, view.cols, view.pinPitchRatio, view.pan);
+    // The window may reach past the plot (zoomed in, see graphWindow): only the plot part is analysed.
+    return { ...result, box: win.box, context: clip(union(result.context, clip(win.box, axes.plot)), region), graph: { ...info, window: win.box, fit: win.fit } };
   };
   // Curves are found at full size: shrinking would fade a thin line below the colour threshold. They count when the
   // area around them is flat (a screen or diagram), whatever else is on screen (a photo wallpaper, other windows).

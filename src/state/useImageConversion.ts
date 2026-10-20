@@ -12,10 +12,10 @@ import { type SteadyPins, steadyPins } from '@/imaging/cameraFrame';
 import type { SurfaceView } from '@/imaging/surface';
 import type { RasterImage } from '@/imaging/convert';
 import { DEFAULT_MIN_PIECE_RATIO, estimateBackground, findForeground } from '@/imaging/foreground';
-import { fullRect, type Rect } from '@/imaging/geometry';
+import { clip, fullRect, type Rect } from '@/imaging/geometry';
 import { type GraphScale, labelBands, scaleFromGrid, scaleFromLabels } from '@/imaging/graph';
 import type { LiveCapture } from '@/imaging/imageInput';
-import { cellSizePx, inkFromGray, inkFromMask, patternFromSamples, renderCrop, sampleCrop, thickenThinLines } from '@/imaging/pinSampling';
+import { cellSizePx, inkFromGray, inkFromMask, patternFromSamples, renderCrop, sampleCrop, thickenThinLines, traceLinePins } from '@/imaging/pinSampling';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
 import { detectShape, fillHoles, renderShape } from '@/imaging/shapes';
@@ -30,6 +30,8 @@ export interface PickedImage {
   surface?: SurfaceView;
   /** Taken with the live camera (Capture): a real-world picture, whatever it shows. */
   fromCamera?: boolean;
+  /** Drawn from a typed equation (equation.ts): its scale is known exactly, so no numbers are read. */
+  equation?: { text: string; scale: GraphScale };
   /** Downscaled PNG on the device, for Smart Cut-Out (phones). */
   fileUri?: string;
   raster: RasterImage;
@@ -57,16 +59,24 @@ export interface ConversionSettings {
   /** null = automatic: axes and gridlines are removed when the image looks like a graph. */
   linesOverride: boolean | null;
   graphRange: GraphRange;
+  /** Graph curves as a line one pin wide (traceLinePins) instead of every pin they touch. */
+  thinLines: boolean;
+  /** The graph window moved by the user (graph units, right and up). */
+  graphPan: { x: number; y: number };
   /** Live camera: the locked item's width now (frame pixels, as tracked), so a graph's scale follows the zoom. */
   trackedWidth: number | null;
+  /**
+   * Live camera: where the locked item is now. The smart crop then only searches around it (the item and a wide
+   * margin) instead of the whole picture: most of each frame's cost, so this keeps slow phones smooth.
+   */
+  trackedBox: Rect | null;
 }
 
 /** Above this edge unevenness a photo's background is busy enough to switch Smart Cut-Out on by itself. */
 const BUSY_BACKGROUND = 28;
 
 export function useImageConversion(picked: PickedImage | null, live: LiveCapture | null, s: ConversionSettings) {
-  const { removeBackground, removeClutter, toleranceOverride, pinFill, snap, cutoutOverride, manualCrop, focus, linesOverride, graphRange, trackedWidth } =
-    s;
+  const { removeBackground, removeClutter, toleranceOverride, pinFill, snap, cutoutOverride, manualCrop, focus, linesOverride, graphRange, graphPan, thinLines, trackedWidth, trackedBox } = s;
   const [cutout, setCutout] = useState<{ for: PickedImage; mask: Float32Array | null; error?: string } | null>(null);
   /** Graphs: pixels per unit, read from the axis numbers (or the grid). Kept across live frames while the zoom is unchanged. */
   const [graphScale, setGraphScale] = useState<GraphScale | null>(null);
@@ -120,45 +130,83 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   const graphView = useMemo<GraphView>(
     () => ({
       range: graphRange === 'whole' ? 'whole' : Number(graphRange),
-      scale: graphScale,
+      scale: graphScale ?? picked?.equation?.scale ?? null,
       rows: GRID.rows,
       cols: GRID.cols,
       pinPitchRatio: GRID.pinPitchRatio,
       // The camera stays locked on one graph while it moves closer or further: keep its scale, resized.
       anyZoom: live?.kind === 'camera',
       targetWidth: live?.kind === 'camera' ? (trackedWidth ?? undefined) : undefined,
+      // A shared screen being zoomed: the scale follows the grid frame by frame.
+      followZoom: live?.kind === 'screen',
+      pan: graphPan,
     }),
-    [graphRange, graphScale, live, trackedWidth],
+    [graphRange, graphScale, picked, live, trackedWidth, graphPan],
   );
+  // The locked item and a margin of 40% of its size around it, kept inside the picture.
+  const searchArea = useMemo(() => {
+    if (!trackedBox || !w || !h) return undefined;
+    const m = 0.4 * Math.max(trackedBox.width, trackedBox.height);
+    const x0 = Math.max(0, Math.floor(trackedBox.x - m));
+    const y0 = Math.max(0, Math.floor(trackedBox.y - m));
+    const x1 = Math.min(w, Math.ceil(trackedBox.x + trackedBox.width + m));
+    const y1 = Math.min(h, Math.ceil(trackedBox.y + trackedBox.height + m));
+    // Not worth it when the item fills most of the picture anyway, and never leaving out the point focused on.
+    const inside = !focus || (focus.x >= x0 && focus.x <= x1 && focus.y >= y0 && focus.y <= y1);
+    return inside && x1 - x0 > 16 && y1 - y0 > 16 && (x1 - x0) * (y1 - y0) < 0.7 * w * h
+      ? { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+      : undefined;
+  }, [trackedBox, w, h, focus]);
   const smart = useMemo(
-    () => (picked && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, undefined, focus ?? undefined, graphView) : null),
-    [picked, subjectMask, w, h, smartOptions, focus, graphView],
+    () => (picked && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, searchArea, focus ?? undefined, graphView) : null),
+    [picked, subjectMask, w, h, smartOptions, focus, graphView, searchArea],
   );
   // Graphs: read the numbers on the axes (once per zoom level) to know where e.g. x = 5 is. Until then the whole
   // curve shows; if they can't be read, one major grid square counts as one unit.
   const graph = !manualCrop ? smart?.graph : undefined;
   const scaleKey = graph ? `${Math.round(graph.axes.majorX ?? 0)}x${Math.round(graph.axes.majorY ?? 0)}` : null;
   const readingNumbers = !!graph && graphRange !== 'whole' && !graph.scale;
+  // A scale carried through a zoom (followZoom) is checked against the numbers once the zoom has settled.
+  const checkingScale = !!graph?.scale?.followed && graphRange !== 'whole';
   useEffect(() => {
-    if (!readingNumbers || !graph || !scaleKey || !picked || scaleRequest.current === scaleKey) return;
-    scaleRequest.current = scaleKey;
+    if ((!readingNumbers && !checkingScale) || !graph || !scaleKey || !picked || scaleRequest.current === scaleKey) return;
     const { axes } = graph;
     // A flattened page (camera on a screen) is read from its own pixels: the bands are in its coordinates.
     const source = picked.surface ? { pixels: { rgb: picked.rgb, width: w, height: h } } : live ? { video: live.video } : { uri: picked.uri };
-    readAxisNumbers(source, w, labelBands(axes))
-      .then((readings) => scaleFromLabels(axes, readings))
-      .catch(() => null)
-      .then((found) => {
-        // A newer request (another zoom level or picture) wins.
-        const s = found ?? scaleFromGrid(axes);
-        // Remember how wide the locked graph was, so the scale can follow the camera's zoom from now on.
-        if (scaleRequest.current === scaleKey) setGraphScale(s && trackedWidth ? { ...s, atWidth: trackedWidth } : s);
-      });
-  }, [readingNumbers, graph, scaleKey, picked, live, w, h, trackedWidth]);
+    const read = () => {
+      scaleRequest.current = scaleKey;
+      readAxisNumbers(source, w, labelBands(axes))
+        .then((readings) => scaleFromLabels(axes, readings))
+        .catch(() => null)
+        .then((found) => {
+          // A newer request (another zoom level or picture) wins.
+          if (scaleRequest.current !== scaleKey) return;
+          // Checking a followed scale: only numbers that were read replace it. The grid's guess (one square, one
+          // unit) would undo what following the zoom kept.
+          if (checkingScale) {
+            if (found) setGraphScale(found);
+            return;
+          }
+          const s = found ?? scaleFromGrid(axes);
+          // Remember how wide the locked graph was, so the scale can follow the camera's zoom from now on.
+          setGraphScale(s && trackedWidth ? { ...s, atWidth: trackedWidth } : s);
+        });
+    };
+    if (readingNumbers) {
+      read();
+      return;
+    }
+    // Still zooming: every frame is another zoom level. Read once the grid has held still for a moment.
+    const t = setTimeout(read, 700);
+    return () => clearTimeout(t);
+  }, [readingNumbers, checkingScale, graph, scaleKey, picked, live, w, h, trackedWidth]);
   // Locked on after the scale was measured: tie the scale as it is now to the tracked width, so from here on it
   // follows the zoom through the tracker (React's "adjust state while rendering" pattern).
   const current = graph?.scale;
   if (current && trackedWidth && graphScale && !graphScale.atWidth) setGraphScale({ ...current, atWidth: trackedWidth });
+  // A shared screen zoomed since the scale was stored: store the followed one, so the next frame follows on from
+  // this one (each frame zooms only a little from the one before).
+  else if (graphView.followZoom && current && graphScale && zoomedFrom(graphScale, current)) setGraphScale({ ...current, followed: true });
   // Inside the user's own box the same logic picks the subject, so stray UI caught by the box is ignored.
   const smartInCrop = useMemo(
     () => (picked && manualCrop && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, manualCrop) : null),
@@ -189,8 +237,8 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     [picked, w, h, tolerance, minPieceRatio, lines, region, manualCrop, autoContext, knownSubject, camera],
   );
   const autoBox = smart ? smart.box : (fg?.subject ?? fullImage);
-  /** The crop box shown to the user. */
-  const crop = manualCrop ?? autoBox;
+  /** The crop box shown to the user (a graph window can reach past the picture when zoomed in; see graphWindow). */
+  const crop = manualCrop ?? clip(autoBox, fullImage);
   /** What the pins use: the chosen subject's tight box (inside the user's box, if any), so empty margins don't waste pins. */
   const sampleBox = chosen?.box ?? (manualCrop ? (fg?.subject ?? manualCrop) : autoBox);
   // Graphs have arbitrary x and y scales, so they stretch to use every pin.
@@ -206,31 +254,51 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     [filledMask, fg],
   );
 
+  // A graph window reaching past the plot (zoomed in): only the plot counts, so the pins off it stay down
+  // instead of showing the graphing tool's buttons or side panel.
+  const plotOnly = graph?.window && !inside(graph.window, graph.axes.plot) ? graph.axes.plot : null;
   const ink = useMemo(() => {
     if (!picked || !fg || !pinMask) return null;
-    if (!removeBackground) return inkFromGray(picked.gray);
-    const cell = cellSizePx(sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch);
-    return inkFromMask(thickenThinLines(pinMask, w, h, fg.strokeWidth, cell));
-  }, [picked, fg, pinMask, removeBackground, sampleBox, stretch, w, h]);
+    let out: Float32Array;
+    if (!removeBackground) out = inkFromGray(picked.gray);
+    else {
+      const cell = cellSizePx(sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch);
+      out = inkFromMask(thickenThinLines(pinMask, w, h, fg.strokeWidth, cell));
+    }
+    return plotOnly ? onlyInside(out, w, h, plotOnly) : out;
+  }, [picked, fg, pinMask, removeBackground, sampleBox, stretch, w, h, plotOnly]);
   const samples = useMemo(
     () => (ink ? sampleCrop(ink, w, h, sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch) : null),
     [ink, w, h, sampleBox, stretch],
   );
+  // Graph curves: a line one pin wide, following the curve's centre.
+  const curves = (chosen ?? smart)?.kind === 'curves';
+  const traced = thinLines && removeBackground && curves && !!pinMask;
   const frameResult = useMemo<Pattern | null>(() => {
+    if (traced && pinMask) return traceLinePins(pinMask, w, h, sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch, plotOnly ?? undefined);
     if (shape && snap && shapesApply) return renderShape(shape, GRID.rows, GRID.cols, GRID.pinPitchRatio, 'filled', pinFill);
     return samples ? patternFromSamples(samples, GRID.rows, GRID.cols, pinFill, false) : null;
-  }, [shape, snap, shapesApply, pinFill, samples]);
+  }, [traced, pinMask, w, h, sampleBox, stretch, plotOnly, shape, snap, shapesApply, pinFill, samples]);
 
   // Live camera: noise and a moving hand change a few pins on every frame, so each pin is averaged over the last
   // frames and only flips once it has clearly changed (cameraFrame.ts). Folded in once per new frame result
   // (React's "adjust state while rendering" pattern, so the pins never lag a render behind).
   const steadyOn = live?.kind === 'camera';
   const [steady, setSteady] = useState<{ from: Pattern | null; state: SteadyPins | null }>({ from: null, state: null });
-  let result = frameResult;
-  if (steadyOn && frameResult) {
-    if (steady.from !== frameResult) {
-      const state = steadyPins(steady.state, frameResult);
-      setSteady({ from: frameResult, state });
+  // Live share or camera, zoomed to another level: until its numbers are read the scale is unknown and the whole
+  // curve would fill the board for a moment. The last graph window's pins are held instead, so the curve keeps its
+  // size on the board through the zoom.
+  const [heldGraph, setHeldGraph] = useState<Pattern | null>(null);
+  let shown = frameResult;
+  if (live && graph?.window && frameResult) {
+    if (heldGraph !== frameResult) setHeldGraph(frameResult);
+  } else if (live && readingNumbers && heldGraph) shown = heldGraph;
+  else if (heldGraph && (!live || !graph || graphRange === 'whole')) setHeldGraph(null);
+  let result = shown;
+  if (steadyOn && shown) {
+    if (steady.from !== shown) {
+      const state = steadyPins(steady.state, shown);
+      setSteady({ from: shown, state });
       result = state.pattern;
     } else if (steady.state) result = steady.state.pattern;
   } else if (!steadyOn && steady.state) setSteady({ from: null, state: null });
@@ -243,6 +311,7 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   /** A new picture or share: the graph's scale must be read again. */
   const resetGraph = () => {
     setGraphScale(null);
+    setHeldGraph(null);
     scaleRequest.current = null;
   };
 
@@ -263,6 +332,10 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     crop,
     stretch,
     shapesApply,
+    /** The subject is graph curves. */
+    curves,
+    /** Graph curves are drawn one pin wide (Sensitivity doesn't apply). */
+    traced,
     shape,
     /** The automatic pins. */
     result,
@@ -270,4 +343,27 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     cleanedUri,
     resetGraph,
   };
+}
+
+const inside = (a: Rect, b: Rect) => a.x >= b.x && a.y >= b.y && a.x + a.width <= b.x + b.width && a.y + a.height <= b.y + b.height;
+
+/** `ink` with everything outside `r` cleared (a copy). */
+function onlyInside(ink: Float32Array, width: number, height: number, r: Rect): Float32Array {
+  const out = new Float32Array(ink.length);
+  const x0 = Math.max(0, Math.floor(r.x));
+  const y0 = Math.max(0, Math.floor(r.y));
+  const x1 = Math.min(width, Math.ceil(r.x + r.width));
+  const y1 = Math.min(height, Math.ceil(r.y + r.height));
+  for (let y = y0; y < y1; y++) out.set(ink.subarray(y * width + x0, y * width + x1), y * width + x0);
+  return out;
+}
+
+/** Whether `now` is another zoom level than `before`: its grid spacing changed by more than 1%, or its step. */
+function zoomedFrom(before: GraphScale, now: GraphScale): boolean {
+  return (
+    Math.abs(now.majorX / before.majorX - 1) > 0.01 ||
+    Math.abs(now.majorY / before.majorY - 1) > 0.01 ||
+    now.unitsPerMajorX !== before.unitsPerMajorX ||
+    now.unitsPerMajorY !== before.unitsPerMajorY
+  );
 }

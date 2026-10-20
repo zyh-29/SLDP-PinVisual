@@ -6,7 +6,7 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { denoiseFrame, FocusGate, sharpness } from './cameraFrame';
+import { denoiseFrame, FocusGate, frameLight, LightGate, sharpness } from './cameraFrame';
 import type { RasterImage } from './convert';
 import { flatten, type Quad, SurfaceWatch, type SurfaceView } from './surface';
 
@@ -376,10 +376,15 @@ export async function startLiveCapture(o: {
   onEnd: () => void;
   /** Camera only: how many frames in a row were blurry (0 = in focus), after each frame. */
   onFocus?: (blurryFor: number) => void;
+  /** Camera only: whether the picture is too dark to see anything (a covered lens, a dark room). */
+  onDark?: (dark: boolean) => void;
   minIntervalMs?: number;
 }): Promise<LiveCapture | null> {
   const kind = o.source ?? 'screen';
   const gate = new FocusGate();
+  const light = new LightGate();
+  /** A frame has been passed on (the camera view is up). */
+  let delivered = false;
   const surfaces = new SurfaceWatch();
   /** The surface in view at the last frame, with the frame width its corners are measured in (for Capture). */
   let lastSurface: { quad: Quad; aspect: number; frameWidth: number } | null = null;
@@ -485,6 +490,12 @@ export async function startLiveCapture(o: {
     if (signature !== lastSignature) {
       lastSignature = signature;
       if (kind === 'camera') {
+        // Too dark, or the exposure still settling after the light changed: nothing worth the (costly) analysis.
+        // Phones amplify a dark picture into noise, and the first frames after the light comes back are blown out.
+        // (The very first frame is always shown, so the camera view appears even when it starts in the dark.)
+        const lit = light.accept(frameLight(data, width, height));
+        o.onDark?.(light.dark);
+        if (!lit && delivered) return;
         // While the camera refocuses (or the hand moves), frames smear: keep the last sharp result on the pins.
         const use = gate.accept(sharpness(data, width, height));
         o.onFocus?.(gate.blurryFor);
@@ -492,10 +503,12 @@ export async function startLiveCapture(o: {
         denoiseFrame(data, width, height);
         const page = flattenSurface(data, width, height, vw, vh);
         if (page) {
+          delivered = true;
           o.onFrame(page.frame, page.surface);
           return;
         }
       }
+      delivered = true;
       o.onFrame({ width, height, data, channels: 4 });
     }
   };
@@ -595,6 +608,7 @@ export async function startLiveCapture(o: {
       video.srcObject = stream;
       lastSignature = -1;
       gate.reset();
+      light.reset();
       surfaces.reset();
       focusPoint = null;
       await video.play().catch(() => {});
@@ -602,7 +616,10 @@ export async function startLiveCapture(o: {
     reportCost: (ms) => {
       if (stopped || !(ms > 0)) return;
       const total = ms + prep;
-      cost = cost ? 0.7 * cost + 0.3 * total : total;
+      // A costlier frame counts at once (the light came back and there's suddenly a screen to straighten and
+      // a graph to read: waiting for an average to catch up would leave frames back to back and the video stuck);
+      // cheaper ones bring it down gradually.
+      cost = total > cost ? total : 0.7 * cost + 0.3 * total;
       // Started every cost / 0.45 ms, the main thread is busy at most 45% of the time.
       minInterval = Math.max(baseInterval, Math.min(1500, cost / MAX_BUSY));
     },

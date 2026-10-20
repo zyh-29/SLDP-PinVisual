@@ -214,13 +214,15 @@ describe('window', () => {
     expect(600 - w.y).toBeLessThan(5 * row);
   });
 
-  it('stays inside the plot, and shrinks when the plot shows less than the range', () => {
+  it('stays inside the plot, and keeps its size (reaching past the plot) when the plot shows less than the range', () => {
     const near = graphWindow({ x: 20, y: 20, place: 'centre', kind: 'middle' }, scale(40), 5, plot, 5, 8).box;
     expect(near.x).toBe(0);
     expect(near.y).toBe(0);
     const small = graphWindow({ x: 100, y: 100, place: 'centre', kind: 'middle' }, scale(40), 5, { x: 0, y: 0, width: 200, height: 200 }, 5, 8);
     expect(small.fit).toBe('shrunk');
-    expect(small.box.width).toBeLessThanOrEqual(200);
+    // Still 10 units across (the curve keeps its size on the pins), centred on the key point, not slid into the plot.
+    expect(small.box.width).toBe(400);
+    expect(small.box.x + small.box.width / 2).toBeCloseTo(100, 0);
     expect(small.box.width / small.box.height).toBeCloseTo(8 / 5, 1);
   });
 

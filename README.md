@@ -26,6 +26,11 @@ boards. It runs fully offline, with no accounts and no cloud.
 | Tap to focus (shapes, cards, one of several graphs, one curve, one cut-out subject) | ✅ Unit-tested and checked in Chrome |
 | **Live camera** on the website (phones and laptops) | ✅ Unit-tested, and checked in Chrome with a simulated phone camera (graphs on paper, a shape on a table, hand shake, denied permission). ⚠️ Not yet tried on a real phone |
 | Graph Range (±2 / ±5 / ±10 units around the curve's key point) | ✅ Web, checked on 27 real Desmos screenshots. ⚠️ Needs `tesseract.js` installed to read axis numbers; phones count one grid square as one unit |
+| Graph zoom: the curve keeps its size on the pins while you zoom (followed frame by frame through Desmos' 1-2-5 grid steps) | ✅ Unit-tested, and checked on a real Desmos zoom (10x in, steps 2 → 1 → 0.5 → 0.2: scale within 0.1%, window always 10 units) |
+| Graph panning (arrows under Graph Range), and the graph in words ("Lowest point at (0, −3). Pins show x from −5 to 5…") | ✅ Unit-tested and checked in Chrome |
+| One-Pin Lines: graph curves drawn as a connected line one pin wide | ✅ Unit-tested (also on real Desmos screenshots) and checked in Chrome |
+| Type an equation (y = x^2 − 3, sin(x), 1/x, \|x\|…) and draw it, at an exact scale | ✅ Unit-tested and checked in Chrome |
+| Send Live to Board: a live share's or camera's pins follow on the board (only changes, newest first, at most every 0.6 s for the servos) | ✅ Unit-tested against a fake board. ⚠️ Never run against a real board |
 | **Real Bluetooth** (scan, connect, write, notify) | ⚠️ Implemented, **never run**: needs a development build, a physical phone, and firmware |
 | **Web app** layout (laptop 1280/1440, tablet 820, phone 390) | ✅ Checked in headless Chrome: no horizontal overflow, no console errors |
 | **Web Bluetooth** (Chrome/Edge) | ⚠️ Implemented, **never run** against a board |
@@ -43,12 +48,16 @@ src/
   device/
     types.ts           DeviceDriver + Transport interfaces (BLE on phones and on the web)
     DeviceController   Connection state, the one-command-at-a-time lock, send/reset
+    LiveSender         Send Live to Board: changes only, newest first, paced for the servos
     ble/BleDriver      react-native-ble-plx (iOS/Android); BleDriver.web.ts = Web Bluetooth
     __tests__/support  Simulated board for the automated tests only (MockFirmware); not in the app
   imaging/             Pixel conversion (pure, unit tested), PNG decoding, image loading (.web.ts = canvas)
     foreground         Background model, subject mask, axis/grid removal
     smartCrop          What becomes pins (+ tap to focus); curves.ts finds graph curves, plotGrid.ts plot areas
-    graph              Graph Range: axes, scale, the curve's key point, the window; axisNumbers*.ts = OCR
+    graph              Graph Range: axes, the curve's key point, the window; axisNumbers*.ts = OCR
+    graphScale         Pixels per unit: from the axis numbers, the grid, or followed through a zoom
+    graphSummary       The graph in words (screen readers)
+    equation           Typed equations: a safe parser, drawn as a plot of known scale
     pinSampling        Thin-line thickening, mask → pins, the preview
     geometry / masks   Rectangles, connected pieces, growing masks
   storage/             Saved patterns (AsyncStorage, local only), export/import files (patternFile*.ts)
@@ -173,6 +182,11 @@ browser.
   shadows, so it is modelled as the edge's main colours with shading
   allowed; wood grain or patterned cloth is not taken for graph curves
   (curves need a page-like background in raw camera frames).
+  **Darkness:** an essentially black picture (a covered lens, a dark room) is
+  not analysed (phones turn it into costly noise); the pins keep their last
+  picture and a *Too dark* note shows. After the light changes, frames are
+  skipped while the camera's exposure settles. Once locked onto an item, the
+  smart crop only searches around it, which keeps slow phones smooth.
   **Focus:** phones with several back cameras sometimes
   give the browser a fixed-focus one (ultra-wide, depth), so the app checks
   and, if needed, switches to a back camera that can autofocus (remembered
@@ -337,8 +351,15 @@ The simulator cannot test the following:
        the device with Tesseract.js OCR (web, offline, served from
        `public/tesseract/`); without readable numbers (or on phones, for now)
        one major grid square counts as one unit, which on real Desmos
-       screenshots can be off. Zoomed too far in or out, the window is
-       resized and a note says so.
+       screenshots can be off. Zooming in keeps the curve the same size on
+       the pins: the window stays ±5 units even when the screen shows less,
+       and the part off screen is just lowered pins (a note says so). In a
+       live share the scale follows the zoom frame by frame (`followZoom`:
+       when the grid spacing suddenly halves, the graphing tool switched to
+       its next 1-2-5 step; the zoom itself changes little between frames),
+       so the curve keeps its size even when the numbers can't be read. The
+       numbers are read once the zoom settles, to confirm it. Zoomed out so far that ±5 units is a few pixels, the window is
+       made larger and a note says so.
      - Drag the box or its corners to choose yourself. The same smart logic
        then runs inside your box (curves first, then the best object), so
        stray UI caught by the box is ignored and empty margins don't waste pins.

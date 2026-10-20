@@ -40,6 +40,11 @@ const ICONS = {
   flip: { ios: 'arrow.triangle.2.circlepath.camera', android: 'flip_camera_android', web: 'flip_camera_android' },
   export: { ios: 'square.and.arrow.up', android: 'ios_share', web: 'ios_share' },
   import: { ios: 'tray.and.arrow.down', android: 'file_open', web: 'file_open' },
+  left: { ios: 'arrow.left', android: 'arrow_back', web: 'arrow_back' },
+  right: { ios: 'arrow.right', android: 'arrow_forward', web: 'arrow_forward' },
+  up: { ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' },
+  down: { ios: 'arrow.down', android: 'arrow_downward', web: 'arrow_downward' },
+  centre: { ios: 'scope', android: 'center_focus_strong', web: 'center_focus_strong' },
 } as const satisfies Record<string, SymbolName>;
 
 export type IconName = keyof typeof ICONS;

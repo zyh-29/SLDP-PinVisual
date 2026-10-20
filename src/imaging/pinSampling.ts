@@ -139,6 +139,70 @@ export function patternFromSamples(s: CellSamples, rows: number, cols: number, p
 }
 
 /**
+ * A curve (a graph's, a drawn line) as a line exactly one pin wide, instead of every pin it touches. On a few
+ * dozen pins a thickened curve becomes a band two pins wide that is hard to follow by touch.
+ *
+ * The curve's pixels are placed on the grid as `sampleCrop` would. In each pin column, each separate run of curve
+ * pixels (one per branch crossing that column) raises the pin at its middle: that draws the flatter parts. The
+ * same along each pin row draws the steep parts, which a column alone would leave as dots. Together: a connected
+ * line, one pin wide, following the curve's centre. Runs of fewer than `minPixels` pixels are specks.
+ */
+export function traceLinePins(
+  mask: ArrayLike<number>,
+  width: number,
+  height: number,
+  crop: Rect,
+  rows: number,
+  cols: number,
+  pinPitchRatio = 1,
+  stretch = false,
+  /** Only pixels inside this area count (a graph's plot when the window reaches past it). */
+  within?: Rect,
+): Pattern {
+  const gridW = cols * pinPitchRatio;
+  const fit = Math.min(gridW / crop.width, rows / crop.height);
+  const sx = stretch ? gridW / crop.width : fit;
+  const sy = stretch ? rows / crop.height : fit;
+  const offX = (gridW - crop.width * sx) / 2;
+  const offY = (rows - crop.height * sy) / 2;
+  const a = bounds(crop, width, height);
+  const b = within ? bounds(within, width, height) : a;
+  const [x0, y0, x1, y1] = [Math.max(a.x0, b.x0), Math.max(a.y0, b.y0), Math.min(a.x1, b.x1), Math.min(a.y1, b.y1)];
+  // Grid positions (pin units) of every curve pixel, by column and by row.
+  const byCol: number[][] = Array.from({ length: cols }, () => []);
+  const byRow: number[][] = Array.from({ length: rows }, () => []);
+  for (let y = y0; y < y1; y++)
+    for (let x = x0; x < x1; x++) {
+      if (!mask[y * width + x]) continue;
+      const gx = ((x + 0.5 - crop.x) * sx + offX) / pinPitchRatio;
+      const gy = (y + 0.5 - crop.y) * sy + offY;
+      const c = Math.floor(gx);
+      const r = Math.floor(gy);
+      if (c < 0 || c >= cols || r < 0 || r >= rows) continue;
+      byCol[c].push(gy);
+      byRow[r].push(gx);
+    }
+  // A speck: under a fifth of a pin's width of curve pixels.
+  const minPixels = Math.max(2, 0.2 / Math.max(sx, sy));
+  const cells: PinValue[] = new Array(rows * cols).fill(0);
+  /** The middle of each run of positions without a gap of half a pin. */
+  const middles = (v: number[]) => {
+    v.sort((a, b) => a - b);
+    const out: number[] = [];
+    let start = 0;
+    for (let i = 1; i <= v.length; i++)
+      if (i === v.length || v[i] - v[i - 1] > 0.5) {
+        if (i - start >= minPixels) out.push(v[(start + i) >> 1]);
+        start = i;
+      }
+    return out;
+  };
+  for (let c = 0; c < cols; c++) for (const m of middles(byCol[c])) cells[Math.min(rows - 1, Math.floor(m)) * cols + c] = 1;
+  for (let r = 0; r < rows; r++) for (const m of middles(byRow[r])) cells[r * cols + Math.min(cols - 1, Math.floor(m))] = 1;
+  return { rows, cols, cells };
+}
+
+/**
  * RGB pixels of the crop for the "what the pins see" preview. With a mask,
  * removed background is drawn as a light checkerboard (the usual sign for
  * "transparent"). Returns 8-bit RGB, 3 channels.

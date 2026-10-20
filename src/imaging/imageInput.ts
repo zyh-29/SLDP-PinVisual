@@ -39,6 +39,7 @@ export async function startLiveCapture(_o: {
   source?: LiveSource;
   onFrame: (frame: RasterImage, surface?: SurfaceView) => void;
   onFocus?: (blurryFor: number) => void;
+  onDark?: (dark: boolean) => void;
   onEnd: () => void;
   minIntervalMs?: number;
 }): Promise<LiveCapture | null> {

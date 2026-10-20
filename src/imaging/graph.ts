@@ -19,6 +19,7 @@
  */
 import { dilate, labelComponents } from './masks';
 import type { Rect } from './geometry';
+import type { GraphScale } from './graphScale';
 
 /** One gridline (same shape as the smart crop's), merged along its row or column. */
 export interface AxisLine {
@@ -148,145 +149,10 @@ export function readAxes(grid: { plot: Rect; rows: AxisLine[]; cols: AxisLine[] 
   };
 }
 
-// ---------- Scale from the axis numbers ----------
+// ---------- Scale (graphScale.ts) ----------
 
-/** A number read next to an axis: its value and where it sits along that axis (x for the x-axis, y for the y-axis). */
-export interface AxisReading {
-  axis: 'x' | 'y';
-  value: number;
-  at: number;
-}
-
-export interface GraphScale {
-  /** Pixels per unit across (x) and down (y). */
-  pxPerUnitX: number;
-  pxPerUnitY: number;
-  /** Units per major grid square, measured with the grid spacing below (to reuse while the zoom is unchanged). */
-  unitsPerMajorX: number;
-  unitsPerMajorY: number;
-  majorX: number;
-  majorY: number;
-  /** 'labels': from the printed numbers. 'grid': assumed one unit per major grid square. */
-  from: 'labels' | 'grid';
-  /**
-   * Live camera: how wide the locked graph was (frame pixels, as tracked) when this scale was measured. Its
-   * width now tells how much closer or further the phone is, far more steadily than gridlines in a noisy frame.
-   */
-  atWidth?: number;
-}
-
-/** Graphing tools number their gridlines in steps of 1, 2 or 5 (minor lines also 2.5) times a power of 10. */
-function snapStep(u: number): number | null {
-  if (!(u > 0) || !Number.isFinite(u)) return null;
-  const p = Math.pow(10, Math.floor(Math.log10(u)));
-  let best: number | null = null;
-  for (const m of [1, 2, 2.5, 5, 10]) {
-    const c = m * p;
-    if (Math.abs(Math.log(u / c)) < 0.08 && (best === null || Math.abs(u - c) < Math.abs(u - best))) best = c;
-  }
-  return best;
-}
-
-/** Pixels per unit along one axis from its numbers: robust to misread or missing labels (a lost minus sign too). */
-function axisScale(readings: AxisReading[], origin: number | null, major: number | null): number | null {
-  const candidates: number[] = [];
-  const minDistance = (major ?? 20) * 0.3;
-  if (origin !== null) {
-    for (const r of readings)
-      if (r.value !== 0 && Math.abs(r.at - origin) >= minDistance) candidates.push(Math.abs(r.at - origin) / Math.abs(r.value));
-  } else {
-    // Axis off screen: the numbers are all on one side, so their magnitudes step evenly. Consensus (RANSAC): the
-    // line through each pair of readings is tried, and the one most readings agree with wins, so misreads
-    // (a lost first digit: "4" for 14) can't drag it. Then a least-squares fit on the agreeing readings.
-    const mags = readings.map((r) => ({ v: Math.abs(r.value), at: r.at }));
-    const tol = Math.max(2, (major ?? 20) * 0.15);
-    let best: { v: number; at: number }[] = [];
-    for (let i = 0; i < mags.length; i++)
-      for (let j = i + 1; j < mags.length; j++) {
-        const dv = mags[j].v - mags[i].v;
-        const dp = mags[j].at - mags[i].at;
-        if (dv === 0 || Math.abs(dp) < minDistance) continue;
-        const slope = dp / dv;
-        const o = mags[i].at - slope * mags[i].v;
-        const inliers = mags.filter((m) => Math.abs(o + slope * m.v - m.at) <= tol);
-        if (inliers.length > best.length) best = inliers;
-      }
-    if (best.length < 3) return null;
-    const mv = best.reduce((t, p) => t + p.v, 0) / best.length;
-    const ma = best.reduce((t, p) => t + p.at, 0) / best.length;
-    let num = 0;
-    let den = 0;
-    for (const p of best) {
-      num += (p.v - mv) * (p.at - ma);
-      den += (p.v - mv) ** 2;
-    }
-    return den > 0 ? Math.abs(num / den) : null;
-  }
-  if (!candidates.length) return null;
-  const m = median(candidates);
-  const agree = candidates.filter((c) => Math.abs(c / m - 1) <= 0.06);
-  // Two numbers must agree (one could be a misread), unless the grid confirms the only one.
-  if (agree.length < 2 && !(agree.length === 1 && major && snapStep(major / m))) return null;
-  return agree.reduce((a, b) => a + b, 0) / agree.length;
-}
-
-/**
- * Pixels per unit from the axis numbers, snapped to the grid (numbered lines are 1, 2 or 5 x 10^n units
- * apart), so a few pixels of label position error don't matter. One readable axis is enough: graphs use the
- * same scale on both unless the numbers say otherwise. Null if neither axis can be read.
- */
-export function scaleFromLabels(axes: GraphAxes, readings: AxisReading[]): GraphScale | null {
-  const rawX = axisScale(
-    readings.filter((r) => r.axis === 'x'),
-    axes.originX,
-    axes.majorX,
-  );
-  const rawY = axisScale(
-    readings.filter((r) => r.axis === 'y'),
-    axes.originY,
-    axes.majorY,
-  );
-  if (rawX === null && rawY === null) return null;
-  const snapped = (raw: number | null, major: number | null) => {
-    if (raw === null) return null;
-    const u = major ? snapStep(major / raw) : null;
-    return u && major ? { ppu: major / u, u } : { ppu: raw, u: major ? major / raw : 1 };
-  };
-  const sx = snapped(rawX, axes.majorX);
-  const sy = snapped(rawY, axes.majorY);
-  const x = sx ?? sy!;
-  const y = sy ?? sx!;
-  return {
-    pxPerUnitX: x.ppu,
-    pxPerUnitY: y.ppu,
-    unitsPerMajorX: axes.majorX ? axes.majorX / x.ppu : x.u,
-    unitsPerMajorY: axes.majorY ? axes.majorY / y.ppu : y.u,
-    majorX: axes.majorX ?? x.ppu * x.u,
-    majorY: axes.majorY ?? y.ppu * y.u,
-    from: 'labels',
-  };
-}
-
-/** No readable numbers: one major grid square counts as one unit. Null without a measurable grid. */
-export function scaleFromGrid(axes: GraphAxes): GraphScale | null {
-  const mx = axes.majorX ?? axes.majorY;
-  const my = axes.majorY ?? axes.majorX;
-  if (!mx || !my) return null;
-  return { pxPerUnitX: mx, pxPerUnitY: my, unitsPerMajorX: 1, unitsPerMajorY: 1, majorX: mx, majorY: my, from: 'grid' };
-}
-
-/**
- * A scale measured earlier (numbers are read once, not every frame of a live share) applied to the current
- * grid: valid while the zoom is unchanged (grid spacing within 6%); a pan doesn't change it.
- */
-export function rescale(scale: GraphScale, axes: GraphAxes, anyZoom = false): GraphScale | null {
-  // `anyZoom` (the camera locked onto this graph): any size from 40% to 250% is the same graph seen closer or further.
-  const close = (a: number | null, b: number) => a !== null && (anyZoom ? a / b >= 0.4 && a / b <= 2.5 : Math.abs(a / b - 1) <= 0.06);
-  if (!close(axes.majorX, scale.majorX) && !close(axes.majorY, scale.majorY)) return null;
-  const mx = close(axes.majorX, scale.majorX) ? axes.majorX! : scale.majorX;
-  const my = close(axes.majorY, scale.majorY) ? axes.majorY! : scale.majorY;
-  return { ...scale, majorX: mx, majorY: my, pxPerUnitX: mx / scale.unitsPerMajorX, pxPerUnitY: my / scale.unitsPerMajorY };
-}
+export { followZoom, rescale, scaleFromGrid, scaleFromLabels } from './graphScale';
+export type { AxisReading, GraphScale } from './graphScale';
 
 /**
  * Where the numbers along each axis are expected: a band on each side of the axis line, or, with the axis off
@@ -699,7 +565,8 @@ export interface GraphWindow {
   box: Rect;
   /**
    * 'exact': the range asked for. 'grown': the graph is zoomed out so far that the range would be a few
-   * pixels, so the window is larger. 'shrunk': the screen shows less than the range.
+   * pixels, so the window is larger. 'shrunk': the screen shows less than the range (zoomed in): the window keeps
+   * its size in units and reaches past the plot, and the pins out there stay down.
    */
   fit: 'exact' | 'grown' | 'shrunk';
 }
@@ -707,8 +574,12 @@ export interface GraphWindow {
 /**
  * The part of the graph to show: `range` units each side of the key point across, the same scale up and down,
  * in the pins' proportions (cols x rows). A lowest point sits in the bottom row, a highest in the top row.
- * Kept inside the visible plot (shrunk to fit if the plot shows less than the range), and at least
- * MIN_PX_PER_PIN pixels per pin.
+ * Kept inside the visible plot where it fits, and at least MIN_PX_PER_PIN pixels per pin.
+ *
+ * Zoomed in so far that the plot shows less than the range, the window is NOT shrunk to the plot: that would
+ * stretch the visible part over all the pins and the curve would grow on the board with every zoom. It keeps its
+ * size in units, placed around the key point as usual, so the curve stays the same size on the board and the
+ * part of the range that is off screen is just empty pins.
  */
 export function graphWindow(
   key: KeyPoint,
@@ -718,6 +589,8 @@ export function graphWindow(
   rows: number,
   cols: number,
   pinPitchRatio = 1,
+  /** Moved by the user (graph units, right and up) from where the key point puts it. */
+  pan: { x: number; y: number } = { x: 0, y: 0 },
 ): GraphWindow {
   const unitsWide = 2 * range;
   const unitsTall = (unitsWide * rows) / (cols * pinPitchRatio);
@@ -728,14 +601,16 @@ export function graphWindow(
   if (grow > 1.02) fit = 'grown';
   w *= grow;
   h *= grow;
-  const shrink = Math.min(1, plot.width / w, plot.height / h);
-  if (shrink < 0.98) fit = 'shrunk';
-  w *= shrink;
-  h *= shrink;
+  const fitsX = w <= plot.width * 1.02;
+  const fitsY = h <= plot.height * 1.02;
+  if (!fitsX || !fitsY) fit = 'shrunk';
+  // Slid to stay inside the plot, along each side it fits on.
+  const keepIn = (v: number, size: number, start: number, length: number, fits: boolean) =>
+    fits ? Math.min(Math.max(v, start), start + length - size) : v;
   const row = h / rows;
   const col = w / cols;
   let x = key.align === 'start' ? key.x - col / 2 : key.align === 'end' ? key.x + col / 2 - w : key.x - w / 2;
-  x = Math.min(Math.max(x, plot.x), plot.x + plot.width - w);
+  x = keepIn(x, w, plot.x, plot.width, fitsX);
   let y: number;
   if (key.place === 'bottom') y = key.y + row / 2 - h;
   else if (key.place === 'top') y = key.y - row / 2;
@@ -751,7 +626,10 @@ export function graphWindow(
     y = (count ? sum / count : key.y) - h / 2;
     y = Math.min(Math.max(y, key.y + row / 2 - h), key.y - row / 2);
   } else y = key.y - h / 2;
-  y = Math.min(Math.max(y, plot.y), plot.y + plot.height - h);
+  y = keepIn(y, h, plot.y, plot.height, fitsY);
+  // Panned by the user: moved that many units, wherever that leads (past the plot, those pins stay down).
+  x += pan.x * scale.pxPerUnitX;
+  y -= pan.y * scale.pxPerUnitY;
   const rx = Math.round(x);
   const ry = Math.round(y);
   return { box: { x: rx, y: ry, width: Math.max(1, Math.round(x + w) - rx), height: Math.max(1, Math.round(y + h) - ry) }, fit };

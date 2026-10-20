@@ -1,5 +1,5 @@
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
-import { denoiseFrame, FocusGate, sharpness, steadyPins } from '../cameraFrame';
+import { denoiseFrame, FocusGate, frameLight, LightGate, sharpness, steadyPins } from '../cameraFrame';
 import { toRgb } from '../foreground';
 import { smartSubject, isPhotoLike } from '../smartCrop';
 
@@ -157,6 +157,52 @@ describe('focus: sharpness and the blur gate', () => {
     }
     // About 7 frames (under 2 s at 4 frames a second).
     expect(n).toBeLessThanOrEqual(8);
+  });
+});
+
+describe('light: too dark, and exposure settling', () => {
+  const W = 160;
+  const H = 96;
+  /** A frame of brightness `level` (a scene with some detail when `detail`), plus sensor noise of ±`noise`. */
+  function frame(level: number, detail: boolean, noise: number, seed = 1) {
+    const n = (() => {
+      let s = seed;
+      return () => {
+        s = (s * 1664525 + 1013904223) >>> 0;
+        return ((s & 0xffff) / 0x10000 - 0.5) * 2 * noise;
+      };
+    })();
+    const d = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const v = level * (detail && (x > 40 && x < 120 && y > 20 && y < 76) ? 0.35 : 1) + n();
+        d.set([v, v, v, 255], (y * W + x) * 4);
+      }
+    return frameLight(d, W, H);
+  }
+
+  it('a black frame full of amplified noise is "too dark"; a dim scene with something in it is not', () => {
+    const g = new LightGate();
+    expect(g.accept(frame(10, false, 40))).toBe(false);
+    expect(g.dark).toBe(true);
+    const g2 = new LightGate();
+    expect(g2.accept(frame(60, true, 20))).toBe(true);
+    expect(g2.dark).toBe(false);
+  });
+
+  it('when the light comes back, the frames while the exposure settles are skipped, but only a few', () => {
+    const g = new LightGate();
+    for (let i = 0; i < 5; i++) g.accept(frame(8, false, 30, i));
+    const used = [250, 230, 200, 180, 170, 168].map((lvl, i) => g.accept(frame(lvl, true, 6, i + 10)));
+    // The first bright frame and the big steps after it wait; once steady (or after 3 skips) frames are used.
+    expect(used[0]).toBe(false);
+    expect(used.filter(Boolean).length).toBeGreaterThanOrEqual(3);
+    expect(used[used.length - 1]).toBe(true);
+  });
+
+  it('a steady scene is never skipped', () => {
+    const g = new LightGate();
+    expect([1, 2, 3, 4, 5].map((s) => g.accept(frame(180, true, 8, s)))).toEqual([true, true, true, true, true]);
   });
 });
 

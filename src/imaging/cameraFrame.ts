@@ -111,6 +111,76 @@ export class FocusGate {
   }
 }
 
+/**
+ * Overall brightness of a frame and how much it varies, on 8 x 8 block averages (so sensor noise, which phones
+ * amplify hugely in the dark, averages out): `mean` 0..255, `spread` the standard deviation between blocks.
+ */
+export function frameLight(rgba: ArrayLike<number>, width: number, height: number): { mean: number; spread: number } {
+  const B = 8;
+  const bw = Math.floor(width / B);
+  const bh = Math.floor(height / B);
+  if (bw < 1 || bh < 1) return { mean: 0, spread: 0 };
+  let sum = 0;
+  let sq = 0;
+  for (let by = 0; by < bh; by++)
+    for (let bx = 0; bx < bw; bx++) {
+      let s = 0;
+      // Every 2nd pixel of the block is plenty for an average.
+      for (let y = by * B; y < by * B + B; y += 2)
+        for (let x = bx * B; x < bx * B + B; x += 2) {
+          const p = (y * width + x) * 4;
+          s += 0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2];
+        }
+      const m = s / ((B * B) / 4);
+      sum += m;
+      sq += m * m;
+    }
+  const n = bw * bh;
+  const mean = sum / n;
+  return { mean, spread: Math.sqrt(Math.max(0, sq / n - mean * mean)) };
+}
+
+/**
+ * Decides which live frames are worth analysing as far as light goes:
+ *  - too dark: essentially black (a covered lens, a dark room). Nothing can be found in it, and on phones the
+ *    camera's gain makes it pure noise that is still costly to analyse, so it is skipped and reported.
+ *  - settling: the overall brightness just jumped (the light came back, the phone turned to a window) and the
+ *    camera's auto-exposure is still catching up, so the frame is over- or under-exposed: skipped, but never more
+ *    than `maxSkip` in a row.
+ */
+export class LightGate {
+  private last = -1;
+  private skipped = 0;
+  dark = false;
+
+  constructor(
+    private readonly maxSkip = 3,
+    private readonly darkMean = 28,
+    private readonly flatSpread = 10,
+  ) {}
+
+  /** True to analyse this frame. */
+  accept(light: { mean: number; spread: number }): boolean {
+    this.dark = light.mean < this.darkMean && light.spread < this.flatSpread;
+    const prev = this.last;
+    this.last = light.mean;
+    if (this.dark) return false;
+    const jump = prev >= 0 && Math.abs(light.mean - prev) > 0.2 * Math.max(prev, light.mean, 40);
+    if (!jump || this.skipped >= this.maxSkip) {
+      this.skipped = 0;
+      return true;
+    }
+    this.skipped++;
+    return false;
+  }
+
+  reset() {
+    this.last = -1;
+    this.skipped = 0;
+    this.dark = false;
+  }
+}
+
 export interface SteadyPins {
   /** Running average per pin, 0..1. */
   avg: Float32Array;

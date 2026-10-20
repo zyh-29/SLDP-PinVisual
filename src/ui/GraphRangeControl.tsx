@@ -1,8 +1,9 @@
-import { View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { describeGraph, graphNumber } from '@/imaging/graphSummary';
 import type { GraphInfo } from '@/imaging/smartCrop';
 import type { GraphRange } from '@/state/useImageConversion';
-import { Label, SegmentedControl } from './components';
+import { Button, Label, SegmentedControl } from './components';
 import { settingStyles } from './SettingRows';
 import { space } from './theme';
 
@@ -13,26 +14,34 @@ const GRAPH_RANGES: { value: GraphRange; label: string }[] = [
   { value: 'whole', label: 'Whole' },
 ];
 
-/** A graph value for display, to a tenth of the graph's numbered step (2 -> 0.2: one decimal), with a real minus sign. */
-export const graphNumber = (v: number, unitsPerMajor: number) => {
-  const decimals = Math.max(0, Math.min(6, Math.ceil(-Math.log10(unitsPerMajor / 10) - 1e-9)));
-  const r = Number(v.toFixed(decimals));
-  return String(Object.is(r, -0) ? 0 : r).replace('-', '−');
-};
+/** How far one press of an arrow moves the window: a fifth of its width, in round units. */
+export const panStep = (range: GraphRange) => (range === '2' ? 1 : range === '10' ? 4 : 2);
 
-/** What the pins show of a graph: ± units around the curve's vertex or middle, or the whole curve. */
+/** What the pins show of a graph: ± units around the curve's vertex or middle, or the whole curve; and moving it. */
 export function GraphRangeControl({
   graph,
   range,
   onChange,
   readingNumbers,
+  pan,
+  onPan,
+  live,
 }: {
   graph: GraphInfo;
   range: GraphRange;
   onChange: (range: GraphRange) => void;
   /** The axis numbers are still being read (the whole curve shows meanwhile). */
   readingNumbers: boolean;
+  /** How far the window was moved (units, right and up). */
+  pan: { x: number; y: number };
+  onPan: (pan: { x: number; y: number }) => void;
+  /** A live share or camera: the summary changes all the time, so it isn't announced by itself. */
+  live?: boolean;
 }) {
+  const step = panStep(range);
+  const move = (dx: number, dy: number) => onPan({ x: pan.x + dx * step, y: pan.y + dy * step });
+  const moved = pan.x !== 0 || pan.y !== 0;
+  const summary = !readingNumbers && range !== 'whole' ? describeGraph(graph) : null;
   const { window: win, scale, axes } = graph;
   const shown =
     range === 'whole'
@@ -53,12 +62,35 @@ export function GraphRangeControl({
           {shown}
         </Label>
       </View>
+      {summary ? (
+        <Label variant="footnote" secondary accessibilityLiveRegion={live ? 'none' : 'polite'}>
+          {summary}
+        </Label>
+      ) : null}
       <SegmentedControl
         options={GRAPH_RANGES}
         value={range}
         onChange={onChange}
         accessibilityLabel="Graph range: units shown each side of the curve's vertex or middle"
       />
+      {range !== 'whole' && scale && win ? (
+        <View style={styles.pad} accessibilityLabel="Move the graph window">
+          <Button title="" icon="left" variant="secondary" compact style={styles.arrow} onPress={() => move(-1, 0)} accessibilityLabel={`Move left ${step}`} />
+          <Button title="" icon="up" variant="secondary" compact style={styles.arrow} onPress={() => move(0, 1)} accessibilityLabel={`Move up ${step}`} />
+          <Button title="" icon="down" variant="secondary" compact style={styles.arrow} onPress={() => move(0, -1)} accessibilityLabel={`Move down ${step}`} />
+          <Button title="" icon="right" variant="secondary" compact style={styles.arrow} onPress={() => move(1, 0)} accessibilityLabel={`Move right ${step}`} />
+          <Button
+            title="Centre"
+            icon="centre"
+            variant="secondary"
+            compact
+            disabled={!moved}
+            style={styles.centre}
+            onPress={() => onPan({ x: 0, y: 0 })}
+            accessibilityHint="Puts the window back on the curve's vertex or middle"
+          />
+        </View>
+      ) : null}
       {range !== 'whole' && scale ? (
         <>
           {graph.fit === 'grown' ? (
@@ -67,7 +99,7 @@ export function GraphRangeControl({
             </Label>
           ) : graph.fit === 'shrunk' ? (
             <Label variant="footnote" secondary>
-              The graph shows less than ±{range}. Zoom out on it to see more.
+              Zoomed in past ±{range}: the curve keeps its size on the pins, and the part off the screen stays down. Zoom out on it to see all of it.
             </Label>
           ) : null}
           {scale.from === 'grid' ? (
@@ -80,3 +112,9 @@ export function GraphRangeControl({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  pad: { flexDirection: 'row', gap: space.sm },
+  arrow: { flex: 1, minWidth: 44 },
+  centre: { flexGrow: 1.6, flexShrink: 1 },
+});

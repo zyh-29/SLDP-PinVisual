@@ -19,6 +19,7 @@ import {
   supportsScreenCapture,
   useImageDrop,
 } from '@/imaging/imageInput';
+import { parseEquation, renderEquation } from '@/imaging/equation';
 import { loadImagePixels } from '@/imaging/loadImage';
 import { renderCrop } from '@/imaging/pinSampling';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
@@ -27,11 +28,13 @@ import { usePattern } from '@/state/PatternProvider';
 import type { Focus } from '@/imaging/smartCrop';
 import { mapRect } from '@/imaging/surface';
 import { useCameraLock, useLockTarget } from '@/state/useCameraLock';
+import { useLiveSend } from '@/state/useLiveSend';
 import { type GraphRange, type PickedImage, useImageConversion } from '@/state/useImageConversion';
 import { Button, Columns, Label, Screen, Section, Separator, StatusBanner } from '@/ui/components';
 import { CropEditor } from '@/ui/CropEditor';
 import { GraphRangeControl } from '@/ui/GraphRangeControl';
 import { Icon } from '@/ui/Icon';
+import { EquationInput } from '@/ui/EquationInput';
 import { DropOverlay, LiveBadge } from '@/ui/ImageOverlays';
 import { ImageResult } from '@/ui/ImageResult';
 import { LiveVideo } from '@/ui/LiveVideo';
@@ -80,8 +83,14 @@ export default function ImageScreen() {
   /** Live camera focus: 0 sharp, 1 refocusing, 2 can't get sharp. */
   const [focusTrouble, setFocusTrouble] = useState<0 | 1 | 2>(0);
   const cameraTrouble = live?.kind === 'camera' ? focusTrouble : 0;
+  /** Live camera: the picture is essentially black (analysis paused). */
+  const [tooDark, setTooDark] = useState(false);
+  const cameraDark = live?.kind === 'camera' && tooDark;
   /** Graphs: how much of the graph the pins show (around the curve's vertex or middle), at its true proportions. */
   const [graphRange, setGraphRange] = useState<GraphRange>('5');
+  /** The graph window moved with the arrows (units, right and up); back to the curve for each new graph. */
+  const [graphPan, setGraphPan] = useState(NO_PAN);
+  const [thinLines, setThinLines] = useState(true);
 
   // Stop screen sharing when the session is replaced or the screen goes away.
   useEffect(() => () => live?.stop(), [live]);
@@ -103,7 +112,10 @@ export default function ImageScreen() {
     focus,
     linesOverride,
     graphRange,
+    graphPan,
+    thinLines,
     trackedWidth: lock.width,
+    trackedBox: lock.box,
   });
   const { width: w, height: h, fg, result, graph, shape } = c;
   /** Live camera on a flat surface: the analysed picture is the flattened page (see onFrame). */
@@ -125,6 +137,9 @@ export default function ImageScreen() {
   const pinsUnlocked = !!edit?.unlocked;
   /** What the user gets: their edited pins, or the automatic result. */
   const shown = edit?.pattern ?? result;
+  // Send Live to Board: off until asked for, and only while live.
+  const [liveSendOn, setLiveSendOn] = useState(false);
+  const liveSend = useLiveSend(liveSendOn && !!live, live ? shown : null);
   const toggleLock = () => {
     if (!picked) return;
     const unlocked = !pinsUnlocked;
@@ -146,6 +161,7 @@ export default function ImageScreen() {
     setManualCrop(null);
     setFocus(null);
     c.resetGraph();
+    setGraphPan(NO_PAN);
     setLinesOverride(null);
     setCutoutOverride(null);
     setToleranceOverride(null);
@@ -178,6 +194,25 @@ export default function ImageScreen() {
       setError(`Could not read that image: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  /** A typed equation: drawn as a plot with a known scale, then treated like any other picture. */
+  const [equationError, setEquationError] = useState<string | null>(null);
+  const drawEquation = (text: string) => {
+    try {
+      const { raster, scale } = renderEquation(parseEquation(text));
+      const rgb = toRgb(raster);
+      live?.stop();
+      setLive(null);
+      setError(null);
+      setEquationError(null);
+      const uri = rgbToPngDataUri(renderCrop(rgb, raster.width, raster.height, null, fullRect(raster.width, raster.height)));
+      setPicked({ uri, raster, rgb, gray: toGrayscale(raster), equation: { text, scale } });
+      resetForNewImage();
+      AccessibilityInfo.announceForAccessibility(`Drew ${text}`);
+    } catch (e) {
+      setEquationError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -230,6 +265,7 @@ export default function ImageScreen() {
         onEnd: freeze,
         // 0 in focus, 1 refocusing (a frame or two), 2 struggling (about 2 s): shown on the picture.
         onFocus: (blurryFor) => setFocusTrouble(blurryFor >= 8 ? 2 : blurryFor >= 2 ? 1 : 0),
+        onDark: setTooDark,
       });
       if (!session) return;
       live?.stop();
@@ -360,6 +396,9 @@ export default function ImageScreen() {
                 or drop an image here
               </Label>
             ) : null}
+            <Separator />
+            <Label variant="headline">Or type an equation</Label>
+            <EquationInput onDraw={drawEquation} error={equationError} />
           </Section>
         ) : (
           <Columns
@@ -388,6 +427,7 @@ export default function ImageScreen() {
                       // Tap a picture, a curve or a subject: the smart crop focuses on it (your own box gives way to it).
                       setManualCrop(null);
                       setFocus({ ...point, tap: true });
+                      setGraphPan(NO_PAN);
                       if (live?.kind === 'camera') {
                         // Lock onto the tapped item from now on (another graph may have other units: read them again),
                         // and focus the lens there (where the browser allows it).
@@ -403,7 +443,13 @@ export default function ImageScreen() {
                     }}
                     onDragging={setDragging}
                   />
-                  {cameraTrouble === 2 ? (
+                  {cameraDark ? (
+                    <StatusBanner
+                      tone="neutral"
+                      title="Too dark to see"
+                      message="Turn on a light, or point the camera at something lit. The pins keep their last picture meanwhile."
+                    />
+                  ) : cameraTrouble === 2 ? (
                     <StatusBanner
                       tone="neutral"
                       title="Hard to focus"
@@ -552,9 +598,28 @@ export default function ImageScreen() {
             right={
               <>
                 <Section title="Conversion">
+                  {picked.equation ? (
+                    <>
+                      <EquationInput key={picked.equation.text} initial={picked.equation.text} onDraw={drawEquation} error={equationError} />
+                      <Separator />
+                    </>
+                  ) : null}
                   {graph ? (
                     <>
-                      <GraphRangeControl graph={graph} range={graphRange} onChange={setGraphRange} readingNumbers={c.readingNumbers} />
+                      <GraphRangeControl
+                        graph={graph}
+                        range={graphRange}
+                        onChange={setGraphRange}
+                        readingNumbers={c.readingNumbers}
+                        pan={graphPan}
+                        live={!!live}
+                        onPan={(p) => {
+                          setGraphPan(p);
+                          AccessibilityInfo.announceForAccessibility(
+                            p.x === 0 && p.y === 0 ? 'Back on the curve' : `Moved ${Math.abs(p.x)} ${p.x < 0 ? 'left' : 'right'}, ${Math.abs(p.y)} ${p.y < 0 ? 'down' : 'up'}`,
+                          );
+                        }}
+                      />
                       <Separator />
                     </>
                   ) : null}
@@ -608,6 +673,17 @@ export default function ImageScreen() {
                       ) : null}
                     </>
                   ) : null}
+                  {removeBackground && c.curves ? (
+                    <>
+                      <Separator />
+                      <SwitchRow
+                        title="One-Pin Lines"
+                        hint="Draws graph curves as a line one pin wide, following the curve's centre, instead of every pin they touch"
+                        value={thinLines}
+                        onChange={setThinLines}
+                      />
+                    </>
+                  ) : null}
                   {/* Tolerance only matters when the subject is separated by colour (not by a curve's colour or the AI). */}
                   {removeBackground && !c.subjectKnown ? (
                     <>
@@ -625,17 +701,21 @@ export default function ImageScreen() {
                       />
                     </>
                   ) : null}
-                  <Separator />
-                  <SliderRow
-                    title="Sensitivity"
-                    value={sensitivity}
-                    display={`${sensitivity}%`}
-                    min={5}
-                    max={95}
-                    step={5}
-                    onChange={setSensitivity}
-                    hint={`Higher raises more pins. A pin is raised when at least ${100 - sensitivity}% of it is ${removeBackground ? 'subject' : 'dark'}.`}
-                  />
+                  {c.traced ? null : (
+                    <>
+                      <Separator />
+                      <SliderRow
+                        title="Sensitivity"
+                        value={sensitivity}
+                        display={`${sensitivity}%`}
+                        min={5}
+                        max={95}
+                        step={5}
+                        onChange={setSensitivity}
+                        hint={`Higher raises more pins. A pin is raised when at least ${100 - sensitivity}% of it is ${removeBackground ? 'subject' : 'dark'}.`}
+                      />
+                    </>
+                  )}
                 </Section>
 
                 {shown ? (
@@ -648,6 +728,7 @@ export default function ImageScreen() {
                     onReset={resetPins}
                     onUse={use}
                     onSave={() => setSaveOpen(true)}
+                    liveSend={live ? { on: liveSendOn, onChange: setLiveSendOn, connected: liveSend.connected, error: liveSend.error } : undefined}
                   />
                 ) : null}
               </>
@@ -672,6 +753,8 @@ export default function ImageScreen() {
     </View>
   );
 }
+
+const NO_PAN = { x: 0, y: 0 };
 
 const styles = StyleSheet.create({
   empty: { alignItems: 'center', gap: space.sm, paddingVertical: space.lg },

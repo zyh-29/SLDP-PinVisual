@@ -1,0 +1,9 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`curves one pin wide on the real 5 x 8 board too 1`] = `
+"#......#
+.#....#.
+.#....#.
+..#..#..
+...##..."
+`;

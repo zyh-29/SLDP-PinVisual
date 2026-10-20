@@ -173,10 +173,13 @@ function edgeContrast(lum: Float32Array, w: number, h: number, q: Quad): number 
   return weakest === Infinity ? 0 : weakest;
 }
 
-/** Every interior angle under 155°, and no side shorter than a tenth of the longest. */
+/**
+ * Every interior angle under 155°, and no side shorter than a quarter of the longest (a page or screen is at most
+ * 4:1 even in perspective; a triangle with a notch from its shadow has one tiny "side").
+ */
 function realCorners(q: Quad): boolean {
   const sides = q.map((p, i) => Math.hypot(q[(i + 1) % 4].x - p.x, q[(i + 1) % 4].y - p.y));
-  if (Math.min(...sides) < 0.1 * Math.max(...sides)) return false;
+  if (Math.min(...sides) < 0.25 * Math.max(...sides)) return false;
   for (let i = 0; i < 4; i++) {
     const a = q[(i + 3) % 4];
     const b = q[i];

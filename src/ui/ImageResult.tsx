@@ -2,7 +2,8 @@ import { StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
 import { countRaised, type Pattern } from '@/domain/pattern';
-import { Button, Label, Section } from './components';
+import { Button, Label, Section, Separator } from './components';
+import { SwitchRow } from './SettingRows';
 import { PinGrid } from './PinGrid';
 import { radius, space } from './theme';
 
@@ -19,6 +20,7 @@ export function ImageResult({
   onReset,
   onUse,
   onSave,
+  liveSend,
 }: {
   /** What the user gets: their edited pins, or the automatic ones. */
   pattern: Pattern;
@@ -30,6 +32,8 @@ export function ImageResult({
   onReset: () => void;
   onUse: () => void;
   onSave: () => void;
+  /** Live share or camera: the pins can follow it on the board. */
+  liveSend?: { on: boolean; onChange: (on: boolean) => void; connected: boolean; error: string | null };
 }) {
   const raised = countRaised(pattern);
   const total = GRID.rows * GRID.cols;
@@ -90,6 +94,28 @@ export function ImageResult({
           accessibilityHint="Saves this pattern so you can load it later from the Saved tab."
         />
       </View>
+      {liveSend ? (
+        <>
+          <Separator />
+          {liveSend.connected ? (
+            <SwitchRow
+              title="Send Live to Board"
+              hint="The board's pins follow the live picture as it changes, about twice a second"
+              value={liveSend.on}
+              onChange={liveSend.onChange}
+            />
+          ) : (
+            <Label variant="footnote" secondary>
+              Connect a board on the Device tab to have its pins follow the live picture.
+            </Label>
+          )}
+          {liveSend.on && liveSend.error ? (
+            <Label variant="footnote" secondary accessibilityLiveRegion="polite">
+              Last update didn’t reach the board: {liveSend.error}
+            </Label>
+          ) : null}
+        </>
+      ) : null}
     </Section>
   );
 }
