@@ -1,6 +1,7 @@
 /**
  * Live camera lock: once the smart crop has found an item (a graph, a shape, an object), the camera stays on that
- * item however the phone moves (closer, further, sideways) until the user taps another item. See tracker.ts.
+ * item however the phone moves (closer, further, sideways, turned or tilted) until the user taps another item.
+ * See itemTracker.ts (by the item's distinctive points, with template matching as the fallback).
  *
  *  - Auto: the same item found on two frames in a row is locked onto.
  *  - Tap: whatever the smart crop picks at the tapped point is locked onto instead (at that spot of it, so a
@@ -14,7 +15,7 @@ import { useEffect, useState } from 'react';
 import type { Point, Rect } from '@/imaging/geometry';
 import type { LiveCapture } from '@/imaging/imageInput';
 import type { Focus } from '@/imaging/smartCrop';
-import { type SmallGray, smallGray, TargetTracker } from '@/imaging/tracker';
+import { ItemTracker, type TrackFrame, trackFrame } from '@/imaging/itemTracker';
 import type { PickedImage } from './useImageConversion';
 
 const iou = (a: Rect, b: Rect) => {
@@ -29,7 +30,7 @@ const REFOCUS_EVERY_MS = 3000;
 
 /** The lock's working state, outside React: the frame callback and effects both use it. */
 class CameraLock {
-  readonly tracker = new TargetTracker();
+  readonly tracker = new ItemTracker();
   private camera: LiveCapture | null = null;
   /** A tap waiting for the smart crop to say what is there. */
   private pendingTap: Point | null = null;
@@ -37,12 +38,12 @@ class CameraLock {
   private byTap = false;
   private previous: Rect | null = null;
   private lens = { x: -1, y: -1, at: 0 };
-  /** The last frame shrunk for the tracker: follow() and onTarget() see the same frame, so it's made once. */
-  private gray: { rgb: ArrayLike<number> | null; small: SmallGray | null } = { rgb: null, small: null };
+  /** The last frame prepared for the tracker: follow() and onTarget() see the same frame, so it's made once. */
+  private gray: { rgb: ArrayLike<number> | null; frame: TrackFrame | null } = { rgb: null, frame: null };
 
-  private grayOf(rgb: ArrayLike<number>, width: number, height: number): SmallGray {
-    if (this.gray.rgb !== rgb || !this.gray.small) this.gray = { rgb, small: smallGray(rgb, width, height) };
-    return this.gray.small!;
+  private grayOf(rgb: ArrayLike<number>, width: number, height: number): TrackFrame {
+    if (this.gray.rgb !== rgb || !this.gray.frame) this.gray = { rgb, frame: trackFrame(rgb, width, height) };
+    return this.gray.frame!;
   }
 
   setCamera(camera: LiveCapture | null) {
@@ -79,7 +80,7 @@ class CameraLock {
     height: number,
     /** Where a point of this picture is in the camera's view (0..1): differs when the picture is a flattened page. */
     toLens: (p: Point) => Point = (p) => ({ x: p.x / width, y: p.y / height }),
-  ): { focus: Focus; box: Rect } | null | undefined {
+  ): { focus: Focus; box: Rect; width: number } | null | undefined {
     if (!this.tracker.locked) return undefined;
     const r = this.tracker.track(this.grayOf(rgb, width, height));
     if (!r) {
@@ -93,7 +94,7 @@ class CameraLock {
       this.lens = { x: nx, y: ny, at: now };
       this.camera.focusAt(nx, ny).catch(() => {});
     }
-    return { focus: { ...r.point, tap: this.byTap }, box: r.box };
+    return { focus: { ...r.point, tap: this.byTap }, box: r.box, width: r.size.width };
   }
 
   tap(point: Point) {
@@ -112,8 +113,9 @@ class CameraLock {
 export function useCameraLock(live: LiveCapture | null) {
   const [session] = useState(() => new CameraLock());
   const [locked, setLocked] = useState(false);
-  /** Where the locked item is in the last frame (picture pixels). */
+  /** Where the locked item is in the last frame (picture pixels), and its own width (not turned). */
   const [box, setBox] = useState<Rect | null>(null);
+  const [width, setWidth] = useState<number | null>(null);
   const camera = live?.kind === 'camera' ? live : null;
   useEffect(() => {
     session.setCamera(camera);
@@ -126,7 +128,7 @@ export function useCameraLock(live: LiveCapture | null) {
     camera,
     locked: !!camera && locked,
     /** The locked item's width now (frame pixels): how close the camera is to it. */
-    width: camera && locked && box ? box.width : null,
+    width: camera && locked && box ? width : null,
     /** Where the locked item is now: the smart crop only needs to look around it. */
     box: camera && locked ? box : null,
     /**
@@ -142,6 +144,7 @@ export function useCameraLock(live: LiveCapture | null) {
         return null;
       }
       setBox(r.box);
+      setWidth(r.width);
       return r.focus;
     },
     /** A tap: lock onto whatever the smart crop finds there (searching the whole picture again until then). */

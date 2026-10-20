@@ -26,6 +26,7 @@ boards. It runs fully offline, with no accounts and no cloud.
 | Tap to focus (shapes, cards, one of several graphs, one curve, one cut-out subject) | ✅ Unit-tested and checked in Chrome |
 | **Live camera** on the website (phones and laptops) | ✅ Unit-tested, and checked in Chrome with a simulated phone camera (graphs on paper, a shape on a table, hand shake, denied permission). ⚠️ Not yet tried on a real phone |
 | Graph Range (±2 / ±5 / ±10 units around the curve's key point) | ✅ Web, checked on 27 real Desmos screenshots. ⚠️ Needs `tesseract.js` installed to read axis numbers; phones count one grid square as one unit |
+| Camera lock by distinctive points (turning, tilting, quick moves, look-alike items), template matching as the fallback | ✅ Unit-tested on a virtual camera (60° turn, 30° tilt, 2.2x zoom, a jump of a third of the frame: corners within ~2 px) and checked in Chrome with a simulated phone camera that turns ±31°. ⚠️ Not yet tried on a real phone |
 | Graph zoom: the curve keeps its size on the pins while you zoom (followed frame by frame through Desmos' 1-2-5 grid steps) | ✅ Unit-tested, and checked on a real Desmos zoom (10x in, steps 2 → 1 → 0.5 → 0.2: scale within 0.1%, window always 10 units) |
 | Graph panning (arrows under Graph Range), and the graph in words ("Lowest point at (0, −3). Pins show x from −5 to 5…") | ✅ Unit-tested and checked in Chrome |
 | One-Pin Lines: graph curves drawn as a connected line one pin wide | ✅ Unit-tested (also on real Desmos screenshots) and checked in Chrome |
@@ -53,6 +54,9 @@ src/
     __tests__/support  Simulated board for the automated tests only (MockFirmware); not in the app
   imaging/             Pixel conversion (pure, unit tested), PNG decoding, image loading (.web.ts = canvas)
     foreground         Background model, subject mask, axis/grid removal
+    features           Distinctive points (ORB: FAST corners, rotated BRIEF), matching
+    featureTracker     Camera lock by points: RANSAC similarity + homography
+    itemTracker        Camera lock: points first, template (tracker.ts) as the fallback
     smartCrop          What becomes pins (+ tap to focus); curves.ts finds graph curves, plotGrid.ts plot areas
     graph              Graph Range: axes, the curve's key point, the window; axisNumbers*.ts = OCR
     graphScale         Pixels per unit: from the axis numbers, the grid, or followed through a zoom
@@ -163,10 +167,19 @@ browser.
   (many Androids) gets longer gaps, keeping the main thread at most ~45% busy
   and the preview smooth. **Lock:** once the camera finds an item (a graph, a
   shape, an object) on two frames in a row, it locks onto it (*Live · Locked*)
-  and follows it as the phone moves, sideways, closer or further, until you
-  tap another item, which it then locks onto instead (`src/imaging/tracker.ts`:
-  each frame it searches near the item's last place, at a few sizes, for the
-  best match to a small picture of it; normalised cross-correlation). The
+  and follows it as the phone moves, sideways, closer or further, turned or
+  tilted, until you tap another item, which it then locks onto instead
+  (`src/imaging/itemTracker.ts`). Mainly by the item's distinctive points
+  (ORB, `features.ts` + `featureTracker.ts`): corners with a rotation-aware
+  description, matched to each frame (near where they were, and anywhere, so a
+  look-alike graph next to it can't take over), the movement fitted robustly
+  (RANSAC: shift, turn, size, then perspective for tilt). The points are
+  renewed as the item looks different, but only on a solid estimate or when
+  the smart crop confirms it. Plain items with few corners, and blurred
+  frames, fall back to template matching (`tracker.ts`: a small picture of the
+  item, searched near its last place at a few sizes). About 5-10 ms a frame on
+  a laptop. A turned graph is followed, but Graph Range still needs it
+  roughly level (its gridlines are looked for across and down). The
   smart crop is pointed at the item every frame, the lens is asked to focus
   on it, and a locked graph keeps its units as you zoom: its scale is resized
   by how much bigger the tracked graph has become. Auto Crop or dragging the

@@ -98,6 +98,13 @@ const iou = (a: Rect, b: Rect) => {
 export interface TrackResult {
   /** Where the item is now (frame pixels). */
   box: Rect;
+  /** Its outline, turned and tilted as seen (frame pixels), when followed by its points (itemTracker.ts). */
+  quad?: [Point, Point, Point, Point];
+  /**
+   * The item's own width and height now (frame pixels): not its bounding box, which grows when it is turned. How
+   * close the camera is, measured the same way by both trackers.
+   */
+  size: { width: number; height: number };
   /** The point to give the smart crop: the same spot of the item the user tapped (or its middle). */
   point: Point;
   /** How well it matched, 0..1. */
@@ -216,7 +223,7 @@ export class TargetTracker {
         this.unlock();
         return null;
       }
-      return { box: this.frameBox(prev), point: this.pointOf(prev), score: Math.max(0, best.score) };
+      return { box: this.frameBox(prev), point: this.pointOf(prev), score: Math.max(0, best.score), size: this.sizeOf(prev) };
     }
     this.missed = 0;
     const nb = best.box;
@@ -225,7 +232,25 @@ export class TargetTracker {
       y: 0.5 * this.velocity.y + 0.5 * (nb.y + nb.height / 2 - (prev.y + prev.height / 2)),
     };
     this.box = nb;
-    return { box: this.frameBox(nb), point: this.pointOf(nb), score: best.score };
+    return { box: this.frameBox(nb), point: this.pointOf(nb), score: best.score, size: this.sizeOf(nb) };
+  }
+
+  /**
+   * Another tracker found the item (see itemTracker.ts): its middle and its own size now (frame pixels). The
+   * template continues from there next frame, unchanged.
+   */
+  place(f: SmallGray, centre: Point, size: { width: number; height: number }) {
+    if (!this.template || !this.box || f.k !== this.k) return;
+    const cx = centre.x / f.k;
+    const cy = centre.y / f.k;
+    const w = Math.max(2, size.width / f.k);
+    const h = Math.max(2, size.height / f.k);
+    this.velocity = {
+      x: 0.5 * this.velocity.x + 0.5 * (cx - (this.box.x + this.box.width / 2)),
+      y: 0.5 * this.velocity.y + 0.5 * (cy - (this.box.y + this.box.height / 2)),
+    };
+    this.box = { x: cx - w / 2, y: cy - h / 2, width: w, height: h };
+    this.missed = 0;
   }
 
   /**
@@ -244,6 +269,10 @@ export class TargetTracker {
     const mixed = new Float32Array(fresh.length);
     for (let i = 0; i < mixed.length; i++) mixed[i] = 0.8 * this.template[i] + 0.2 * fresh[i];
     this.template = normalise(mixed, 0) ?? this.template;
+  }
+
+  private sizeOf(b: Rect) {
+    return { width: b.width * this.k, height: b.height * this.k };
   }
 
   private frameBox(b: Rect): Rect {
