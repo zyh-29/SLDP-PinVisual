@@ -5,7 +5,7 @@ import { EquationInput } from './EquationInput';
 import { Icon } from './Icon';
 import { space, useTheme } from './theme';
 
-export const CAMERA_HINT = 'Turns on the camera. The pins follow what it sees; tap the picture to focus on one thing.';
+export const CAMERA_HINT = 'Turns on the camera. Once it locks onto something the pins hold still on it; tap another thing to switch.';
 export const SCREEN_HINT = 'Share a screen or window. The pins follow it live; crop the part you want.';
 
 /** The Image tab before there is a picture: where it can come from. */

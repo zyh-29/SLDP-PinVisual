@@ -25,7 +25,8 @@ import { renderCrop } from '@/imaging/pinSampling';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { usePattern } from '@/state/PatternProvider';
 import type { Focus } from '@/imaging/smartCrop';
-import { mapRect } from '@/imaging/surface';
+import { mapRect, type SurfaceView } from '@/imaging/surface';
+import { type CaptureWatch, carryRect, watchCapture } from '@/state/conversionLogic';
 import { useCameraLock, useLockTarget } from '@/state/useCameraLock';
 import { useLiveSend } from '@/state/useLiveSend';
 import { NO_PAN, useConversionSettings } from '@/state/useConversionSettings';
@@ -46,6 +47,22 @@ const asStill = (p: PickedImage | null): PickedImage | null =>
   p && !p.uri
     ? { ...p, uri: rgbToPngDataUri(renderCrop(p.rgb, p.raster.width, p.raster.height, null, fullRect(p.raster.width, p.raster.height))) }
     : p;
+
+/**
+ * Live camera: the frame kept once the lock on an item settled, with what the lock knew then (where the item was,
+ * its tracked width, the crop shown). The pins come from it, and hold still, until another item is tapped.
+ */
+interface LockCapture {
+  frame: PickedImage;
+  focus: Focus | null;
+  box: Rect | null;
+  width: number | null;
+  crop: Rect;
+}
+
+/** A rectangle of the analysed picture in the camera view's coordinates (they differ on a flattened page). */
+const toView = (r: Rect, surface: SurfaceView | undefined) =>
+  surface ? mapRect(r, surface.toFrame, { width: surface.frameWidth, height: surface.frameHeight }) : r;
 
 export default function ImageScreen() {
   const t = useTheme();
@@ -83,11 +100,24 @@ export default function ImageScreen() {
 
   // Live camera: stay locked onto the item found (or tapped) while the phone moves.
   const lock = useCameraLock(live);
+  const [capture, setCapture] = useState<LockCapture | null>(null);
+  /** The frames looked at so far for a capture (see watchCapture), and the last one looked at. */
+  const [watch, setWatch] = useState<{ for: PickedImage | null; w: CaptureWatch<LockCapture> | null }>({ for: null, w: null });
+  /** A hand-drawn crop box is fixed in the camera view: it follows the live picture, not a kept frame. */
+  const kept = live?.kind === 'camera' && !manualCrop ? capture : null;
+  /** The picture the pins are made from: the kept frame, else the newest one. */
+  const analysed = kept?.frame ?? picked;
+  /** For callbacks made once per live session (onEnd, leaving the tab). */
+  const keptRef = useRef(kept);
+  const dropCapture = () => {
+    setCapture(null);
+    setWatch({ for: null, w: null });
+  };
   /** When the frame being analysed arrived: its cost (arrival to on screen) paces the live capture. */
   const frameStart = useRef(0);
   /** The camera is delivering a flattened surface (see onFrame). */
   const onSurface = useRef(false);
-  const c = useImageConversion(picked, live, {
+  const c = useImageConversion(analysed, live, {
     removeBackground,
     removeClutter,
     toleranceOverride,
@@ -95,19 +125,44 @@ export default function ImageScreen() {
     snap,
     cutoutOverride,
     manualCrop,
-    focus,
+    focus: kept ? kept.focus : focus,
     linesOverride,
     graphRange,
     graphPan,
     thinLines,
-    trackedWidth: lock.width,
-    trackedBox: lock.box,
+    trackedWidth: kept ? kept.width : lock.width,
+    trackedBox: kept ? kept.box : lock.box,
+    frozen: !!kept,
   });
   const { width: w, height: h, fg, result } = c;
   /** Live camera on a flat surface: the analysed picture is the flattened page (see onFrame). */
   const surface = live?.kind === 'camera' ? picked?.surface : undefined;
-  const view = surface ? { width: surface.frameWidth, height: surface.frameHeight } : undefined;
-  useLockTarget(lock, picked, c.target);
+  // A kept frame's item is no news to the lock: it only follows the item on the live picture from then on.
+  useLockTarget(lock, analysed, kept ? null : c.target);
+  // Keep a frame once the lock has settled (React's "adjust state while rendering" pattern: once per new frame).
+  if (live?.kind === 'camera' && !kept && picked && watch.for !== picked && (lock.locked || watch.w)) {
+    const r = watchCapture(watch.w, {
+      ready: lock.locked && !manualCrop && !c.readingNumbers && !c.cuttingOut,
+      sharp: cameraTrouble === 0 && !cameraDark,
+      steady: c.result,
+      raw: c.framePins,
+      item: { frame: picked, focus, box: lock.box, width: lock.width, crop: c.crop },
+    });
+    setWatch({ for: picked, w: r.watch });
+    if (r.capture) setCapture(r.capture);
+  }
+  useEffect(() => {
+    if (capture) AccessibilityInfo.announceForAccessibility('Captured. The pins hold still on this item until you tap another one.');
+  }, [capture]);
+  /**
+   * The crop box on the live view. With a kept frame: where its crop is now, carried along with the locked item as
+   * the camera moves (or where it was, once the item is out of sight).
+   */
+  const viewCrop = kept
+    ? kept.box && lock.box
+      ? toView(carryRect(kept.crop, kept.box, lock.box), surface)
+      : toView(kept.crop, kept.frame.surface)
+    : toView(c.crop, surface);
   // A live frame is on screen: tell the capture how long it took, so slow phones get more time between frames.
   useEffect(() => {
     if (!live || !frameStart.current) return;
@@ -119,7 +174,7 @@ export default function ImageScreen() {
   // every setting. Edits (and the unlock) belong to the picture they were made on: a new picture discards them and
   // locks again. During a live share that means the screen changed enough to change the automatic pins.
   const autoKey = result ? cellsToString(result) : '';
-  const edit = editState && (editState.picked === picked || (live && editState.auto === autoKey)) ? editState : null;
+  const edit = editState && (editState.picked === analysed || (live && editState.auto === autoKey)) ? editState : null;
   const pinsUnlocked = !!edit?.unlocked;
   /** What the user gets: their edited pins, or the automatic result. */
   const shown = edit?.pattern ?? result;
@@ -127,23 +182,24 @@ export default function ImageScreen() {
   const [liveSendOn, setLiveSendOn] = useState(false);
   const liveSend = useLiveSend(liveSendOn && !!live, live ? shown : null);
   const toggleLock = () => {
-    if (!picked) return;
+    if (!analysed) return;
     const unlocked = !pinsUnlocked;
-    setEditState({ picked, auto: autoKey, pattern: edit?.pattern ?? null, unlocked });
+    setEditState({ picked: analysed, auto: autoKey, pattern: edit?.pattern ?? null, unlocked });
     AccessibilityInfo.announceForAccessibility(unlocked ? 'Pins unlocked. Tap a pin to raise or lower it.' : 'Pins locked');
   };
   const togglePinAt = (row: number, col: number) => {
-    if (!picked || !shown || !pinsUnlocked) return;
-    setEditState({ picked, auto: autoKey, pattern: togglePin(shown, row, col), unlocked: true });
+    if (!analysed || !shown || !pinsUnlocked) return;
+    setEditState({ picked: analysed, auto: autoKey, pattern: togglePin(shown, row, col), unlocked: true });
   };
   const resetPins = () => {
-    if (!picked || !edit) return;
-    setEditState({ ...edit, picked, auto: autoKey, pattern: null });
+    if (!analysed || !edit) return;
+    setEditState({ ...edit, picked: analysed, auto: autoKey, pattern: null });
     AccessibilityInfo.announceForAccessibility('Pins reset to the image');
   };
 
   const resetForNewImage = () => {
     lock.release();
+    dropCapture();
     setManualCrop(null);
     setFocus(null);
     c.resetGraph();
@@ -207,10 +263,15 @@ export default function ImageScreen() {
     await load({ uri: asset.uri, width: asset.width, height: asset.height });
   };
 
-  /** Keeps the last shared frame as a still image. */
+  /** Keeps the last shared frame (or the camera's kept frame) as a still image. */
   const freeze = () => {
+    const k = keptRef.current;
     setLive(null);
-    setPicked(asStill);
+    if (k) {
+      setPicked(asStill(k.frame));
+      setFocus(k.focus);
+    } else setPicked(asStill);
+    dropCapture();
   };
 
   /** Starts screen sharing or the live camera; both feed the same pipeline, frame by frame. */
@@ -256,7 +317,7 @@ export default function ImageScreen() {
       setLive(session);
       AccessibilityInfo.announceForAccessibility(
         source === 'camera'
-          ? 'Camera on. The pin preview follows what the camera sees. Tap the picture to focus on one thing.'
+          ? 'Camera on. Once it locks onto something, the pins hold still on it. Tap the picture to switch to another thing.'
           : 'Sharing screen. The pin preview updates live.',
       );
     } catch (e) {
@@ -302,6 +363,7 @@ export default function ImageScreen() {
   const liveRef = useRef(live);
   useEffect(() => {
     liveRef.current = live;
+    keptRef.current = kept;
   });
   useFocusEffect(
     useCallback(
@@ -310,7 +372,11 @@ export default function ImageScreen() {
         if (l?.kind !== 'camera') return;
         l.stop();
         setLive(null);
-        setPicked(asStill);
+        const k = keptRef.current;
+        if (k) {
+          setPicked(asStill(k.frame));
+          setFocus(k.focus);
+        } else setPicked(asStill);
       },
       [],
     ),
@@ -363,16 +429,17 @@ export default function ImageScreen() {
                     uri={picked.uri}
                     backdrop={live ? <LiveVideo video={live.video} /> : undefined}
                     badge={
-                      live ? <LiveBadge focusing={cameraTrouble > 0} locked={lock.locked} flattened={!!surface} /> : undefined
+                      live ? <LiveBadge focusing={cameraTrouble > 0} locked={lock.locked} captured={!!kept} flattened={!!surface} /> : undefined
                     }
                     // A flattened page is analysed, but the camera view is shown: boxes and taps are mapped between them.
-                    imageWidth={surface?.frameWidth ?? w}
-                    imageHeight={surface?.frameHeight ?? h}
-                    crop={surface ? mapRect(c.crop, surface.toFrame, view) : c.crop}
+                    imageWidth={surface?.frameWidth ?? picked.raster.width}
+                    imageHeight={surface?.frameHeight ?? picked.raster.height}
+                    crop={viewCrop}
                     onChange={(r) => {
                       // Your own box is fixed in the picture: the camera stops following an item.
                       lock.release();
-                      setManualCrop(surface ? mapRect(r, surface.toPage, { width: w, height: h }) : r);
+                      dropCapture();
+                      setManualCrop(surface ? mapRect(r, surface.toPage, { width: picked.raster.width, height: picked.raster.height }) : r);
                     }}
                     focus={manualCrop || !focus ? null : surface ? surface.toFrame(focus) : focus}
                     onTap={(seen) => {
@@ -385,6 +452,7 @@ export default function ImageScreen() {
                         // Lock onto the tapped item from now on (another graph may have other units: read them again),
                         // and focus the lens there (where the browser allows it).
                         lock.tap(point);
+                        dropCapture();
                         c.resetGraph();
                         const vw = surface?.frameWidth ?? w;
                         const vh = surface?.frameHeight ?? h;
@@ -419,6 +487,7 @@ export default function ImageScreen() {
                       disabled={!manualCrop && !focus}
                       onPress={() => {
                         lock.release();
+                        dropCapture();
                         setManualCrop(null);
                         setFocus(null);
                       }}
@@ -432,7 +501,10 @@ export default function ImageScreen() {
                         variant="secondary"
                         compact
                         style={{ flex: 1 }}
-                        onPress={() => setManualCrop(fullRect(w, h))}
+                        onPress={() => {
+                          dropCapture();
+                          setManualCrop(fullRect(picked.raster.width, picked.raster.height));
+                        }}
                         accessibilityHint={`Uses the whole ${live.kind === 'camera' ? 'camera view' : 'shared screen'} instead of the automatic crop`}
                       />
                     ) : (

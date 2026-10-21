@@ -6,14 +6,25 @@ import { radius, space, useTheme } from './theme';
 
 /**
  * A red "Live" badge for the crop picture during a screen share or camera: "Focusing…" while the camera
- * refocuses, "Flat" while it straightens a screen or page it found, "Locked" while it follows one item.
+ * refocuses, "Flat" while it straightens a screen or page it found, "Locked" while it follows one item, "Captured" once
+ * the pins hold still on a kept frame of it.
  */
-export function LiveBadge({ focusing = false, locked = false, flattened = false }: { focusing?: boolean; locked?: boolean; flattened?: boolean }) {
+export function LiveBadge({
+  focusing = false,
+  locked = false,
+  captured = false,
+  flattened = false,
+}: {
+  focusing?: boolean;
+  locked?: boolean;
+  captured?: boolean;
+  flattened?: boolean;
+}) {
   // "Flat": the camera found a screen or page and straightens it before reading it.
-  const label = focusing ? 'Focusing…' : `Live${flattened ? ' · Flat' : ''}${locked ? ' · Locked' : ''}`;
-  const spoken = focusing
-    ? 'Live, focusing'
-    : `Live${flattened ? ', screen or page found and straightened' : ''}${locked ? ', locked on an item' : ''}`;
+  const hold = captured ? ' · Captured' : locked ? ' · Locked' : '';
+  const label = focusing ? 'Focusing…' : `Live${flattened ? ' · Flat' : ''}${hold}`;
+  const spokenHold = captured ? ', pins captured and holding still' : locked ? ', locked on an item' : '';
+  const spoken = focusing ? 'Live, focusing' : `Live${flattened ? ', screen or page found and straightened' : ''}${spokenHold}`;
   return (
     <View style={styles.liveBadge} accessible accessibilityLabel={spoken}>
       <View style={[styles.liveDot, focusing && { backgroundColor: '#FFCC00' }]} />

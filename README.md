@@ -190,6 +190,14 @@ browser.
   on it, and a locked graph keeps its units as you zoom: its scale is resized
   by how much bigger the tracked graph has become. Auto Crop or dragging the
   crop box releases the lock; so does the item staying out of view for ~3 s.
+  **Capture:** once locked, the camera keeps one frame of the item
+  (*Live · Captured*) and the pins come from that frame only, so they stop
+  changing while the video stays live. The frame kept is a sharp one that
+  agrees with the settled (averaged) pins, after a graph's numbers are read
+  (`watchCapture` in `src/state/conversionLogic.ts`); settings still apply to
+  it. The crop box keeps following the item on the live view. Tapping another
+  item (or Auto Crop, Whole View, or your own crop box) lets go of it; Stop
+  Camera keeps the captured frame as the still picture.
   **Screens and pages:** pointed at a laptop or phone screen, a sheet of
   paper or a whiteboard, the camera finds its four corners (like a document
   scanner, `src/imaging/surface.ts`) and straightens it from the

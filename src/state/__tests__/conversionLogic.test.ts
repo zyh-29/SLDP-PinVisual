@@ -1,6 +1,18 @@
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
 import type { GraphScale } from '@/imaging/graph';
-import { holdGraphPins, nextGraphScale, onlyInside, rectInside, searchAreaAround, zoomedFrom } from '../conversionLogic';
+import {
+  CAPTURE,
+  type CaptureWatch,
+  carryRect,
+  holdGraphPins,
+  nextGraphScale,
+  onlyInside,
+  pinsApart,
+  rectInside,
+  searchAreaAround,
+  watchCapture,
+  zoomedFrom,
+} from '../conversionLogic';
 
 const scale = (major: number, units = 1): GraphScale => ({
   pxPerUnitX: major / units,
@@ -61,5 +73,46 @@ describe('pins only inside the graph', () => {
     expect(Array.from(out)).toEqual([0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0]);
     expect(rectInside({ x: 1, y: 1, width: 2, height: 1 }, { x: 0, y: 0, width: 4, height: 3 })).toBe(true);
     expect(rectInside({ x: -1, y: 1, width: 2, height: 1 }, { x: 0, y: 0, width: 4, height: 3 })).toBe(false);
+  });
+});
+
+describe('capturing a locked frame', () => {
+  const pins = createEmptyPattern(4, 10);
+  const off1 = togglePin(pins, 0, 0);
+  const run = (frames: { raw: typeof pins; steady?: typeof pins; sharp?: boolean; ready?: boolean }[]) => {
+    let watch: CaptureWatch<number> | null = null;
+    for (let i = 0; i < frames.length; i++) {
+      const f = frames[i];
+      const r: { watch: CaptureWatch<number> | null; capture: number | null } = watchCapture(watch, { ready: f.ready ?? true, sharp: f.sharp ?? true, steady: f.steady ?? pins, raw: f.raw, item: i });
+      if (r.capture !== null) return r.capture;
+      watch = r.watch;
+    }
+    return null;
+  };
+  it('counts differing pins', () => {
+    expect(pinsApart(pins, off1)).toBe(1);
+    expect(pinsApart(pins, createEmptyPattern(5, 10))).toBe(Infinity);
+  });
+  it('keeps the first frame that agrees once the pins have settled', () => {
+    expect(run([{ raw: pins }, { raw: pins }, { raw: pins }, { raw: pins }])).toBe(CAPTURE.settle - 1);
+  });
+  it('waits while the steady pins still change, or the frame is blurry or not ready', () => {
+    expect(run([{ raw: pins }, { raw: off1, steady: off1 }, { raw: pins }, { raw: pins }])).toBeNull();
+    expect(run([{ raw: pins }, { raw: pins, sharp: false }, { raw: pins }])).toBeNull();
+    expect(run([{ raw: pins }, { raw: pins }, { raw: pins, ready: false }, { raw: pins }])).toBeNull();
+  });
+  it('a frame far from the settled pins is not kept, but after a while the closest one is', () => {
+    let far = pins;
+    for (let c = 0; c < 4; c++) far = togglePin(far, 1, c);
+    const frames = Array.from({ length: CAPTURE.maxFrames }, (_, i) => ({ raw: i === 5 ? off1 : far }));
+    expect(run(frames)).toBe(5);
+  });
+  it('carries a box with its item', () => {
+    expect(carryRect({ x: 10, y: 10, width: 20, height: 20 }, { x: 0, y: 0, width: 40, height: 40 }, { x: 100, y: 50, width: 80, height: 40 })).toEqual({
+      x: 120,
+      y: 60,
+      width: 40,
+      height: 20,
+    });
   });
 });

@@ -71,13 +71,18 @@ export interface ConversionSettings {
    * margin) instead of the whole picture: most of each frame's cost, so this keeps slow phones smooth.
    */
   trackedBox: Rect | null;
+  /**
+   * Live camera: `picked` is the frame kept when the lock settled (see watchCapture), not the newest one. Its pins
+   * are used as they are (no averaging with other frames), and its numbers are read from its own pixels.
+   */
+  frozen: boolean;
 }
 
 /** Above this edge unevenness a photo's background is busy enough to switch Smart Cut-Out on by itself. */
 const BUSY_BACKGROUND = 28;
 
 export function useImageConversion(picked: PickedImage | null, live: LiveCapture | null, s: ConversionSettings) {
-  const { removeBackground, removeClutter, toleranceOverride, pinFill, snap, cutoutOverride, manualCrop, focus, linesOverride, graphRange, graphPan, thinLines, trackedWidth, trackedBox } = s;
+  const { removeBackground, removeClutter, toleranceOverride, pinFill, snap, cutoutOverride, manualCrop, focus, linesOverride, graphRange, graphPan, thinLines, trackedWidth, trackedBox, frozen } = s;
   const [cutout, setCutout] = useState<{ for: PickedImage; mask: Float32Array | null; error?: string } | null>(null);
   /** Graphs: pixels per unit, read from the axis numbers (or the grid). Kept across live frames while the zoom is unchanged. */
   const [graphScale, setGraphScale] = useState<GraphScale | null>(null);
@@ -160,8 +165,9 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   useEffect(() => {
     if ((!readingNumbers && !checkingScale) || !graph || !scaleKey || !picked || scaleRequest.current === scaleKey) return;
     const { axes } = graph;
-    // A flattened page (camera on a screen) is read from its own pixels: the bands are in its coordinates.
-    const source = picked.surface ? { pixels: { rgb: picked.rgb, width: w, height: h } } : live ? { video: live.video } : { uri: picked.uri };
+    // A flattened page (camera on a screen) is read from its own pixels: the bands are in its coordinates. So is a
+    // kept frame: the video has moved on since.
+    const source = picked.surface || frozen ? { pixels: { rgb: picked.rgb, width: w, height: h } } : live ? { video: live.video } : { uri: picked.uri };
     const read = () => {
       scaleRequest.current = scaleKey;
       readAxisNumbers(source, w, labelBands(axes))
@@ -188,7 +194,7 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     // Still zooming: every frame is another zoom level. Read once the grid has held still for a moment.
     const t = setTimeout(read, 700);
     return () => clearTimeout(t);
-  }, [readingNumbers, checkingScale, graph, scaleKey, picked, live, w, h, trackedWidth]);
+  }, [readingNumbers, checkingScale, graph, scaleKey, picked, live, w, h, trackedWidth, frozen]);
   // Carry the scale on to the next frame (see nextGraphScale; React's "adjust state while rendering" pattern).
   const nextScale = nextGraphScale(graphScale, graph?.scale, trackedWidth, !!graphView.followZoom);
   if (nextScale) setGraphScale(nextScale);
@@ -270,8 +276,9 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
 
   // Live camera: noise and a moving hand change a few pins on every frame, so each pin is averaged over the last
   // frames and only flips once it has clearly changed (cameraFrame.ts). Folded in once per new frame result
-  // (React's "adjust state while rendering" pattern, so the pins never lag a render behind).
-  const steadyOn = live?.kind === 'camera';
+  // (React's "adjust state while rendering" pattern, so the pins never lag a render behind). A kept frame is
+  // used as it is: it was chosen to agree with the averaged pins, and settings changes must show at once.
+  const steadyOn = live?.kind === 'camera' && !frozen;
   const [steady, setSteady] = useState<{ from: Pattern | null; state: SteadyPins | null }>({ from: null, state: null });
   // Live share or camera, zoomed to another level: until its numbers are read the scale is unknown and the whole
   // curve would fill the board for a moment. The last graph window's pins are held instead, so the curve keeps its
@@ -331,6 +338,8 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     shape,
     /** The automatic pins. */
     result,
+    /** This frame's own pins, before averaging with earlier frames (live camera). */
+    framePins: shown,
     /** "What the pins see": the crop, background removed. */
     cleanedUri,
     resetGraph,

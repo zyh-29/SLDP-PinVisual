@@ -82,3 +82,58 @@ export function onlyInside(ink: Float32Array, width: number, height: number, r: 
   for (let y = y0; y < y1; y++) out.set(ink.subarray(y * width + x0, y * width + x1), y * width + x0);
   return out;
 }
+
+/**
+ * Live camera capture: once the camera has locked onto an item, one frame of it is kept and the pins are made
+ * from that frame alone, so they stop changing while the camera stays live (until another item is tapped).
+ * The frame kept is one that agrees with the settled pins: the steady (averaged) pins have held for `settle`
+ * frames and this frame's own pins differ from them in at most `strays` of the pins. If no frame manages that
+ * within `maxFrames`, the closest one seen is kept.
+ */
+export const CAPTURE = { settle: 3, maxFrames: 12, strays: 0.02 };
+
+export interface CaptureWatch<T> {
+  frames: number;
+  stable: number;
+  key: string;
+  best: { item: T; strays: number } | null;
+}
+
+/** Pins that differ between two patterns (Infinity when their sizes differ). */
+export function pinsApart(a: Pattern, b: Pattern): number {
+  if (a.rows !== b.rows || a.cols !== b.cols) return Infinity;
+  let n = 0;
+  for (let i = 0; i < a.cells.length; i++) if (a.cells[i] !== b.cells[i]) n++;
+  return n;
+}
+
+/**
+ * One live frame towards a capture. `ready`: locked, and the pins are final (a graph's numbers are read).
+ * `sharp`: the frame is in focus (a blurry one is skipped, neither counted nor kept). `steady` the averaged
+ * pins, `raw` this frame's own, `item` what would be kept. Returns the watch for the next frame and the item to
+ * keep, if it is time.
+ */
+export function watchCapture<T>(
+  watch: CaptureWatch<T> | null,
+  f: { ready: boolean; sharp: boolean; steady: Pattern | null; raw: Pattern | null; item: T },
+): { watch: CaptureWatch<T> | null; capture: T | null } {
+  if (!f.ready || !f.steady || !f.raw) return { watch: null, capture: null };
+  if (!f.sharp) return { watch, capture: null };
+  const strays = pinsApart(f.raw, f.steady);
+  const key = f.steady.cells.join('');
+  const same = !!watch && watch.key === key;
+  const stable = same ? watch.stable + 1 : 1;
+  const frames = (watch?.frames ?? 0) + 1;
+  const best = same && watch.best && watch.best.strays <= strays ? watch.best : { item: f.item, strays };
+  const next = { frames, stable, key, best };
+  if (stable >= CAPTURE.settle && strays <= Math.ceil(f.steady.cells.length * CAPTURE.strays)) return { watch: next, capture: f.item };
+  if (frames >= CAPTURE.maxFrames) return { watch: next, capture: best.item };
+  return { watch: next, capture: null };
+}
+
+/** `r`, which was placed relative to an item at `then`, moved and resized with the item to `now`. */
+export function carryRect(r: Rect, then: Rect, now: Rect): Rect {
+  const kx = now.width / then.width;
+  const ky = now.height / then.height;
+  return { x: now.x + (r.x - then.x) * kx, y: now.y + (r.y - then.y) * ky, width: r.width * kx, height: r.height * ky };
+}
