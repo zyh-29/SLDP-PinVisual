@@ -7,20 +7,19 @@ import { AUTO_MIN } from './foreground';
 import { expand, fullRect, overlaps, type Point, type Rect, union } from './geometry';
 import { dilate, labelComponents } from './masks';
 
-/** Hue in degrees, 0..360. */
-function hue(r: number, g: number, b: number): number {
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
+const HUE_BINS = 12;
+
+/** Which of HUE_BINS hue ranges (30° each) a colour is in, given its largest and smallest channel. */
+function hueBin(r: number, g: number, b: number, max: number, min: number): number {
   const d = max - min;
   if (d === 0) return 0;
   let h: number;
   if (max === r) h = ((g - b) / d) % 6;
   else if (max === g) h = (b - r) / d + 2;
   else h = (r - g) / d + 4;
-  return (h * 60 + 360) % 360;
+  h = (h * 60 + 360) % 360;
+  return ((h / (360 / HUE_BINS)) | 0) % HUE_BINS;
 }
-
-const HUE_BINS = 12;
 
 /**
  * Coloured curves, as in a Desmos screenshot: per colour, the pieces that are
@@ -67,6 +66,27 @@ export function findCurves(
   /** Lower on a photographed screen (see CAMERA_CURVE_SATURATION). */
   minSaturation = CURVE_MIN_SATURATION,
 ): CurveResult | null {
+  // Only part of the picture is searched (a locked item, a tapped plot): work on a copy of just that part, so
+  // every pass below (per colour: grow, label, measure) covers it rather than the whole frame.
+  const cx0 = Math.max(0, Math.floor(region.x));
+  const cy0 = Math.max(0, Math.floor(region.y));
+  const cx1 = Math.min(width, Math.ceil(region.x + region.width));
+  const cy1 = Math.min(height, Math.ceil(region.y + region.height));
+  if (cx1 <= cx0 || cy1 <= cy0) return null;
+  if (cx0 > 0 || cy0 > 0 || cx1 < width || cy1 < height) {
+    const cw = cx1 - cx0;
+    const ch = cy1 - cy0;
+    const part = new Uint8ClampedArray(cw * ch * 3);
+    for (let y = 0; y < ch; y++) {
+      const from = ((cy0 + y) * width + cx0) * 3;
+      for (let i = 0; i < cw * 3; i++) part[y * cw * 3 + i] = rgb[from + i];
+    }
+    const local = findCurves(part, cw, ch, { x: 0, y: 0, width: cw, height: ch }, focus && { ...focus, x: focus.x - cx0, y: focus.y - cy0 }, minSaturation);
+    if (!local) return null;
+    const mask = new Float32Array(width * height);
+    for (let y = 0; y < ch; y++) mask.set(local.mask.subarray(y * cw, (y + 1) * cw), (cy0 + y) * width + cx0);
+    return { score: local.score, box: { ...local.box, x: local.box.x + cx0, y: local.box.y + cy0 }, mask };
+  }
   const x0 = Math.max(0, Math.floor(region.x));
   const y0 = Math.max(0, Math.floor(region.y));
   const x1 = Math.min(width, Math.ceil(region.x + region.width));
@@ -75,23 +95,30 @@ export function findCurves(
   const minLength = Math.max(12, shortSide * 0.12);
   const maxThickness = Math.max(4, shortSide * 0.02);
 
-  // Coloured pixels, grouped by hue.
-  const bins: Uint8Array[] = Array.from({ length: HUE_BINS }, () => new Uint8Array(width * height));
+  // Coloured pixels, grouped by hue: each pixel's hue bin (plus one; 0 = not coloured) in one array, and a colour's
+  // own mask made only if it has enough pixels to hold a curve.
+  const hueOf = new Uint8Array(width * height);
   const counts = new Array<number>(HUE_BINS).fill(0);
   let any = false;
   for (let y = y0; y < y1; y++)
-    for (let x = x0; x < x1; x++) {
-      const p = y * width + x;
+    for (let x = x0, p = y * width + x0; x < x1; x++, p++) {
       const r = rgb[p * 3];
       const g = rgb[p * 3 + 1];
       const b = rgb[p * 3 + 2];
-      if (Math.max(r, g, b) - Math.min(r, g, b) < minSaturation || Math.max(r, g, b) < 60) continue;
-      const k = Math.floor(hue(r, g, b) / (360 / HUE_BINS)) % HUE_BINS;
-      bins[k][p] = 1;
+      const max = r > g ? (r > b ? r : b) : g > b ? g : b;
+      const min = r < g ? (r < b ? r : b) : g < b ? g : b;
+      if (max - min < minSaturation || max < 60) continue;
+      const k = hueBin(r, g, b, max, min);
+      hueOf[p] = k + 1;
       counts[k]++;
       any = true;
     }
   if (!any) return null;
+  const binMask = (k: number) => {
+    const m = new Uint8Array(width * height);
+    for (let p = 0; p < m.length; p++) if (hueOf[p] === k + 1) m[p] = 1;
+    return m;
+  };
 
   const results: {
     hueBin: number;
@@ -106,7 +133,7 @@ export function findCurves(
   for (let binIndex = 0; binIndex < HUE_BINS; binIndex++) {
     // A colour with fewer pixels than one minimum-length curve can't hold a curve: skip the expensive part.
     if (counts[binIndex] < minLength) continue;
-    const bin = bins[binIndex];
+    const bin = binMask(binIndex);
     // Join pieces up to ~4 px apart (thin steep curves fragment when a large screenshot is shrunk),
     // but measure size and thickness on the real pixels.
     const { labels, components } = labelComponents(dilate(bin, width, height, 2, 2), width, height);

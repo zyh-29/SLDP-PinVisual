@@ -7,7 +7,7 @@ import { AccessibilityInfo, Platform, StyleSheet, View } from 'react-native';
 import { GRID } from '@/config/hardware';
 import { cellsToString, type Pattern, togglePin } from '@/domain/pattern';
 import { toGrayscale } from '@/imaging/convert';
-import { DEFAULT_PIN_FILL, toRgb } from '@/imaging/foreground';
+import { toRgb } from '@/imaging/foreground';
 import { fullRect, type Point, type Rect } from '@/imaging/geometry';
 import {
   type ImageSource,
@@ -23,27 +23,23 @@ import { parseEquation, renderEquation } from '@/imaging/equation';
 import { loadImagePixels } from '@/imaging/loadImage';
 import { renderCrop } from '@/imaging/pinSampling';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
-import { smartCutoutAvailable } from '@/imaging/segment';
 import { usePattern } from '@/state/PatternProvider';
 import type { Focus } from '@/imaging/smartCrop';
 import { mapRect } from '@/imaging/surface';
 import { useCameraLock, useLockTarget } from '@/state/useCameraLock';
 import { useLiveSend } from '@/state/useLiveSend';
-import { type GraphRange, type PickedImage, useImageConversion } from '@/state/useImageConversion';
-import { Button, Columns, Label, Screen, Section, Separator, StatusBanner } from '@/ui/components';
+import { NO_PAN, useConversionSettings } from '@/state/useConversionSettings';
+import { type PickedImage, useImageConversion } from '@/state/useImageConversion';
+import { Button, Columns, Screen, Section, StatusBanner } from '@/ui/components';
+import { ConversionSettings } from '@/ui/ConversionSettings';
 import { CropEditor } from '@/ui/CropEditor';
-import { GraphRangeControl } from '@/ui/GraphRangeControl';
-import { Icon } from '@/ui/Icon';
-import { EquationInput } from '@/ui/EquationInput';
+import { CAMERA_HINT, ImageSourcePicker, SCREEN_HINT } from '@/ui/ImageSourcePicker';
 import { DropOverlay, LiveBadge } from '@/ui/ImageOverlays';
 import { ImageResult } from '@/ui/ImageResult';
 import { LiveVideo } from '@/ui/LiveVideo';
 import { SavePatternSheet } from '@/ui/SavePatternSheet';
-import { SliderRow, SwitchRow } from '@/ui/SettingRows';
 import { radius, space, useTheme } from '@/ui/theme';
 
-const CAMERA_HINT = 'Turns on the camera. The pins follow what it sees; tap the picture to focus on one thing.';
-const SCREEN_HINT = 'Share a screen or window. The pins follow it live; crop the part you want.';
 
 /** A live frame kept as a still picture: it gets an image of its own for the crop view. */
 const asStill = (p: PickedImage | null): PickedImage | null =>
@@ -55,18 +51,12 @@ export default function ImageScreen() {
   const t = useTheme();
   const { setPattern } = usePattern();
   const [picked, setPicked] = useState<PickedImage | null>(null);
+  const prefs = useConversionSettings();
+  const { removeBackground, removeClutter, toleranceOverride, sensitivity, snap, cutoutOverride, linesOverride, graphRange, graphPan, thinLines } =
+    prefs.settings;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [removeBackground, setRemoveBackground] = useState(true);
-  const [removeClutter, setRemoveClutter] = useState(true);
-  /** null = automatic: chosen from each image (and crop) by the triangle method on colour distances. */
-  const [toleranceOverride, setToleranceOverride] = useState<number | null>(null);
-  /** Higher raises more pins. A pin is raised when at least (100 - sensitivity)% of it is subject. */
-  const [sensitivity, setSensitivity] = useState(100 - Math.round(DEFAULT_PIN_FILL * 100));
-  const [snap, setSnap] = useState(true);
-  /** null = automatic: Smart Cut-Out runs when the background is busy. */
-  const [cutoutOverride, setCutoutOverride] = useState<boolean | null>(null);
   /** null = automatic (smart crop). */
   const [manualCrop, setManualCrop] = useState<Rect | null>(null);
   /** A point the user tapped on the picture: the smart crop focuses on what's there (e.g. one picture in a grid). */
@@ -78,7 +68,6 @@ export default function ImageScreen() {
     null,
   );
   /** null = automatic: axes and gridlines are removed when the image looks like a graph. */
-  const [linesOverride, setLinesOverride] = useState<boolean | null>(null);
   const [live, setLive] = useState<LiveCapture | null>(null);
   /** Live camera focus: 0 sharp, 1 refocusing, 2 can't get sharp. */
   const [focusTrouble, setFocusTrouble] = useState<0 | 1 | 2>(0);
@@ -87,10 +76,7 @@ export default function ImageScreen() {
   const [tooDark, setTooDark] = useState(false);
   const cameraDark = live?.kind === 'camera' && tooDark;
   /** Graphs: how much of the graph the pins show (around the curve's vertex or middle), at its true proportions. */
-  const [graphRange, setGraphRange] = useState<GraphRange>('5');
   /** The graph window moved with the arrows (units, right and up); back to the curve for each new graph. */
-  const [graphPan, setGraphPan] = useState(NO_PAN);
-  const [thinLines, setThinLines] = useState(true);
 
   // Stop screen sharing when the session is replaced or the screen goes away.
   useEffect(() => () => live?.stop(), [live]);
@@ -117,7 +103,7 @@ export default function ImageScreen() {
     trackedWidth: lock.width,
     trackedBox: lock.box,
   });
-  const { width: w, height: h, fg, result, graph, shape } = c;
+  const { width: w, height: h, fg, result } = c;
   /** Live camera on a flat surface: the analysed picture is the flattened page (see onFrame). */
   const surface = live?.kind === 'camera' ? picked?.surface : undefined;
   const view = surface ? { width: surface.frameWidth, height: surface.frameHeight } : undefined;
@@ -161,10 +147,7 @@ export default function ImageScreen() {
     setManualCrop(null);
     setFocus(null);
     c.resetGraph();
-    setGraphPan(NO_PAN);
-    setLinesOverride(null);
-    setCutoutOverride(null);
-    setToleranceOverride(null);
+    prefs.resetForNewPicture();
     setEditState(null);
   };
 
@@ -361,45 +344,15 @@ export default function ImageScreen() {
         // page scrollbar changes the content width and makes the whole picture jump; the crop area blocks touch scrolling itself.
         scrollEnabled={Platform.OS === 'web' || !dragging}>
         {!picked || !fg ? (
-          <Section padded style={{ maxWidth: 560, width: '100%', alignSelf: 'center' }}>
-            <View style={styles.empty}>
-              <View style={[styles.emptyIcon, { backgroundColor: t.tintSoft }]}>
-                <Icon name="photo" color={t.tint} size={30} />
-              </View>
-              <Label variant="title3" style={{ textAlign: 'center' }}>
-                Turn a picture into pins
-              </Label>
-            </View>
-            <Button title="Choose Photo" icon="photo" onPress={pick} loading={loading} />
-            {supportsCamera ? (
-              <Button
-                title="Live Camera"
-                icon="camera"
-                variant="secondary"
-                onPress={() => startLive('camera')}
-                disabled={loading}
-                accessibilityHint={CAMERA_HINT}
-              />
-            ) : null}
-            {supportsScreenCapture ? (
-              <Button
-                title="Share Screen"
-                icon="screen"
-                variant="secondary"
-                onPress={() => startLive('screen')}
-                disabled={loading}
-                accessibilityHint={SCREEN_HINT}
-              />
-            ) : null}
-            {supportsFileDrop ? (
-              <Label variant="footnote" secondary style={{ textAlign: 'center' }}>
-                or drop an image here
-              </Label>
-            ) : null}
-            <Separator />
-            <Label variant="headline">Or type an equation</Label>
-            <EquationInput onDraw={drawEquation} error={equationError} />
-          </Section>
+          <ImageSourcePicker
+            loading={loading}
+            onPick={pick}
+            onCamera={supportsCamera ? () => startLive('camera') : undefined}
+            onScreen={supportsScreenCapture ? () => startLive('screen') : undefined}
+            dropHint={supportsFileDrop}
+            onEquation={drawEquation}
+            equationError={equationError}
+          />
         ) : (
           <Columns
             rightWidth={420}
@@ -427,7 +380,7 @@ export default function ImageScreen() {
                       // Tap a picture, a curve or a subject: the smart crop focuses on it (your own box gives way to it).
                       setManualCrop(null);
                       setFocus({ ...point, tap: true });
-                      setGraphPan(NO_PAN);
+                      prefs.set('graphPan', NO_PAN);
                       if (live?.kind === 'camera') {
                         // Lock onto the tapped item from now on (another graph may have other units: read them again),
                         // and focus the lens there (where the browser allows it).
@@ -597,126 +550,15 @@ export default function ImageScreen() {
             }
             right={
               <>
-                <Section title="Conversion">
-                  {picked.equation ? (
-                    <>
-                      <EquationInput key={picked.equation.text} initial={picked.equation.text} onDraw={drawEquation} error={equationError} />
-                      <Separator />
-                    </>
-                  ) : null}
-                  {graph ? (
-                    <>
-                      <GraphRangeControl
-                        graph={graph}
-                        range={graphRange}
-                        onChange={setGraphRange}
-                        readingNumbers={c.readingNumbers}
-                        pan={graphPan}
-                        live={!!live}
-                        onPan={(p) => {
-                          setGraphPan(p);
-                          AccessibilityInfo.announceForAccessibility(
-                            p.x === 0 && p.y === 0 ? 'Back on the curve' : `Moved ${Math.abs(p.x)} ${p.x < 0 ? 'left' : 'right'}, ${Math.abs(p.y)} ${p.y < 0 ? 'down' : 'up'}`,
-                          );
-                        }}
-                      />
-                      <Separator />
-                    </>
-                  ) : null}
-                  <SwitchRow
-                    title="Remove Background"
-                    hint="Anything that differs from the edge colour counts as the subject"
-                    value={removeBackground}
-                    onChange={setRemoveBackground}
-                  />
-                  {removeBackground ? (
-                    <>
-                      {smartCutoutAvailable && !live && (c.busyPhoto || cutoutOverride !== null) ? (
-                        <>
-                          <Separator />
-                          <SwitchRow
-                            title="Smart Cut-Out"
-                            hint="Uses on-device AI to separate the main subject from a busy background"
-                            value={c.cutoutOn}
-                            onChange={setCutoutOverride}
-                          />
-                        </>
-                      ) : null}
-                      {fg.lines.length > 0 || linesOverride !== null ? (
-                        <>
-                          <Separator />
-                          <SwitchRow
-                            title="Remove Axes & Grid"
-                            hint="Removes long straight lines such as graph axes and gridlines, and stretches the graph to fill the pins"
-                            value={fg.linesRemoved}
-                            onChange={setLinesOverride}
-                          />
-                        </>
-                      ) : null}
-                      <Separator />
-                      <SwitchRow
-                        title="Ignore Labels & Text"
-                        hint="Drops labels, text and specks much smaller than the main shape"
-                        value={removeClutter}
-                        onChange={setRemoveClutter}
-                      />
-                      {c.shapesApply && shape ? (
-                        <>
-                          <Separator />
-                          <SwitchRow
-                            title={`Snap to ${shape.name}`}
-                            hint={`Draws a perfect ${shape.name.toLowerCase()} on the pins instead of following the pixels`}
-                            value={snap}
-                            onChange={setSnap}
-                          />
-                        </>
-                      ) : null}
-                    </>
-                  ) : null}
-                  {removeBackground && c.curves ? (
-                    <>
-                      <Separator />
-                      <SwitchRow
-                        title="One-Pin Lines"
-                        hint="Draws graph curves as a line one pin wide, following the curve's centre, instead of every pin they touch"
-                        value={thinLines}
-                        onChange={setThinLines}
-                      />
-                    </>
-                  ) : null}
-                  {/* Tolerance only matters when the subject is separated by colour (not by a curve's colour or the AI). */}
-                  {removeBackground && !c.subjectKnown ? (
-                    <>
-                      <Separator />
-                      <SliderRow
-                        title="Tolerance"
-                        value={fg.tolerance}
-                        display={toleranceOverride === null ? `Auto · ${fg.tolerance}` : String(toleranceOverride)}
-                        min={8}
-                        max={160}
-                        step={2}
-                        onChange={setToleranceOverride}
-                        onAuto={toleranceOverride === null ? undefined : () => setToleranceOverride(null)}
-                        hint="Set automatically for each image. Higher ignores faint colours, shadows and paper texture; lower keeps pale fills."
-                      />
-                    </>
-                  ) : null}
-                  {c.traced ? null : (
-                    <>
-                      <Separator />
-                      <SliderRow
-                        title="Sensitivity"
-                        value={sensitivity}
-                        display={`${sensitivity}%`}
-                        min={5}
-                        max={95}
-                        step={5}
-                        onChange={setSensitivity}
-                        hint={`Higher raises more pins. A pin is raised when at least ${100 - sensitivity}% of it is ${removeBackground ? 'subject' : 'dark'}.`}
-                      />
-                    </>
-                  )}
-                </Section>
+                <ConversionSettings
+                  settings={prefs.settings}
+                  set={prefs.set}
+                  conversion={c}
+                  live={!!live}
+                  equation={picked.equation?.text ?? null}
+                  onEquation={drawEquation}
+                  equationError={equationError}
+                />
 
                 {shown ? (
                   <ImageResult
@@ -754,18 +596,7 @@ export default function ImageScreen() {
   );
 }
 
-const NO_PAN = { x: 0, y: 0 };
-
 const styles = StyleSheet.create({
-  empty: { alignItems: 'center', gap: space.sm, paddingVertical: space.lg },
-  emptyIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: space.sm,
-  },
   buttonRow: { flexDirection: 'row', gap: space.sm },
   frame: {
     width: '100%',

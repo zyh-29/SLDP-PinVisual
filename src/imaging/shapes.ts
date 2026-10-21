@@ -9,7 +9,10 @@
  *    coverage, instead of sampling the wobbly pixels.
  */
 import type { Pattern, PinValue } from '@/domain/pattern';
-import type { Rect } from './geometry';
+import { convexHull, cross, polygonArea, type Rect } from './geometry';
+
+// Kept here too for code that thinks of them as shape helpers.
+export { convexHull, polygonArea };
 
 export interface Point {
   x: number;
@@ -106,38 +109,6 @@ export function outlineOf(mask: Uint8Array, width: number, height: number): Uint
         out[p] = 1;
     }
   return out;
-}
-
-const cross = (o: Point, a: Point, b: Point) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-
-/** Convex hull (Andrew's monotone chain). */
-export function convexHull(points: Point[]): Point[] {
-  const pts = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
-  if (pts.length < 3) return pts;
-  const lower: Point[] = [];
-  for (const p of pts) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
-    lower.push(p);
-  }
-  const upper: Point[] = [];
-  for (let i = pts.length - 1; i >= 0; i--) {
-    const p = pts[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
-    upper.push(p);
-  }
-  upper.pop();
-  lower.pop();
-  return lower.concat(upper);
-}
-
-export function polygonArea(poly: Point[]): number {
-  let a = 0;
-  for (let i = 0; i < poly.length; i++) {
-    const p = poly[i];
-    const q = poly[(i + 1) % poly.length];
-    a += p.x * q.y - q.x * p.y;
-  }
-  return Math.abs(a) / 2;
 }
 
 /**

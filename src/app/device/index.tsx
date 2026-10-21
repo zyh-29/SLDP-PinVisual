@@ -26,7 +26,10 @@ export default function DeviceScreen() {
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     let live = true;
-    controller.driver.availability().then((reason) => live && setBleUnavailable(reason));
+    controller.driver.availability().then(
+      (reason) => live && setBleUnavailable(reason),
+      (e: unknown) => live && setBleUnavailable(`Bluetooth could not be checked: ${e instanceof Error ? e.message : String(e)}`),
+    );
     return () => {
       live = false;
     };

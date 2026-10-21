@@ -9,7 +9,7 @@
  * smart crop is then pointed at that place, so it picks the same item, and its exact box refines the tracker
  * and slowly refreshes the template (the item looks a little different from a new angle).
  */
-import type { Point, Rect } from './geometry';
+import { iou, type Point, type Rect } from './geometry';
 
 /** Brightness of a frame, shrunk so a search takes a few milliseconds. */
 export interface SmallGray {
@@ -27,13 +27,17 @@ export function smallGray(rgb: ArrayLike<number>, width: number, height: number)
   const k = Math.max(1, Math.round(Math.max(width, height) / 240));
   const w = Math.max(1, Math.floor(width / k));
   const h = Math.max(1, Math.floor(height / k));
+  // Integer brightness (x 256) summed per block, each column's block worked out once: runs on every camera frame.
+  const sums = new Uint32Array(w * h);
+  const colBlock = new Int32Array(w * k);
+  for (let x = 0; x < w * k; x++) colBlock[x] = (x / k) | 0;
+  for (let y = 0; y < h * k; y++) {
+    const row = ((y / k) | 0) * w;
+    for (let x = 0, p = y * width * 3; x < w * k; x++, p += 3) sums[row + colBlock[x]] += 77 * rgb[p] + 150 * rgb[p + 1] + 29 * rgb[p + 2];
+  }
   const g = new Float32Array(w * h);
-  for (let y = 0; y < h * k; y++)
-    for (let x = 0; x < w * k; x++) {
-      const p = (y * width + x) * 3;
-      g[Math.floor(y / k) * w + Math.floor(x / k)] += 0.299 * rgb[p] + 0.587 * rgb[p + 1] + 0.114 * rgb[p + 2];
-    }
-  for (let i = 0; i < g.length; i++) g[i] /= k * k;
+  const scale = 1 / (256 * k * k);
+  for (let i = 0; i < g.length; i++) g[i] = sums[i] * scale;
   const sum = new Float64Array((w + 1) * (h + 1));
   for (let y = 0; y < h; y++) {
     let row = 0;
@@ -87,13 +91,6 @@ function normalise(v: Float32Array, minContrast = 2): Float32Array | null {
   for (let i = 0; i < v.length; i++) out[i] = (v[i] - mean) * s;
   return out;
 }
-
-const iou = (a: Rect, b: Rect) => {
-  const w = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
-  const h = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
-  const i = w * h;
-  return i / (a.width * a.height + b.width * b.height - i);
-};
 
 export interface TrackResult {
   /** Where the item is now (frame pixels). */

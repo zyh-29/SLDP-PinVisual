@@ -9,6 +9,7 @@ import { GRID } from '@/config/hardware';
 import type { Pattern } from '@/domain/pattern';
 import { readAxisNumbers } from '@/imaging/axisNumbers';
 import { type SteadyPins, steadyPins } from '@/imaging/cameraFrame';
+import { holdGraphPins, nextGraphScale, onlyInside, rectInside, searchAreaAround } from './conversionLogic';
 import type { SurfaceView } from '@/imaging/surface';
 import type { RasterImage } from '@/imaging/convert';
 import { DEFAULT_MIN_PIECE_RATIO, estimateBackground, findForeground } from '@/imaging/foreground';
@@ -143,20 +144,8 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     }),
     [graphRange, graphScale, picked, live, trackedWidth, graphPan],
   );
-  // The locked item and a margin of 40% of its size around it, kept inside the picture.
-  const searchArea = useMemo(() => {
-    if (!trackedBox || !w || !h) return undefined;
-    const m = 0.4 * Math.max(trackedBox.width, trackedBox.height);
-    const x0 = Math.max(0, Math.floor(trackedBox.x - m));
-    const y0 = Math.max(0, Math.floor(trackedBox.y - m));
-    const x1 = Math.min(w, Math.ceil(trackedBox.x + trackedBox.width + m));
-    const y1 = Math.min(h, Math.ceil(trackedBox.y + trackedBox.height + m));
-    // Not worth it when the item fills most of the picture anyway, and never leaving out the point focused on.
-    const inside = !focus || (focus.x >= x0 && focus.x <= x1 && focus.y >= y0 && focus.y <= y1);
-    return inside && x1 - x0 > 16 && y1 - y0 > 16 && (x1 - x0) * (y1 - y0) < 0.7 * w * h
-      ? { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
-      : undefined;
-  }, [trackedBox, w, h, focus]);
+  // Locked on an item: only around it (see searchAreaAround).
+  const searchArea = useMemo(() => searchAreaAround(trackedBox, w, h, focus), [trackedBox, w, h, focus]);
   const smart = useMemo(
     () => (picked && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, searchArea, focus ?? undefined, graphView) : null),
     [picked, subjectMask, w, h, smartOptions, focus, graphView, searchArea],
@@ -200,13 +189,9 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     const t = setTimeout(read, 700);
     return () => clearTimeout(t);
   }, [readingNumbers, checkingScale, graph, scaleKey, picked, live, w, h, trackedWidth]);
-  // Locked on after the scale was measured: tie the scale as it is now to the tracked width, so from here on it
-  // follows the zoom through the tracker (React's "adjust state while rendering" pattern).
-  const current = graph?.scale;
-  if (current && trackedWidth && graphScale && !graphScale.atWidth) setGraphScale({ ...current, atWidth: trackedWidth });
-  // A shared screen zoomed since the scale was stored: store the followed one, so the next frame follows on from
-  // this one (each frame zooms only a little from the one before).
-  else if (graphView.followZoom && current && graphScale && zoomedFrom(graphScale, current)) setGraphScale({ ...current, followed: true });
+  // Carry the scale on to the next frame (see nextGraphScale; React's "adjust state while rendering" pattern).
+  const nextScale = nextGraphScale(graphScale, graph?.scale, trackedWidth, !!graphView.followZoom);
+  if (nextScale) setGraphScale(nextScale);
   // Inside the user's own box the same logic picks the subject, so stray UI caught by the box is ignored.
   const smartInCrop = useMemo(
     () => (picked && manualCrop && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, manualCrop) : null),
@@ -232,9 +217,12 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
             backgroundRegions: manualCrop ? [autoContext] : undefined,
             subjectMask: knownSubject,
             camera,
+            // Shapes and objects: the GrabCut-style second opinion, told which object the smart crop picked.
+            refine: true,
+            subjectBox: chosen?.kind === 'shape' ? chosen.box : undefined,
           })
         : null,
-    [picked, w, h, tolerance, minPieceRatio, lines, region, manualCrop, autoContext, knownSubject, camera],
+    [picked, w, h, tolerance, minPieceRatio, lines, region, manualCrop, autoContext, knownSubject, camera, chosen],
   );
   const autoBox = smart ? smart.box : (fg?.subject ?? fullImage);
   /** The crop box shown to the user (a graph window can reach past the picture when zoomed in; see graphWindow). */
@@ -256,7 +244,7 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
 
   // A graph window reaching past the plot (zoomed in): only the plot counts, so the pins off it stay down
   // instead of showing the graphing tool's buttons or side panel.
-  const plotOnly = graph?.window && !inside(graph.window, graph.axes.plot) ? graph.axes.plot : null;
+  const plotOnly = graph?.window && !rectInside(graph.window, graph.axes.plot) ? graph.axes.plot : null;
   const ink = useMemo(() => {
     if (!picked || !fg || !pinMask) return null;
     let out: Float32Array;
@@ -289,11 +277,15 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   // curve would fill the board for a moment. The last graph window's pins are held instead, so the curve keeps its
   // size on the board through the zoom.
   const [heldGraph, setHeldGraph] = useState<Pattern | null>(null);
-  let shown = frameResult;
-  if (live && graph?.window && frameResult) {
-    if (heldGraph !== frameResult) setHeldGraph(frameResult);
-  } else if (live && readingNumbers && heldGraph) shown = heldGraph;
-  else if (heldGraph && (!live || !graph || graphRange === 'whole')) setHeldGraph(null);
+  const hold = holdGraphPins(heldGraph, frameResult, {
+    live: !!live,
+    graph: !!graph,
+    windowed: !!graph?.window,
+    readingNumbers,
+    wholeCurve: graphRange === 'whole',
+  });
+  if (hold.held !== undefined) setHeldGraph(hold.held);
+  const shown = hold.shown;
   let result = shown;
   if (steadyOn && shown) {
     if (steady.from !== shown) {
@@ -343,27 +335,4 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     cleanedUri,
     resetGraph,
   };
-}
-
-const inside = (a: Rect, b: Rect) => a.x >= b.x && a.y >= b.y && a.x + a.width <= b.x + b.width && a.y + a.height <= b.y + b.height;
-
-/** `ink` with everything outside `r` cleared (a copy). */
-function onlyInside(ink: Float32Array, width: number, height: number, r: Rect): Float32Array {
-  const out = new Float32Array(ink.length);
-  const x0 = Math.max(0, Math.floor(r.x));
-  const y0 = Math.max(0, Math.floor(r.y));
-  const x1 = Math.min(width, Math.ceil(r.x + r.width));
-  const y1 = Math.min(height, Math.ceil(r.y + r.height));
-  for (let y = y0; y < y1; y++) out.set(ink.subarray(y * width + x0, y * width + x1), y * width + x0);
-  return out;
-}
-
-/** Whether `now` is another zoom level than `before`: its grid spacing changed by more than 1%, or its step. */
-function zoomedFrom(before: GraphScale, now: GraphScale): boolean {
-  return (
-    Math.abs(now.majorX / before.majorX - 1) > 0.01 ||
-    Math.abs(now.majorY / before.majorY - 1) > 0.01 ||
-    now.unitsPerMajorX !== before.unitsPerMajorX ||
-    now.unitsPerMajorY !== before.unitsPerMajorY
-  );
 }

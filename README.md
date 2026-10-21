@@ -26,6 +26,7 @@ boards. It runs fully offline, with no accounts and no cloud.
 | Tap to focus (shapes, cards, one of several graphs, one curve, one cut-out subject) | ✅ Unit-tested and checked in Chrome |
 | **Live camera** on the website (phones and laptops) | ✅ Unit-tested, and checked in Chrome with a simulated phone camera (graphs on paper, a shape on a table, hand shake, denied permission). ⚠️ Not yet tried on a real phone |
 | Graph Range (±2 / ±5 / ±10 units around the curve's key point) | ✅ Web, checked on 27 real Desmos screenshots. ⚠️ Needs `tesseract.js` installed to read axis numbers; phones count one grid square as one unit |
+| Background removal refined GrabCut-style (shapes and objects, screen share and camera): background patterns away from the edge, speckle, pale subjects, other objects | ✅ Unit-tested (min cut checked against brute force; scenes compared with the true outline) and checked in Chrome with simulated camera clips |
 | Camera lock by distinctive points (turning, tilting, quick moves, look-alike items), template matching as the fallback | ✅ Unit-tested on a virtual camera (60° turn, 30° tilt, 2.2x zoom, a jump of a third of the frame: corners within ~2 px) and checked in Chrome with a simulated phone camera that turns ±31°. ⚠️ Not yet tried on a real phone |
 | Graph zoom: the curve keeps its size on the pins while you zoom (followed frame by frame through Desmos' 1-2-5 grid steps) | ✅ Unit-tested, and checked on a real Desmos zoom (10x in, steps 2 → 1 → 0.5 → 0.2: scale within 0.1%, window always 10 units) |
 | Graph panning (arrows under Graph Range), and the graph in words ("Lowest point at (0, −3). Pins show x from −5 to 5…") | ✅ Unit-tested and checked in Chrome |
@@ -54,6 +55,7 @@ src/
     __tests__/support  Simulated board for the automated tests only (MockFirmware); not in the app
   imaging/             Pixel conversion (pure, unit tested), PNG decoding, image loading (.web.ts = canvas)
     foreground         Background model, subject mask, axis/grid removal
+    refineMask         GrabCut-style refinement of a filled subject's mask; maxflow.ts = the min cut
     features           Distinctive points (ORB: FAST corners, rotated BRIEF), matching
     featureTracker     Camera lock by points: RANSAC similarity + homography
     itemTracker        Camera lock: points first, template (tracker.ts) as the fallback
@@ -63,10 +65,14 @@ src/
     graphSummary       The graph in words (screen readers)
     equation           Typed equations: a safe parser, drawn as a plot of known scale
     pinSampling        Thin-line thickening, mask → pins, the preview
-    geometry / masks   Rectangles, connected pieces, growing masks
+    geometry / masks   Rectangles, points, hulls, overlap; connected pieces, growing masks; stats.ts = median
+    imageInput.web     Live screen share and camera capture; cameraDevice.web = opening and focusing the camera,
+                       imageDrop.web = drag and drop / paste
   storage/             Saved patterns (AsyncStorage, local only), export/import files (patternFile*.ts)
-  state/               React providers and hooks (useImageConversion = the Image tab's pipeline)
-  ui/                  Theme, components, AppTabs (native tabs) / AppTabs.web (sidebar), layout breakpoints
+  state/               React providers and hooks (useImageConversion = the Image tab's pipeline; its frame-to-frame
+                       decisions are plain functions in conversionLogic.ts; useConversionSettings = the settings)
+  ui/                  Theme, components, AppTabs (native tabs) / AppTabs.web (sidebar), layout breakpoints;
+                       the Image tab's cards (ImageSourcePicker, ConversionSettings, ImageResult, GraphRangeControl)
 ```
 
 The app only connects to real boards over Bluetooth. The automated tests use a
@@ -301,6 +307,20 @@ The simulator cannot test the following:
      the slider sets it by hand; **Auto** returns to automatic. The slider is
      hidden when tolerance doesn't apply (graph curves taken by their own
      colour, Smart Cut-Out).
+     **Refinement** (shapes and objects, screen share and camera alike;
+     `refineMask.ts`, GrabCut-style after Rother et al. 2004): the first
+     mask judges each pixel alone against the edge colours, which leaves
+     background patches whose colour isn't on the edge (a pattern, a
+     shadow, a second desk colour), camera speckle, and bites out of pale
+     subjects. So, on a ~160 px copy: everything well outside the box the
+     smart crop picked is sure background; how often each colour is seen
+     as background vs. subject is counted (by count, so a cloth pattern
+     touching the object is still cloth); and all pixels are decided
+     together by a minimum cut (`maxflow.ts`, Boykov–Kolmogorov), where
+     neighbours pay to be split except across a real edge. Twice, then the
+     outline is redrawn at full size from its colours. Graphs and thin
+     line drawings skip it (the cut would thin a 1–2 px line); a result
+     wildly different from the first mask is discarded. A few ms per frame.
   3. **Axes & grid**: long, thin, isolated straight lines are found. If a
      horizontal and a vertical one cross and something else remains (a curve,
      bars), the image is treated as a graph: the lines are removed (only

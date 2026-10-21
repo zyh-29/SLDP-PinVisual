@@ -122,14 +122,19 @@ export function flatness(rgb: ArrayLike<number>, width: number, height: number, 
   const y0 = Math.max(0, Math.floor(region.y));
   const x1 = Math.min(width - 1, Math.ceil(region.x + region.width));
   const y1 = Math.min(height - 1, Math.ceil(region.y + region.height));
+  const down = width * 3;
   for (let y = y0; y < y1; y += 2)
     for (let x = x0; x < x1; x += 2) {
       const p = (y * width + x) * 3;
-      const r = p + 3;
-      const d = p + width * 3;
-      let max = 0;
-      for (let c = 0; c < 3; c++) max = Math.max(max, Math.abs(rgb[p + c] - rgb[r + c]), Math.abs(rgb[p + c] - rgb[d + c]));
-      if (max <= 3) flat++;
+      // Flat unless some channel differs by more than 3 from the right or lower neighbour (stops at the first).
+      let isFlat = true;
+      for (let c = 0; c < 3 && isFlat; c++) {
+        const v = rgb[p + c];
+        const a = v - rgb[p + 3 + c];
+        const b = v - rgb[p + down + c];
+        if (a > 3 || a < -3 || b > 3 || b < -3) isFlat = false;
+      }
+      if (isFlat) flat++;
       total++;
     }
   return total ? flat / total : 0;

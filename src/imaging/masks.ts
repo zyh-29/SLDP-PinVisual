@@ -11,7 +11,10 @@ export interface Component {
 export function labelComponents(mask: Uint8Array, width: number, height: number): { labels: Int32Array; components: Component[] } {
   const labels = new Int32Array(width * height);
   const components: Component[] = [];
-  const stack: number[] = [];
+  // Each pixel is pushed at most once, so a stack the size of the image never overflows (a typed array is much
+  // faster than a growing JS array here; this runs many times per live frame).
+  const stack = new Int32Array(width * height);
+  let top = 0;
   for (let start = 0; start < mask.length; start++) {
     if (!mask[start] || labels[start]) continue;
     const label = components.length + 1;
@@ -21,9 +24,9 @@ export function labelComponents(mask: Uint8Array, width: number, height: number)
       x1 = -1,
       y1 = -1;
     labels[start] = label;
-    stack.push(start);
-    while (stack.length) {
-      const p = stack.pop()!;
+    stack[top++] = start;
+    while (top) {
+      const p = stack[--top];
       const x = p % width;
       const y = (p - x) / width;
       area++;
@@ -40,7 +43,7 @@ export function labelComponents(mask: Uint8Array, width: number, height: number)
           const q = ny * width + nx;
           if (mask[q] && !labels[q]) {
             labels[q] = label;
-            stack.push(q);
+            stack[top++] = q;
           }
         }
       }

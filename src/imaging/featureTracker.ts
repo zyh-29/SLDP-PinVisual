@@ -16,7 +16,7 @@
  * turned a lot, so the descriptions keep matching.
  */
 import { detectFeatures, type GrayImage, type Keypoint, matchFeatures } from './features';
-import type { Point, Rect } from './geometry';
+import { cross, type Point, polygonArea, type Rect } from './geometry';
 
 /** Maps a point of the lock frame (gray pixels) to the current frame (gray pixels). */
 export interface Motion {
@@ -190,7 +190,6 @@ export function fitHomography(ps: Point[], qs: Point[]): Homography | null {
   return Float64Array.from(H.map((v) => v / H[8]));
 }
 
-const cross = (o: Point, a: Point, b: Point) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
 function convex(q: Point[]): boolean {
   let sign = 0;
   for (let i = 0; i < 4; i++) {
@@ -201,7 +200,6 @@ function convex(q: Point[]): boolean {
   }
   return true;
 }
-const area = (q: Point[]) => Math.abs(q.reduce((s, p, i) => s + p.x * q[(i + 1) % 4].y - q[(i + 1) % 4].x * p.y, 0)) / 2;
 
 /**
  * The movement from matched points `ps` (lock frame) to `qs` (now), robust to wrong matches. `tol`: how far
@@ -250,7 +248,7 @@ export function estimateMotion(ps: Point[], qs: Point[], tol: number, corners: P
     const H = fitHomography(inliers.map((i) => ps[i]), inliers.map((i) => qs[i]));
     if (H) {
       const q = corners.map((c) => applyH(H, c));
-      const ratio = area(q) / Math.max(1e-9, area(corners) * simScale * simScale);
+      const ratio = polygonArea(q) / Math.max(1e-9, polygonArea(corners) * simScale * simScale);
       const finite = q.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
       if (finite && convex(q) && ratio > 0.5 && ratio < 2) {
         const hIn = agree((p) => applyH(H, p));
@@ -348,7 +346,7 @@ export class FeatureTracker {
     const used = inliers.map((i) => est.points[i]);
     const ux = used.map((p) => p.x);
     const uy = used.map((p) => p.y);
-    const itemArea = area(this.corners);
+    const itemArea = polygonArea(this.corners);
     const spread = Math.min(1, ((Math.max(...ux) - Math.min(...ux)) * (Math.max(...uy) - Math.min(...uy))) / Math.max(1, itemArea));
     const k = this.k;
     const quad = this.corners.map((c) => {

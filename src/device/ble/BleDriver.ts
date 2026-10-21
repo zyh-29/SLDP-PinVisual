@@ -74,7 +74,11 @@ async function waitForPoweredOn(m: BleManager, timeoutMs = 4000): Promise<string
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       sub.remove();
-      m.state().then((s) => resolve(describe(s)));
+      // If even reading the state fails, say so rather than leaving the caller waiting forever.
+      m.state().then(
+        (s) => resolve(describe(s)),
+        (e: unknown) => resolve(`Bluetooth state could not be read (${e instanceof Error ? e.message : String(e)}).`),
+      );
     }, timeoutMs);
     const sub = m.onStateChange((s) => {
       if (s === 'PoweredOn' || s === 'PoweredOff' || s === 'Unauthorized' || s === 'Unsupported') {

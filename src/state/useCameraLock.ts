@@ -12,17 +12,11 @@
  */
 import { useEffect, useState } from 'react';
 
-import type { Point, Rect } from '@/imaging/geometry';
+import { iou, type Point, type Rect } from '@/imaging/geometry';
 import type { LiveCapture } from '@/imaging/imageInput';
 import type { Focus } from '@/imaging/smartCrop';
 import { ItemTracker, type TrackFrame, trackFrame } from '@/imaging/itemTracker';
 import type { PickedImage } from './useImageConversion';
-
-const iou = (a: Rect, b: Rect) => {
-  const w = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
-  const h = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
-  return (w * h) / (a.width * a.height + b.width * b.height - w * h);
-};
 
 /** Refocus the lens when the item moved this much (share of the frame), or at least this often. */
 const REFOCUS_MOVE = 0.08;

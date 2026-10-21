@@ -20,6 +20,7 @@
 import { dilate, labelComponents } from './masks';
 import type { Rect } from './geometry';
 import type { GraphScale } from './graphScale';
+import { median } from './stats';
 
 /** One gridline (same shape as the smart crop's), merged along its row or column. */
 export interface AxisLine {
@@ -42,10 +43,6 @@ export interface GraphAxes {
   majorY: number | null;
 }
 
-const median = (xs: number[]) => {
-  const s = [...xs].sort((a, b) => a - b);
-  return s.length ? s[Math.floor(s.length / 2)] : NaN;
-};
 
 /**
  * The repeat distance of evenly spaced positions (gridlines), tolerating missing and extra lines: the smallest
@@ -95,13 +92,32 @@ function splitAxis(lines: AxisLine[], extent: number): { axis: AxisLine | null; 
  */
 function majorSpacing(lines: AxisLine[], axis: AxisLine | null): number | null {
   const all = axis ? [...lines, axis] : lines;
-  const d = gridStep(all.map((l) => l.at));
-  if (!d) return null;
+  const d0 = gridStep(all.map((l) => l.at));
+  if (!d0) return null;
   const at0 = axis?.at ?? lines[0]?.at ?? 0;
   // Each line's place in the lattice (lines off it are strays: labels, the curve, UI).
-  const placed = lines
-    .map((l) => ({ l, i: Math.round((l.at - at0) / d) }))
-    .filter(({ l, i }) => Math.abs(l.at - at0 - i * d) <= Math.max(1.5, d * 0.25));
+  const place = (step: number) =>
+    lines.map((l) => ({ l, i: Math.round((l.at - at0) / step) })).filter(({ l, i }) => Math.abs(l.at - at0 - i * step) <= Math.max(1.5, step * 0.25));
+  /** The spacing fitted over the lines' positions (least squares on their lattice places), or `step` if it can't be. */
+  const fit = (placed: { l: AxisLine; i: number }[], step: number) => {
+    const pts = placed.map(({ l, i }) => ({ i, at: l.at }));
+    if (axis) pts.push({ i: 0, at: axis.at });
+    if (pts.length < 3) return step;
+    const mi = pts.reduce((t, p) => t + p.i, 0) / pts.length;
+    const ma = pts.reduce((t, p) => t + p.at, 0) / pts.length;
+    let num = 0;
+    let den = 0;
+    for (const p of pts) {
+      num += (p.i - mi) * (p.at - ma);
+      den += (p.i - mi) ** 2;
+    }
+    return den > 0 && Math.abs(num / den / step - 1) < 0.1 ? num / den : step;
+  };
+  // The gaps are whole pixels (7, 7, 8, 7, 7 for a 7.2 px grid), so the first spacing is a little off and the error
+  // grows with each line from the origin: far lines would get the wrong place, and the rhythm of darker lines
+  // would look broken. So: place the lines near the origin, fit the exact spacing to them, then place them all.
+  const d = fit(place(d0).filter(({ i }) => Math.abs(i) <= 6), d0);
+  const placed = place(d);
   const mean = (xs: { l: AxisLine }[]) => xs.reduce((t, x) => t + x.l.depth, 0) / xs.length;
   let best = { k: 1, ratio: 1 };
   for (const k of [2, 4, 5, 10]) {
@@ -111,26 +127,21 @@ function majorSpacing(lines: AxisLine[], axis: AxisLine | null): number | null {
       const rest = placed.filter(({ i }) => (((i - phase) % k) + k) % k !== 0);
       if (sel.length < (axis ? 1 : 2) || rest.length < 2) continue;
       const ratio = mean(sel) / Math.max(1, mean(rest));
+      // A rhythm resting on a single line (the axis plus one more on screen) must be unmistakable: darker than
+      // every other line by a margin. Otherwise shrinking alone, which makes alternate lines look darker, can make
+      // one line "the numbered one" and the scale 5 times too big.
+      if (sel.length < 2 && sel[0].l.depth < 1.25 * Math.max(...rest.map((x) => x.l.depth))) continue;
+      // And the darker lines must be darker consistently, not on average: one line that happens to look darker
+      // lifts a mean over two or three (a grid whose lines are all one shade, alternate ones darkened by shrinking).
+      const typical = median(rest.map((x) => x.l.depth));
+      if (sel.filter((x) => x.l.depth > typical * 1.1).length < 0.75 * sel.length) continue;
       // A longer period must be clearly better (every 10th line is also every 5th).
       if (ratio > best.ratio * (best.k === 1 ? 1 : 1.12)) best = { k, ratio };
     }
   }
-  // The spacing, fitted over every line's position (least squares on its lattice place): far more precise than
-  // one gap, and multiplying by the period would multiply any error.
-  const pts = placed.map(({ l, i }) => ({ i, at: l.at }));
-  if (axis) pts.push({ i: 0, at: axis.at });
-  let fitted = d;
-  if (pts.length >= 3) {
-    const mi = pts.reduce((t, p) => t + p.i, 0) / pts.length;
-    const ma = pts.reduce((t, p) => t + p.at, 0) / pts.length;
-    let num = 0;
-    let den = 0;
-    for (const p of pts) {
-      num += (p.i - mi) * (p.at - ma);
-      den += (p.i - mi) ** 2;
-    }
-    if (den > 0 && Math.abs(num / den / d - 1) < 0.1) fitted = num / den;
-  }
+  // The spacing, fitted over every line's position: far more precise than one gap, and multiplying by the period
+  // would multiply any error.
+  const fitted = fit(placed, d);
   return best.ratio >= 1.3 ? best.k * fitted : fitted;
 }
 

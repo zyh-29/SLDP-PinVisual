@@ -215,8 +215,10 @@ export function renderEquation(f: Fn): { raster: RasterImage; scale: GraphScale 
     data[i + 1] = c[1];
     data[i + 2] = c[2];
   };
+  // A gridline is the pixel column (row) nearest to each multiple of `every` from the origin: exactly one pixel
+  // wide, never skipped (measuring from the pixel's centre put whole-unit lines exactly half a pixel away).
   const on = (pos: number, origin: number, every: number) => {
-    const k = (pos + 0.5 - origin) / every;
+    const k = (pos - origin) / every;
     return Math.abs(k - Math.round(k)) * every < 0.5;
   };
   for (let y = 0; y < H; y++)

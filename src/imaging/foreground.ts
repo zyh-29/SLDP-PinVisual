@@ -24,7 +24,9 @@
  */
 import type { RasterImage } from './convert';
 import { bounds, fullRect, type Rect, type Rgb } from './geometry';
-import { type Component, labelComponents } from './masks';
+import { type Component, dilate, labelComponents } from './masks';
+import { refineSubject } from './refineMask';
+import { median } from './stats';
 
 /** A long thin straight line (axis or gridline). */
 export interface StraightLine {
@@ -60,6 +62,8 @@ export interface Foreground {
   strokeWidth: number;
   /** The colour tolerance that was used (chosen automatically when the option was 'auto'). */
   tolerance: number;
+  /** The GrabCut-style refinement was used (see ForegroundOptions.refine). */
+  refined: boolean;
 }
 
 export interface ForegroundOptions {
@@ -88,6 +92,17 @@ export interface ForegroundOptions {
    * close to one of them is background too (see edgePalette).
    */
   camera?: boolean;
+  /**
+   * Refine a filled subject's mask GrabCut-style (refineMask.ts): colour models of the subject and of the whole
+   * background instead of the edge colours alone, and neighbours decided together. Skipped for graphs and thin
+   * line drawings, which keep the pixel-by-pixel mask.
+   */
+  refine?: boolean;
+  /**
+   * Where the subject is, when already known (the smart crop's pick): the refinement treats everything well
+   * outside it as background, so other objects and leftovers in the picture go too.
+   */
+  subjectBox?: Rect;
 }
 
 export const DEFAULT_TOLERANCE = 40;
@@ -119,34 +134,6 @@ export function toRgb(img: RasterImage): Uint8ClampedArray {
   return out;
 }
 
-function median(values: number[]): number {
-  if (!values.length) return 255;
-  // Quickselect: the middle value without sorting everything (this runs on every live camera frame).
-  const a = Float64Array.from(values);
-  const k = a.length >> 1;
-  let lo = 0;
-  let hi = a.length - 1;
-  while (lo < hi) {
-    const pivot = a[(lo + hi) >> 1];
-    let i = lo;
-    let j = hi;
-    while (i <= j) {
-      while (a[i] < pivot) i++;
-      while (a[j] > pivot) j--;
-      if (i <= j) {
-        const t = a[i];
-        a[i] = a[j];
-        a[j] = t;
-        i++;
-        j--;
-      }
-    }
-    if (k <= j) hi = j;
-    else if (k >= i) lo = i;
-    else break;
-  }
-  return a[k];
-}
 
 const dist = (rgb: ArrayLike<number>, i: number, c: Rgb) => Math.hypot(rgb[i] - c.r, rgb[i + 1] - c.g, rgb[i + 2] - c.b);
 
@@ -179,7 +166,8 @@ export function estimateBackground(
       idx.push(i);
     }
   }
-  const color = { r: median(rs), g: median(gs), b: median(bs) };
+  // An empty ring (a region too small to have one) counts as white paper.
+  const color = { r: median(rs, 255), g: median(gs, 255), b: median(bs, 255) };
   let noise = 0;
   for (const i of idx) noise += dist(rgb, i, color);
   return { color, noise: idx.length ? noise / idx.length : 0 };
@@ -401,20 +389,25 @@ export function edgePalette(rgb: ArrayLike<number>, width: number, height: numbe
     const p = ring[i];
     px.push({ r: rgb[p * 3], g: rgb[p * 3 + 1], b: rgb[p * 3 + 2] });
   }
-  const d = (a: Rgb, b: Rgb) => Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
+  // Squared distances throughout (only comparisons are needed), with plain loops: this runs on every camera frame.
+  const d2 = (a: Rgb, b: Rgb) => (a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2;
   // Start from the median colour, then each next centre is the sample farthest from the centres so far.
   const centres: Rgb[] = [{ r: median(px.map((c) => c.r)), g: median(px.map((c) => c.g)), b: median(px.map((c) => c.b)) }];
   while (centres.length < 3) {
     let far = px[0];
     let fd = -1;
     for (const c of px) {
-      const m = Math.min(...centres.map((k) => d(c, k)));
+      let m = Infinity;
+      for (const k of centres) {
+        const v = d2(c, k);
+        if (v < m) m = v;
+      }
       if (m > fd) {
         fd = m;
         far = c;
       }
     }
-    if (fd < 30) break;
+    if (fd < 30 * 30) break;
     centres.push({ ...far });
   }
   let counts: number[] = [];
@@ -422,16 +415,24 @@ export function edgePalette(rgb: ArrayLike<number>, width: number, height: numbe
     const sums = centres.map(() => ({ r: 0, g: 0, b: 0, n: 0 }));
     for (const c of px) {
       let bi = 0;
-      for (let k = 1; k < centres.length; k++) if (d(c, centres[k]) < d(c, centres[bi])) bi = k;
-      sums[bi].r += c.r;
-      sums[bi].g += c.g;
-      sums[bi].b += c.b;
-      sums[bi].n++;
+      let bd = d2(c, centres[0]);
+      for (let k = 1; k < centres.length; k++) {
+        const v = d2(c, centres[k]);
+        if (v < bd) {
+          bd = v;
+          bi = k;
+        }
+      }
+      const sm = sums[bi];
+      sm.r += c.r;
+      sm.g += c.g;
+      sm.b += c.b;
+      sm.n++;
     }
-    sums.forEach((s, k) => {
-      if (s.n) centres[k] = { r: s.r / s.n, g: s.g / s.n, b: s.b / s.n };
+    sums.forEach((sm, k) => {
+      if (sm.n) centres[k] = { r: sm.r / sm.n, g: sm.g / sm.n, b: sm.b / sm.n };
     });
-    counts = sums.map((s) => s.n);
+    counts = sums.map((sm) => sm.n);
   }
   return centres.filter((_, k) => counts[k] >= px.length * 0.12);
 }
@@ -442,14 +443,46 @@ export function edgePalette(rgb: ArrayLike<number>, width: number, height: numbe
  * swallow a black object.
  */
 export function paletteDistance(r: number, g: number, b: number, palette: Rgb[]): number {
-  let best = Infinity;
-  for (const c of palette) {
-    const cc = c.r * c.r + c.g * c.g + c.b * c.b || 1;
-    const lum = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
-    const s = lum > 100 ? Math.min(1.25, Math.max(0.6, (r * c.r + g * c.g + b * c.b) / cc)) : 1;
-    best = Math.min(best, Math.hypot(r - s * c.r, g - s * c.g, b - s * c.b));
-  }
-  return best;
+  return Math.sqrt(paletteDistance2(palette)(r, g, b));
+}
+
+/**
+ * paletteDistance, squared, as a function made once per palette: each colour's length and brightness are worked
+ * out up front, and no square root is taken per colour. This runs on every pixel of every camera frame.
+ */
+export function paletteDistance2(palette: Rgb[]): (r: number, g: number, b: number) => number {
+  const n = palette.length;
+  const pr = new Float64Array(n);
+  const pg = new Float64Array(n);
+  const pb = new Float64Array(n);
+  /** 1 / |colour|^2. */
+  const inv = new Float64Array(n);
+  /** Shading allowed (bright background colours only). */
+  const shade = new Uint8Array(n);
+  palette.forEach((c, k) => {
+    pr[k] = c.r;
+    pg[k] = c.g;
+    pb[k] = c.b;
+    inv[k] = 1 / (c.r * c.r + c.g * c.g + c.b * c.b || 1);
+    shade[k] = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b > 100 ? 1 : 0;
+  });
+  return (r, g, b) => {
+    let best = Infinity;
+    for (let k = 0; k < n; k++) {
+      let s = 1;
+      if (shade[k]) {
+        s = (r * pr[k] + g * pg[k] + b * pb[k]) * inv[k];
+        if (s < 0.6) s = 0.6;
+        else if (s > 1.25) s = 1.25;
+      }
+      const dr = r - s * pr[k];
+      const dg = g - s * pg[k];
+      const db = b - s * pb[k];
+      const d = dr * dr + dg * dg + db * db;
+      if (d < best) best = d;
+    }
+    return best;
+  };
 }
 
 /** Mean distance of the edge ring's pixels from the background (the plane or the nearest palette colour). */
@@ -457,7 +490,8 @@ function paletteNoise(rgb: ArrayLike<number>, width: number, height: number, reg
   const ring = ringPixels(width, height, region);
   if (!ring.length) return model.noise;
   let sum = 0;
-  for (const p of ring) sum += Math.min(residual(rgb, p, width, model.plane), paletteDistance(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2], palette));
+  const pd2 = paletteDistance2(palette);
+  for (const p of ring) sum += Math.min(residual(rgb, p, width, model.plane), Math.sqrt(pd2(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2])));
   return sum / ring.length;
 }
 
@@ -581,7 +615,10 @@ export function autoTolerance(distances: Float32Array, edgeNoise: number): numbe
   const floor = Math.max(AUTO_MIN, 2.5 * edgeNoise + 8);
   const BINS = 442; // one per unit of colour distance, 0..441
   const hist = new Float64Array(BINS);
-  for (let i = 0; i < distances.length; i++) hist[Math.min(BINS - 1, Math.round(distances[i]))]++;
+  for (let i = 0; i < distances.length; i++) {
+    const t = (distances[i] + 0.5) | 0;
+    hist[t < BINS ? t : BINS - 1]++;
+  }
   let peak = 0;
   for (let t = 1; t < BINS; t++) if (hist[t] > hist[peak]) peak = t;
   let end = BINS - 1;
@@ -602,11 +639,26 @@ export function autoTolerance(distances: Float32Array, edgeNoise: number): numbe
   return Math.round(Math.min(AUTO_MAX, Math.max(floor, cut + 1)));
 }
 
-/** `rgb` comes from `toRgb` (3 bytes per pixel). */
-export function findForeground(rgb: ArrayLike<number>, width: number, height: number, o: ForegroundOptions): Foreground {
-  const region = o.region ?? fullRect(width, height);
-  const { x0, y0, x1, y1 } = bounds(region, width, height);
+/** What findForeground learns about the background, and every pixel's distance from it (row by row in `region`). */
+interface BackgroundDistances {
+  background: Rgb;
+  borderNoise: number;
+  distances: Float32Array;
+}
 
+/**
+ * The same frame is often analysed twice with the same settings (the smart crop picks the subject on the whole
+ * picture, then the pins are made from the same picture): the background and the distances are kept per picture
+ * (the pixel array; a new frame is a new array, and old ones are let go) and settings.
+ */
+const distanceCache = new WeakMap<object, Map<string, BackgroundDistances>>();
+
+function backgroundDistances(rgb: ArrayLike<number>, width: number, height: number, region: Rect, o: ForegroundOptions): BackgroundDistances {
+  const key = JSON.stringify([width, height, region, o.region ? 1 : 0, o.backgroundRegions ?? null, !!o.camera, !!o.subjectMask]);
+  const holder = typeof rgb === 'object' ? (rgb as object) : null;
+  const cached = holder ? distanceCache.get(holder)?.get(key) : undefined;
+  if (cached) return cached;
+  const { x0, y0, x1, y1 } = bounds(region, width, height);
   // Background. Candidates in order of preference: the region's own edge (a crop usually frames the
   // background), any hinted areas, then the whole image's edge. The first one that is not clearly messier
   // than the best wins (a tight crop whose edge runs through the subject loses).
@@ -623,17 +675,48 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
   const P = model.plane;
 
   // Distance of every pixel from the background model, then the cut-off (fixed, or chosen from these distances).
+  // Squared distances, one square root per pixel: this loop runs over every pixel of every live frame.
   const distances = new Float32Array((x1 - x0) * (y1 - y0));
+  const pd2 = palette.length ? paletteDistance2(palette) : null;
   if (!o.subjectMask)
-    for (let y = y0, i = 0; y < y1; y++)
-      for (let x = x0; x < x1; x++, i++) {
-        const p = y * width + x;
-        const dr = rgb[p * 3] - (P.r[0] + P.r[1] * x + P.r[2] * y);
-        const dg = rgb[p * 3 + 1] - (P.g[0] + P.g[1] * x + P.g[2] * y);
-        const db = rgb[p * 3 + 2] - (P.b[0] + P.b[1] * x + P.b[2] * y);
-        const d = Math.hypot(dr, dg, db);
-        distances[i] = palette.length ? Math.min(d, paletteDistance(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2], palette)) : d;
+    for (let y = y0, i = 0; y < y1; y++) {
+      // The background plane along this row: value at x0, then a fixed step per pixel.
+      let er = P.r[0] + P.r[1] * x0 + P.r[2] * y;
+      let eg = P.g[0] + P.g[1] * x0 + P.g[2] * y;
+      let eb = P.b[0] + P.b[1] * x0 + P.b[2] * y;
+      for (let x = x0, q = (y * width + x0) * 3; x < x1; x++, i++, q += 3) {
+        const r = rgb[q];
+        const g = rgb[q + 1];
+        const b = rgb[q + 2];
+        const dr = r - er;
+        const dg = g - eg;
+        const db = b - eb;
+        let d = dr * dr + dg * dg + db * db;
+        if (pd2) {
+          const dp = pd2(r, g, b);
+          if (dp < d) d = dp;
+        }
+        distances[i] = Math.sqrt(d);
+        er += P.r[1];
+        eg += P.g[1];
+        eb += P.b[1];
       }
+    }
+  const out = { background, borderNoise, distances };
+  if (holder) {
+    let m = distanceCache.get(holder);
+    if (!m) distanceCache.set(holder, (m = new Map()));
+    m.set(key, out);
+  }
+  return out;
+}
+
+/** `rgb` comes from `toRgb` (3 bytes per pixel). */
+export function findForeground(rgb: ArrayLike<number>, width: number, height: number, o: ForegroundOptions): Foreground {
+  const region = o.region ?? fullRect(width, height);
+  const { x0, y0, x1, y1 } = bounds(region, width, height);
+
+  const { background, borderNoise, distances } = backgroundDistances(rgb, width, height, region, o);
   const tolerance = o.tolerance === 'auto' ? autoTolerance(distances, borderNoise) : o.tolerance;
   const mask = new Uint8Array(width * height);
   for (let y = y0, i = 0; y < y1; y++)
@@ -657,12 +740,63 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
   if (linesRemoved) eraseLines(mask, rgb, width, height, region, lines);
 
   // Clutter: tiny specks always go; otherwise drop pieces much smaller than the main one.
+  let { subject, removed } = keepMainPieces(mask, rgb, width, height, o.minPieceRatio);
+  // A filled subject (not a graph, not a line drawing): the GrabCut-style second opinion, then clutter again.
+  let refined = false;
+  if (o.refine && !o.subjectMask && !linesRemoved && !graphLikely && subject && filled(mask, width, height)) {
+    const better = refineSubject(rgb, width, height, mask, region, o.subjectBox);
+    if (better) {
+      mask.set(better);
+      ({ subject, removed } = keepMainPieces(mask, rgb, width, height, o.minPieceRatio));
+      refined = true;
+    }
+  }
+  return {
+    width,
+    height,
+    region,
+    background,
+    borderNoise,
+    mask,
+    subject,
+    removedPieces: removed,
+    refined,
+    lines,
+    graphLikely,
+    linesRemoved,
+    strokeWidth: strokeWidth(mask, width, height),
+    tolerance,
+  };
+}
+
+/** Below this typical stroke thickness (pixels, after closing small gaps) the subject is a line drawing: no refinement. */
+const REFINE_MIN_STROKE = 5;
+
+/**
+ * Whether the mask is a filled subject rather than a line drawing: its stroke thickness once small gaps are
+ * closed (grown by 2 pixels, then shrunk back). A speckled filled shape (camera noise on a pale subject) closes
+ * into a solid area; a thin line stays thin.
+ */
+function filled(mask: Uint8Array, width: number, height: number): boolean {
+  const grown = dilate(mask, width, height, 2, 2);
+  const inverse = new Uint8Array(grown.length);
+  for (let i = 0; i < grown.length; i++) inverse[i] = grown[i] ? 0 : 1;
+  const shrunkInverse = dilate(inverse, width, height, 2, 2);
+  const closed = new Uint8Array(grown.length);
+  for (let i = 0; i < closed.length; i++) closed[i] = shrunkInverse[i] ? 0 : 1;
+  return strokeWidth(closed, width, height) >= REFINE_MIN_STROKE;
+}
+
+/**
+ * Drops clutter from `mask` (in place): tiny specks, pieces much smaller than the main one, and grey pieces next
+ * to a coloured subject. Returns the box around what is left and how many pieces were dropped.
+ */
+function keepMainPieces(mask: Uint8Array, rgb: ArrayLike<number>, width: number, height: number, minPieceRatio: number) {
   const { labels, components } = labelComponents(mask, width, height);
   const largest = components.reduce((m, c) => Math.max(m, c.area), 0);
-  const minArea = Math.max(2, largest * o.minPieceRatio);
+  const minArea = Math.max(2, largest * minPieceRatio);
   const keep = components.map((c) => c.area >= minArea);
-  if (o.minPieceRatio > 0 && components.length > 1) dropNeutralClutter(rgb, labels, components, keep);
-
+  if (minPieceRatio > 0 && components.length > 1) dropNeutralClutter(rgb, labels, components, keep);
   let sx0 = width,
     sy0 = height,
     sx1 = -1,
@@ -681,21 +815,8 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
     if (y < sy0) sy0 = y;
     if (y > sy1) sy1 = y;
   }
-  return {
-    width,
-    height,
-    region,
-    background,
-    borderNoise,
-    mask,
-    subject: sx1 < 0 ? null : { x: sx0, y: sy0, width: sx1 - sx0 + 1, height: sy1 - sy0 + 1 },
-    removedPieces: keep.filter((k) => !k).length,
-    lines,
-    graphLikely,
-    linesRemoved,
-    strokeWidth: strokeWidth(mask, width, height),
-    tolerance,
-  };
+  const subject: Rect | null = sx1 < 0 ? null : { x: sx0, y: sy0, width: sx1 - sx0 + 1, height: sy1 - sy0 + 1 };
+  return { subject, removed: keep.filter((k) => !k).length };
 }
 
 /** max - min of the channels: 0 for grey/black/white, high for vivid colours. */

@@ -194,6 +194,43 @@ describe('key point of the curve', () => {
   });
 });
 
+describe('major gridlines: no rhythm made up from shrinking', () => {
+  it('lines of one shade that look alternately darker after shrinking are all major lines (one supporting line is not a rhythm)', () => {
+    // The columns and depths measured on a camera frame of a printed grid whose lines are all one shade.
+    const line = (at: number, depth: number) => ({ at, start: 30, end: 327, depth });
+    const cols = [[22, 5], [47, 11], [71, 28], [97, 11], [121, 5], [148, 11], [173, 5], [196, 11], [220, 5]].map(([a, d]) => line(a, d));
+    const rows = [[54, 11], [78, 5], [103, 11], [128, 5], [153, 11], [177, 82], [202, 11], [227, 5], [252, 11], [276, 11], [301, 5]].map(([a, d]) =>
+      ({ at: a, start: 0, end: 228, depth: d }),
+    );
+    const axes = readAxes({ plot: { x: 0, y: 30, width: 228, height: 297 }, rows, cols });
+    expect(axes.majorX).toBeCloseTo(24.9, 0);
+    expect(axes.majorY).toBeCloseTo(24.7, 0);
+  });
+
+  it('nor do two lines on the rhythm when only one of them looks darker', () => {
+    // Another camera frame of the same printed grid: across, every line has depth 5 but one (11), 5 lines from the axis.
+    const cols = [[369, 5], [387, 5], [406, 5], [425, 5], [444, 5], [462, 5], [481, 56], [500, 5], [519, 5], [538, 5], [557, 5], [576, 11], [595, 5]].map(
+      ([a, d]) => ({ at: a, start: 66, end: 293, depth: d }),
+    );
+    const rows = [[83, 5], [102, 5], [121, 5], [140, 5], [159, 5], [177, 28], [197, 11], [215, 5], [234, 5], [253, 5], [272, 5]].map(([a, d]) => ({
+      at: a,
+      start: 365,
+      end: 601,
+      depth: d,
+    }));
+    const axes = readAxes({ plot: { x: 365, y: 66, width: 236, height: 227 }, rows, cols });
+    expect(axes.majorX).toBeCloseTo(18.9, 0);
+    expect(axes.majorY).toBeCloseTo(18.9, 0);
+  });
+
+  it('a real numbered line next to the axis still counts, when it is clearly darker than all the others', () => {
+    const cols = [0, 1, 2, 3, 4, 5, 6].map((i) => ({ at: 100 + 20 * i, start: 0, end: 300, depth: i === 0 ? 80 : i === 5 ? 30 : 10 }));
+    const rows = [0, 1, 2, 3, 4, 5, 6].map((i) => ({ at: 50 + 20 * i, start: 0, end: 300, depth: i === 0 ? 80 : i === 5 ? 30 : 10 }));
+    const axes = readAxes({ plot: { x: 0, y: 0, width: 300, height: 300 }, rows, cols });
+    expect(axes.majorX).toBeCloseTo(100, 0);
+  });
+});
+
 describe('window', () => {
   const scale = (ppu: number) => ({ pxPerUnitX: ppu, pxPerUnitY: ppu, unitsPerMajorX: 1, unitsPerMajorY: 1, majorX: ppu, majorY: ppu, from: 'labels' as const });
   const plot: Rect = { x: 0, y: 0, width: 1000, height: 800 };
@@ -325,5 +362,20 @@ describe('finding the numbers in a label band', () => {
 
   it('an empty band has no numbers', () => {
     expect(findLabelBoxes(image(W, H, () => [255, 255, 255]).data, W, H)).toEqual([]);
+  });
+});
+
+describe('the grid guess (no readable numbers)', () => {
+  const plot = { x: 0, y: 0, width: 300, height: 300 };
+  it('across and down a rhythm apart (4x, 5x): one misread, the smaller spacing is used both ways', () => {
+    const s = scaleFromGrid({ plot, originX: 64, originY: 163, majorX: 25.95, majorY: 103.45 })!;
+    expect(s.pxPerUnitX).toBeCloseTo(25.95, 1);
+    expect(s.pxPerUnitY).toBeCloseTo(25.95, 1);
+    expect(scaleFromGrid({ plot, originX: 1, originY: 1, majorX: 122.5, majorY: 25.7 })!.pxPerUnitX).toBeCloseTo(25.7, 1);
+  });
+  it('an unevenly zoomed graph (another ratio) keeps both', () => {
+    const s = scaleFromGrid({ plot, originX: 1, originY: 1, majorX: 86.4, majorY: 125.7 })!;
+    expect(s.pxPerUnitX).toBeCloseTo(86.4, 1);
+    expect(s.pxPerUnitY).toBeCloseTo(125.7, 1);
   });
 });

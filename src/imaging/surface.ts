@@ -16,7 +16,7 @@
  *  4. Flatten: a homography (perspective map) from the flat page to the four corners; every page pixel is read
  *     from the picture by bilinear interpolation.
  */
-import type { Point, Rect } from './geometry';
+import { convexHull, type Point, polygonArea, type Rect } from './geometry';
 import { labelComponents } from './masks';
 
 export type Quad = [Point, Point, Point, Point]; // top-left, top-right, bottom-right, bottom-left
@@ -66,36 +66,6 @@ export function quadHomography(q: Quad): Homography {
     },
   };
 }
-
-const cross = (o: Point, a: Point, b: Point) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-
-/** Convex hull (Andrew's monotone chain), counter-clockwise in screen coordinates. */
-export function convexHull(points: Point[]): Point[] {
-  const p = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
-  if (p.length < 3) return p;
-  const lower: Point[] = [];
-  for (const q of p) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
-    lower.push(q);
-  }
-  const upper: Point[] = [];
-  for (let i = p.length - 1; i >= 0; i--) {
-    const q = p[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
-    upper.push(q);
-  }
-  return lower.slice(0, -1).concat(upper.slice(0, -1));
-}
-
-export const polygonArea = (pts: Point[]) => {
-  let s = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[i];
-    const b = pts[(i + 1) % pts.length];
-    s += a.x * b.y - b.x * a.y;
-  }
-  return Math.abs(s) / 2;
-};
 
 /**
  * The four hull points spanning the largest area (the hull is first thinned to at most 28 points, so this is a
@@ -439,7 +409,8 @@ export function mapRect(r: Rect, f: (p: Point) => Point, bounds?: { width: numbe
 /**
  * Follows the surface across live camera frames: found on two looks in a row before it is used, held through two
  * misses (a hand passing over), corners smoothed so the flattened page doesn't jitter, and searched for only
- * every other frame while held (the search is the costly part).
+ * every other frame while held (the search is the costly part). With nothing found for a while (an object on a
+ * table, no page in view), only every third frame: a page coming into view is still found within three frames.
  */
 export class SurfaceWatch {
   private quad: Quad | null = null;
@@ -447,11 +418,16 @@ export class SurfaceWatch {
   private seen = 0;
   private missed = 0;
   private frame = 0;
+  /** Searches in a row that found nothing. */
+  private empty = 0;
 
   update(rgb: ArrayLike<number>, width: number, height: number): Surface | null {
     this.frame++;
-    if (!(this.quad && this.seen >= 2 && this.frame % 2 === 0)) {
+    const held = this.quad && this.seen >= 2;
+    const skip = held ? this.frame % 2 === 0 : !this.quad && this.empty >= 3 && this.frame % 3 !== 0;
+    if (!skip) {
       const s = findSurface(rgb, width, height);
+      this.empty = s ? 0 : this.empty + 1;
       if (s) {
         const jump = this.quad ? Math.max(...s.quad.map((p, i) => Math.hypot(p.x - this.quad![i].x, p.y - this.quad![i].y))) : Infinity;
         const near = jump < 0.06 * Math.max(width, height);
@@ -472,5 +448,6 @@ export class SurfaceWatch {
     this.quad = null;
     this.seen = 0;
     this.missed = 0;
+    this.empty = 0;
   }
 }

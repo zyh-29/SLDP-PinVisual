@@ -12,7 +12,7 @@
  */
 import { type FeatureTrack, FeatureTracker } from './featureTracker';
 import { type GrayImage, grayImage } from './features';
-import type { Point, Rect } from './geometry';
+import { iou, type Point, type Rect } from './geometry';
 import { type SmallGray, smallGray, TargetTracker, type TrackResult } from './tracker';
 
 /** A frame prepared for both trackers. */
@@ -20,12 +20,6 @@ export interface TrackFrame {
   small: SmallGray;
   gray: GrayImage;
 }
-
-const iou = (a: Rect, b: Rect) => {
-  const w = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
-  const h = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
-  return (w * h) / (a.width * a.height + b.width * b.height - w * h);
-};
 
 export function trackFrame(rgb: ArrayLike<number>, width: number, height: number): TrackFrame {
   return { small: smallGray(rgb, width, height), gray: grayImage(rgb, width, height) };

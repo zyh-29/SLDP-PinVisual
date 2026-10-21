@@ -105,3 +105,43 @@ export function clip(r: Rect, to: Rect): Rect {
     height: Math.max(1, Math.min(r.y + r.height, to.y + to.height) - y),
   };
 }
+
+/** Cross product of (a - o) and (b - o): which side of the line o -> a the point b is on. */
+export const cross = (o: Point, a: Point, b: Point) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+/** Convex hull (Andrew's monotone chain), counter-clockwise in screen coordinates. */
+export function convexHull(points: Point[]): Point[] {
+  const p = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
+  if (p.length < 3) return p;
+  const lower: Point[] = [];
+  for (const q of p) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
+    lower.push(q);
+  }
+  const upper: Point[] = [];
+  for (let i = p.length - 1; i >= 0; i--) {
+    const q = p[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
+    upper.push(q);
+  }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+/** Area of a polygon (shoelace formula), whichever way round its points go. */
+export function polygonArea(poly: Point[]): number {
+  let a = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % poly.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return Math.abs(a) / 2;
+}
+
+/** Overlap of two rectangles: intersection over union, 0..1. */
+export function iou(a: Rect, b: Rect): number {
+  const w = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+  const h = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  const i = w * h;
+  return i / (a.width * a.height + b.width * b.height - i);
+}

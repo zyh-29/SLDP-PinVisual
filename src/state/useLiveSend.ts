@@ -12,11 +12,15 @@ export function useLiveSend(on: boolean, pattern: Pattern | null) {
   const { controller, state } = useDevice();
   const connected = state.connection.status === 'connected';
   const active = on && connected;
-  const [status, setStatus] = useState<LiveSendStatus | null>(null);
+  // The status belongs to one sending session: switching off (or disconnecting) forgets it, so an old error
+  // isn't shown after reconnecting. A stopped sender never reports again (LiveSender.stop).
+  const [session, setSession] = useState<{ active: boolean; status: LiveSendStatus | null }>({ active, status: null });
+  if (session.active !== active) setSession({ active, status: null });
+  const status = session.active === active ? session.status : null;
   const sender = useRef<LiveSender | null>(null);
   useEffect(() => {
     if (!active) return;
-    const s = new LiveSender(controller, setStatus);
+    const s = new LiveSender(controller, (st) => setSession((prev) => ({ ...prev, status: st })));
     sender.current = s;
     return () => {
       s.stop();

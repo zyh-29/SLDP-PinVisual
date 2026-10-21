@@ -4,11 +4,8 @@
  * new grid while the zoom is unchanged (rescale) or through a live zoom (followZoom). Pure functions (unit tested).
  */
 import type { GraphAxes } from './graph';
+import { median } from './stats';
 
-const median = (xs: number[]) => {
-  const s = [...xs].sort((a, b) => a - b);
-  return s.length ? s[Math.floor(s.length / 2)] : NaN;
-};
 
 /** A number read next to an axis: its value and where it sits along that axis (x for the x-axis, y for the y-axis). */
 export interface AxisReading {
@@ -129,11 +126,23 @@ export function scaleFromLabels(axes: GraphAxes, readings: AxisReading[]): Graph
   };
 }
 
-/** No readable numbers: one major grid square counts as one unit. Null without a measurable grid. */
+/** The darker-line rhythms graphing tools and graph paper use (every 2nd, 4th, 5th or 10th line; 2.5 from 2 to 5). */
+const RHYTHMS = [2, 2.5, 4, 5, 10];
+
+/**
+ * No readable numbers: one major grid square counts as one unit. Null without a measurable grid.
+ *
+ * The guess assumes square grid cells (graph paper, a graphing tool's default). So when across and down disagree by
+ * exactly a rhythm factor, one of them took every 4th or 5th line for a numbered one when there was no rhythm (a
+ * grid of one shade, alternate lines darkened by shrinking or the camera): the smaller spacing is the real one.
+ * Other ratios (a graph zoomed unevenly) are left alone.
+ */
 export function scaleFromGrid(axes: GraphAxes): GraphScale | null {
-  const mx = axes.majorX ?? axes.majorY;
-  const my = axes.majorY ?? axes.majorX;
+  let mx = axes.majorX ?? axes.majorY;
+  let my = axes.majorY ?? axes.majorX;
   if (!mx || !my) return null;
+  const ratio = Math.max(mx, my) / Math.min(mx, my);
+  if (RHYTHMS.some((k) => Math.abs(ratio / k - 1) <= 0.08)) mx = my = Math.min(mx, my);
   return { pxPerUnitX: mx, pxPerUnitY: my, unitsPerMajorX: 1, unitsPerMajorY: 1, majorX: mx, majorY: my, from: 'grid' };
 }
 
