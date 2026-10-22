@@ -349,34 +349,6 @@ export function flatten(rgb: ArrayLike<number>, width: number, height: number, s
   };
 }
 
-/** A page rectangle's outline in the picture, as the picture rectangle around it (for the crop box shown). */
-export function pageRectToPicture(page: FlatPage, r: Rect): Rect {
-  const pts = [
-    page.toPicture({ x: r.x, y: r.y }),
-    page.toPicture({ x: r.x + r.width, y: r.y }),
-    page.toPicture({ x: r.x + r.width, y: r.y + r.height }),
-    page.toPicture({ x: r.x, y: r.y + r.height }),
-  ];
-  const x0 = Math.min(...pts.map((p) => p.x));
-  const y0 = Math.min(...pts.map((p) => p.y));
-  return { x: x0, y: y0, width: Math.max(...pts.map((p) => p.x)) - x0, height: Math.max(...pts.map((p) => p.y)) - y0 };
-}
-
-/** A picture rectangle (e.g. a crop box drawn by hand) as the page rectangle around it. */
-export function pictureRectToPage(page: FlatPage, r: Rect): Rect {
-  const pts = [
-    page.toPage({ x: r.x, y: r.y }),
-    page.toPage({ x: r.x + r.width, y: r.y }),
-    page.toPage({ x: r.x + r.width, y: r.y + r.height }),
-    page.toPage({ x: r.x, y: r.y + r.height }),
-  ];
-  const x0 = Math.max(0, Math.min(...pts.map((p) => p.x)));
-  const y0 = Math.max(0, Math.min(...pts.map((p) => p.y)));
-  const x1 = Math.min(page.width, Math.max(...pts.map((p) => p.x)));
-  const y1 = Math.min(page.height, Math.max(...pts.map((p) => p.y)));
-  return { x: x0, y: y0, width: Math.max(1, x1 - x0), height: Math.max(1, y1 - y0) };
-}
-
 /**
  * A flattened page as the live camera delivers it: the page is what the app analyses, and these map between it
  * and the camera picture shown behind the crop box (frame pixels, at the frame size given).

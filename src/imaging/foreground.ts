@@ -105,7 +105,6 @@ export interface ForegroundOptions {
   subjectBox?: Rect;
 }
 
-export const DEFAULT_TOLERANCE = 40;
 export const DEFAULT_MIN_PIECE_RATIO = 0.15;
 /** Pins raise when at least this share of their area is content. */
 export const DEFAULT_PIN_FILL = 0.35;

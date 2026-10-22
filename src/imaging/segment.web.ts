@@ -4,6 +4,7 @@
  * (MIT, WebAssembly, public/ort/). Both are served by the app itself, so this
  * works offline and costs nothing. Loaded on first use only.
  */
+import { APP_BASE, loadScript } from './webScript';
 /** The parts of ONNX Runtime Web used here (it is loaded as a script, not bundled). */
 interface OrtSession {
   inputNames: readonly string[];
@@ -29,33 +30,17 @@ const STD = [0.229, 0.224, 0.225];
 
 export const smartCutoutAvailable = typeof window !== 'undefined' && typeof WebAssembly === 'object';
 
-/**
- * Where the app is hosted: '' at a site's root, or e.g. '/pinvisual' in a folder (set with WEB_BASE_URL when
- * building, see app.config.js). The engine and model are files in public/, so their URLs need it too.
- */
-const BASE = (process.env.EXPO_BASE_URL ?? '').replace(/\/$/, '');
 
 let sessionPromise: Promise<{ ort: OrtModule; session: OrtSession }> | null = null;
-
-function loadScript(src: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = src;
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error('Could not load the cut-out engine'));
-    document.head.appendChild(s);
-  });
-}
 
 function getSession() {
   sessionPromise ??= (async () => {
     const w = window as unknown as { ort?: OrtModule };
-    if (!w.ort) await loadScript(`${BASE}/ort/ort.wasm.min.js`);
+    if (!w.ort) await loadScript(`${APP_BASE}/ort/ort.wasm.min.js`, 'cut-out engine');
     const ort = w.ort!;
-    ort.env.wasm.wasmPaths = `${BASE}/ort/`;
+    ort.env.wasm.wasmPaths = `${APP_BASE}/ort/`;
     ort.env.wasm.numThreads = 1; // threads need cross-origin isolation, which a static host may not have
-    const session = await ort.InferenceSession.create(`${BASE}/models/u2netp.onnx`, { executionProviders: ['wasm'] });
+    const session = await ort.InferenceSession.create(`${APP_BASE}/models/u2netp.onnx`, { executionProviders: ['wasm'] });
     return { ort, session };
   })().catch((e) => {
     sessionPromise = null; // allow a retry

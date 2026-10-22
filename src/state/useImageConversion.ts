@@ -11,7 +11,7 @@ import { readAxisNumbers } from '@/imaging/axisNumbers';
 import { type SteadyPins, steadyPins } from '@/imaging/cameraFrame';
 import { holdGraphPins, nextGraphScale, onlyInside, rectInside, searchAreaAround } from './conversionLogic';
 import type { SurfaceView } from '@/imaging/surface';
-import type { RasterImage } from '@/imaging/convert';
+import { type RasterImage, toGrayscale } from '@/imaging/convert';
 import { DEFAULT_MIN_PIECE_RATIO, estimateBackground, findForeground } from '@/imaging/foreground';
 import { clip, fullRect, type Rect } from '@/imaging/geometry';
 import { type GraphScale, labelBands, scaleFromGrid, scaleFromLabels } from '@/imaging/graph';
@@ -37,7 +37,6 @@ export interface PickedImage {
   fileUri?: string;
   raster: RasterImage;
   rgb: Uint8ClampedArray;
-  gray: Float32Array;
 }
 
 /** Graph Range: units each side of the curve's key point, or the whole curve. */
@@ -254,7 +253,8 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   const ink = useMemo(() => {
     if (!picked || !fg || !pinMask) return null;
     let out: Float32Array;
-    if (!removeBackground) out = inkFromGray(picked.gray);
+    // Remove Background off: darkness instead (worked out only then; most pictures never need it).
+    if (!removeBackground) out = inkFromGray(toGrayscale(picked.raster));
     else {
       const cell = cellSizePx(sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch);
       out = inkFromMask(thickenThinLines(pinMask, w, h, fg.strokeWidth, cell));

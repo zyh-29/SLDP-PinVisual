@@ -5,8 +5,6 @@
 import type { Rect } from './geometry';
 import type { AxisReading } from './graph';
 
-export const axisNumbersAvailable = false;
-
 export interface AxisNumberSource {
   uri?: string;
   video?: unknown;

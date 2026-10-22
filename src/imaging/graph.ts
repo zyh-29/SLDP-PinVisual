@@ -439,7 +439,7 @@ function splitByColour(mask: Float32Array, rgb: ArrayLike<number>, plot: Rect, w
   if (!top) return [];
   const out: Float32Array[] = [];
   const taken = new Array<boolean>(BINS + 1).fill(false);
-  const order = counts.map((c, i) => i).sort((a, b) => counts[b] - counts[a]);
+  const order = counts.map((_, i) => i).sort((a, b) => counts[b] - counts[a]);
   for (const bin of order) {
     if (taken[bin] || counts[bin] < top * 0.2) continue;
     const group = [bin];

@@ -6,10 +6,9 @@
  * full-resolution source: the original picture, or the live share's current video frame. Each number is
  * found first (findLabelBoxes) and read on its own, enlarged: whole-band OCR misses single digits.
  */
+import { APP_BASE, loadScript } from './webScript';
 import type { Rect } from './geometry';
 import { type AxisReading, findLabelBoxes } from './graph';
-
-export const axisNumbersAvailable = typeof window !== 'undefined' && typeof WebAssembly === 'object';
 
 /** Where the picture comes from: the original image (URL), the live share's video, or pixels (a flattened page). */
 export interface AxisNumberSource {
@@ -26,27 +25,14 @@ interface TesseractModule {
   createWorker(lang: string, oem: number, options: Record<string, unknown>): Promise<TesseractWorker>;
 }
 
-/** The app's base path ('' at a site's root), as for the cut-out engine. */
-const BASE = (process.env.EXPO_BASE_URL ?? '').replace(/\/$/, '');
-const url = (p: string) => new URL(`${BASE}/tesseract/${p}`, window.location.href).href;
+const url = (p: string) => new URL(`${APP_BASE}/tesseract/${p}`, window.location.href).href;
 
 let workerPromise: Promise<TesseractWorker> | null = null;
-
-function loadScript(src: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = src;
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error('Could not load the number reader'));
-    document.head.appendChild(s);
-  });
-}
 
 function getWorker() {
   workerPromise ??= (async () => {
     const w = window as unknown as { Tesseract?: TesseractModule };
-    if (!w.Tesseract) await loadScript(url('tesseract.min.js'));
+    if (!w.Tesseract) await loadScript(url('tesseract.min.js'), 'number reader');
     const worker = await w.Tesseract!.createWorker('eng', 1, {
       workerPath: url('worker.min.js'),
       corePath: url('core'),

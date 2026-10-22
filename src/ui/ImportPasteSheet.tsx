@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { Label } from './components';
-import { radius, space, type, useTheme } from './theme';
+import { SheetBar } from './SheetBar';
+import { monoFont, radius, space, type, useTheme } from './theme';
 
 /**
  * Import on phones: paste the text of an exported patterns file (from Notes, Files, a message to yourself).
@@ -48,23 +49,7 @@ export function ImportPasteSheet({
       }}
       onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: t.background }}>
-        <View style={[styles.bar, { borderBottomColor: t.separator }]}>
-          <Pressable accessibilityRole="button" onPress={onClose} hitSlop={12} style={styles.barButton}>
-            <Text style={[type.body, { color: t.tint }]}>Cancel</Text>
-          </Pressable>
-          <Text accessibilityRole="header" style={[type.headline, { color: t.text }]}>
-            Import Patterns
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: busy }}
-            disabled={busy}
-            onPress={submit}
-            hitSlop={12}
-            style={styles.barButton}>
-            <Text style={[type.headline, { color: t.tint, opacity: busy ? 0.4 : 1, textAlign: 'right' }]}>Import</Text>
-          </Pressable>
-        </View>
+        <SheetBar title="Import Patterns" action="Import" busy={busy} onCancel={onClose} onAction={submit} />
         <View style={styles.body}>
           <Label variant="footnote" secondary style={{ marginHorizontal: space.lg }}>
             Paste the text you exported. Patterns already here are kept; nothing is replaced.
@@ -97,16 +82,7 @@ export function ImportPasteSheet({
 }
 
 const styles = StyleSheet.create({
-  bar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: space.lg,
-    height: 56,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  barButton: { minWidth: 64, minHeight: 44, justifyContent: 'center' },
   body: { padding: space.lg, gap: space.md, flex: 1 },
   field: { borderRadius: radius.md, flex: 1, maxHeight: 360 },
-  input: { flex: 1, padding: space.lg, textAlignVertical: 'top', fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
+  input: { flex: 1, padding: space.lg, textAlignVertical: 'top', fontFamily: monoFont },
 });

@@ -6,7 +6,6 @@ import { AccessibilityInfo, Platform, StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
 import { cellsToString, type Pattern, togglePin } from '@/domain/pattern';
-import { toGrayscale } from '@/imaging/convert';
 import { toRgb } from '@/imaging/foreground';
 import { fullRect, type Point, type Rect } from '@/imaging/geometry';
 import {
@@ -42,10 +41,17 @@ import { SavePatternSheet } from '@/ui/SavePatternSheet';
 import { radius, space, useTheme } from '@/ui/theme';
 
 
-/** A live frame kept as a still picture: it gets an image of its own for the crop view. */
-const asStill = (p: PickedImage | null): PickedImage | null =>
+/**
+ * A live frame kept as a still picture: it gets an image of its own for the crop view, and a camera frame stays
+ * a camera picture (the same background handling, so the pins don't change when the camera stops).
+ */
+const asStill = (p: PickedImage | null, fromCamera: boolean): PickedImage | null =>
   p && !p.uri
-    ? { ...p, uri: rgbToPngDataUri(renderCrop(p.rgb, p.raster.width, p.raster.height, null, fullRect(p.raster.width, p.raster.height))) }
+    ? {
+        ...p,
+        fromCamera: p.fromCamera || fromCamera,
+        uri: rgbToPngDataUri(renderCrop(p.rgb, p.raster.width, p.raster.height, null, fullRect(p.raster.width, p.raster.height))),
+      }
     : p;
 
 /**
@@ -109,6 +115,7 @@ export default function ImageScreen() {
   const analysed = kept?.frame ?? picked;
   /** For callbacks made once per live session (onEnd, leaving the tab). */
   const keptRef = useRef(kept);
+  const liveRef = useRef(live);
   const dropCapture = () => {
     setCapture(null);
     setWatch({ for: null, w: null });
@@ -219,7 +226,7 @@ export default function ImageScreen() {
       const raster = await loadImagePixels(source.uri, source.width ?? 0, source.height ?? 0);
       live?.stop();
       setLive(null);
-      setPicked({ uri: source.uri, fileUri: raster.fileUri, raster, rgb: toRgb(raster), gray: toGrayscale(raster), fromCamera: !!keep });
+      setPicked({ uri: source.uri, fileUri: raster.fileUri, raster, rgb: toRgb(raster), fromCamera: !!keep });
       resetForNewImage();
       if (keep && keep.fromWidth > 0) {
         const k = raster.width / keep.fromWidth;
@@ -247,7 +254,7 @@ export default function ImageScreen() {
       setError(null);
       setEquationError(null);
       const uri = rgbToPngDataUri(renderCrop(rgb, raster.width, raster.height, null, fullRect(raster.width, raster.height)));
-      setPicked({ uri, raster, rgb, gray: toGrayscale(raster), equation: { text, scale } });
+      setPicked({ uri, raster, rgb, equation: { text, scale } });
       resetForNewImage();
       AccessibilityInfo.announceForAccessibility(`Drew ${text}`);
     } catch (e) {
@@ -263,16 +270,18 @@ export default function ImageScreen() {
     await load({ uri: asset.uri, width: asset.width, height: asset.height });
   };
 
-  /** Keeps the last shared frame (or the camera's kept frame) as a still image. */
-  const freeze = () => {
+  /** Ends live input on a still picture: the camera's kept frame (and what it focused on), else the last frame. */
+  const keepLastFrame = useCallback(() => {
     const k = keptRef.current;
+    const camera = liveRef.current?.kind === 'camera';
     setLive(null);
     if (k) {
-      setPicked(asStill(k.frame));
+      setPicked(asStill(k.frame, true));
       setFocus(k.focus);
-    } else setPicked(asStill);
-    dropCapture();
-  };
+    } else setPicked((p) => asStill(p, camera));
+    setCapture(null);
+    setWatch({ for: null, w: null });
+  }, []);
 
   /** Starts screen sharing or the live camera; both feed the same pipeline, frame by frame. */
   const startLive = async (source: LiveSource) => {
@@ -302,11 +311,11 @@ export default function ImageScreen() {
             const at = lock.follow(rgb, raster.width, raster.height, toLens);
             if (at !== undefined) setFocus(at);
           }
-          setPicked({ uri: '', raster, rgb, gray: toGrayscale(raster), surface });
+          setPicked({ uri: '', raster, rgb, surface });
           // Keep the user's crop while sharing, unless the shared window shrank under it.
           setManualCrop((r) => (r && (r.x + r.width > raster.width + 0.5 || r.y + r.height > raster.height + 0.5) ? null : r));
         },
-        onEnd: freeze,
+        onEnd: keepLastFrame,
         // 0 in focus, 1 refocusing (a frame or two), 2 struggling (about 2 s): shown on the picture.
         onFocus: (blurryFor) => setFocusTrouble(blurryFor >= 8 ? 2 : blurryFor >= 2 ? 1 : 0),
         onDark: setTooDark,
@@ -328,7 +337,7 @@ export default function ImageScreen() {
   /** Stops the screen share or camera and keeps the last frame as a still picture. */
   const stopLive = () => {
     live?.stop();
-    freeze();
+    keepLastFrame();
   };
 
   /**
@@ -360,7 +369,6 @@ export default function ImageScreen() {
 
   // Leaving the Image tab turns the camera off (it would keep running, and filming, out of sight). The last frame
   // stays as a still picture. A screen share keeps going: the pins can follow it from the Display tab.
-  const liveRef = useRef(live);
   useEffect(() => {
     liveRef.current = live;
     keptRef.current = kept;
@@ -371,14 +379,9 @@ export default function ImageScreen() {
         const l = liveRef.current;
         if (l?.kind !== 'camera') return;
         l.stop();
-        setLive(null);
-        const k = keptRef.current;
-        if (k) {
-          setPicked(asStill(k.frame));
-          setFocus(k.focus);
-        } else setPicked(asStill);
+        keepLastFrame();
       },
-      [],
+      [keepLastFrame],
     ),
   );
 

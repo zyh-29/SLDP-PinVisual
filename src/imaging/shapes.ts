@@ -9,7 +9,7 @@
  *    coverage, instead of sampling the wobbly pixels.
  */
 import type { Pattern, PinValue } from '@/domain/pattern';
-import { convexHull, cross, polygonArea, type Rect } from './geometry';
+import { bounds, convexHull, cross, polygonArea, type Rect } from './geometry';
 
 // Kept here too for code that thinks of them as shape helpers.
 export { convexHull, polygonArea };
@@ -27,14 +27,6 @@ export interface DetectedShape {
   name: string;
   /** Corners in source pixels (an ellipse is stored as a 64-sided polygon). */
   points: Point[];
-}
-
-function bounds(r: Rect, width: number, height: number) {
-  const x0 = Math.max(0, Math.floor(r.x));
-  const y0 = Math.max(0, Math.floor(r.y));
-  const x1 = Math.min(width, Math.max(x0 + 1, Math.ceil(r.x + r.width)));
-  const y1 = Math.min(height, Math.max(y0 + 1, Math.ceil(r.y + r.height)));
-  return { x0, y0, x1, y1 };
 }
 
 /**

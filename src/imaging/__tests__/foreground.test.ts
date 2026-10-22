@@ -1,4 +1,4 @@
-import { imageToPattern, type RasterImage } from '../convert';
+import type { RasterImage } from '../convert';
 import { AUTO_MIN, autoTolerance, estimateBackground, findForeground, smartCrop, strokeWidth, toRgb } from '../foreground';
 import { cellSizePx, inkFromMask, patternFromSamples, sampleCrop, thickenThinLines } from '../pinSampling';
 import { dilate, labelComponents } from '../masks';
@@ -130,11 +130,6 @@ describe('diagram: pale triangle with labels', () => {
       '00111111',
       '01111111',
     ]);
-  });
-
-  it('the old darkness-only converter found almost nothing in the same image', () => {
-    const old = imageToPattern(img, { rows: 5, cols: 8, threshold: 128, invert: false, fit: 'fill' });
-    expect(old.pattern.cells.filter(Boolean).length).toBeLessThanOrEqual(1);
   });
 });
 

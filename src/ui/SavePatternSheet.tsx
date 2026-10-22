@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { Pattern } from '@/domain/pattern';
 import { patternStore } from '@/state/useSavedPatterns';
 import { MAX_NAME_LENGTH, validateName } from '@/storage/patternStore';
 import { Label } from './components';
+import { SheetBar } from './SheetBar';
 import { confirmAsync } from './dialogs';
 import { useResponsive } from './layout';
 import { PinGrid } from './PinGrid';
@@ -82,23 +83,7 @@ export function SavePatternSheet({
         style={[{ backgroundColor: t.background }, dialog ? styles.dialog : { flex: 1 }]}
         aria-modal
         role="dialog">
-        <View style={[styles.bar, { borderBottomColor: t.separator }]}>
-          <Pressable accessibilityRole="button" onPress={onClose} hitSlop={12} style={styles.barButton}>
-            <Text style={[type.body, { color: t.tint }]}>Cancel</Text>
-          </Pressable>
-          <Text accessibilityRole="header" style={[type.headline, { color: t.text }]}>
-            Save Pattern
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: saving }}
-            disabled={saving}
-            onPress={submit}
-            hitSlop={12}
-            style={styles.barButton}>
-            <Text style={[type.headline, { color: t.tint, opacity: saving ? 0.4 : 1, textAlign: 'right' }]}>Save</Text>
-          </Pressable>
-        </View>
+        <SheetBar title="Save Pattern" action="Save" busy={saving} onCancel={onClose} onAction={submit} />
 
         <View style={styles.body}>
           <View style={[styles.field, { backgroundColor: t.card }]}>
@@ -148,15 +133,6 @@ const styles = StyleSheet.create({
     shadowRadius: 30,
     shadowOffset: { width: 0, height: 12 },
   },
-  bar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: space.lg,
-    height: 56,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  barButton: { minWidth: 64, minHeight: 44, justifyContent: 'center' },
   body: { padding: space.lg, gap: space.md },
   field: { borderRadius: radius.md },
   input: { minHeight: 50, paddingHorizontal: space.lg },
