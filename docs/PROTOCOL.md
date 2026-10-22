@@ -15,7 +15,7 @@ the firmware side (in TypeScript), used by the automated tests only.
 
 | Item | UUID (PLACEHOLDER) | Properties | Direction |
 |---|---|---|---|
-| Service | `7a1e0001-3c4b-4f2a-9b8e-5d6c7b8a9f01` | primary | — |
+| Service | `7a1e0001-3c4b-4f2a-9b8e-5d6c7b8a9f01` | primary | |
 | Command characteristic | `7a1e0002-3c4b-4f2a-9b8e-5d6c7b8a9f01` | **Write With Response** | app → board |
 | Ack characteristic | `7a1e0003-3c4b-4f2a-9b8e-5d6c7b8a9f01` | **Notify** | board → app |
 
@@ -83,7 +83,7 @@ bit `c` = column `c`.
 
 | Code | Meaning | App behaviour |
 |---|---|---|
-| `0x00` | OK — command accepted | success |
+| `0x00` | OK, command accepted | success |
 | `0x01` | CRC mismatch | retries |
 | `0x02` | Unsupported protocol version | fails |
 | `0x03` | Unknown message type | fails |
