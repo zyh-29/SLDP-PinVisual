@@ -1,5 +1,5 @@
 /**
- * Shape clean-up for a 40-pin grid. Pure functions, unit tested.
+ * Shape clean-up for a small pin grid (a few dozen pins). Pure functions, unit tested.
  *
  *  - fillHoles: closes a drawn outline into a solid shape.
  *  - outlineOf: the reverse, keeps only the edge of a shape.

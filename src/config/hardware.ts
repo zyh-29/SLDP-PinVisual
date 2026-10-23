@@ -6,10 +6,10 @@
  * See docs/PROTOCOL.md for how the firmware must interpret these values.
  */
 
-/** Pin grid layout. PROVISIONAL: 5 rows x 8 columns = 40 pins. */
+/** Pin grid layout. PROVISIONAL: 5 rows x 6 columns = 30 pins. */
 export const GRID = {
   rows: 5,
-  cols: 8,
+  cols: 6,
   /**
    * Horizontal pin pitch divided by vertical pin pitch. 1 = square spacing.
    * Used by image conversion so pictures are not stretched on the pins.

@@ -123,6 +123,28 @@ describe('key point of the curve', () => {
     expect(unit(p, k).y).toBeCloseTo(0, 0);
   });
 
+  it('parabola broken at its vertex (where it lies on the x-axis): still one curve, its vertex found', () => {
+    // A live screen share can lose a few pixels of the curve where it runs along the dark axis: the two arms then
+    // come apart, and one arm alone looks like a curve that stops there ("Starts", window beside the vertex).
+    const p = { ...base, f: (x: number) => x * x };
+    const { axes, mask, img } = analyse(p);
+    for (let y = 0; y < img.height; y++) for (let x = p.ox - 4; x <= p.ox + 4; x++) mask[y * img.width + x] = 0;
+    const k = curveKeyPoint(mask, img.width, img.height, axes)!;
+    expect(k.kind).toBe('vertex');
+    expect(k.place).toBe('bottom');
+    expect(Math.abs(unit(p, k).x)).toBeLessThan(0.3);
+    expect(Math.abs(unit(p, k).y)).toBeLessThan(0.3);
+  });
+
+  it('wide parabola: the vertex in the middle of its flat bottom, not at one end of it', () => {
+    // y = 0.1x² stays within a pixel of its lowest row for about 14 px each side of the vertex.
+    const p = { ...base, f: (x: number) => 0.1 * x * x };
+    const { axes, mask, img } = analyse(p);
+    const k = curveKeyPoint(mask, img.width, img.height, axes)!;
+    expect(k.kind).toBe('vertex');
+    expect(Math.abs(k.x - p.ox)).toBeLessThanOrEqual(2);
+  });
+
   it('shifted parabola: the vertex wherever it is', () => {
     const p = { ...base, f: (x: number) => 0.5 * (x - 3) ** 2 - 2 };
     const { axes, mask, img } = analyse(p);

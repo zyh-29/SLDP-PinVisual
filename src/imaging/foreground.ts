@@ -846,7 +846,7 @@ function dropNeutralClutter(rgb: ArrayLike<number>, labels: Int32Array, componen
   });
 }
 
-/** The subject box plus an optional margin (share of its larger side), kept inside the image. No margin by default: on a 40-pin grid every row counts. */
+/** The subject box plus an optional margin (share of its larger side), kept inside the image. No margin by default: on a grid of a few dozen pins every row counts. */
 export function smartCrop(fg: Foreground, margin = 0): Rect {
   if (!fg.subject) return fg.region;
   const s = fg.subject;

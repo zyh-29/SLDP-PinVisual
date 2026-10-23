@@ -30,7 +30,12 @@ const RED: C = [199, 68, 64]; // Desmos red
 const BLUE: C = [45, 112, 179]; // Desmos blue
 
 /** A Desmos-like screenshot: toolbar, expression panel with a red icon and text, plot with grid, axes, ticks and curves. */
-function desmos(withSecondCurve = false, focusedExpression = false): RasterImage {
+/**
+ * `focusedExpression`: the focused row, its blue icon square and outline. 'L': only the outline's bottom edge
+ * survives (a live share shrinks a 1 px outline, and its top and right edges can vanish), so the square and the
+ * line make an L, not a frame.
+ */
+function desmos(withSecondCurve = false, focusedExpression: boolean | 'L' = false): RasterImage {
   const W = 640;
   const H = 400;
   const parabola = (x: number) => 300 - 0.012 * (x - 410) ** 2;
@@ -49,6 +54,13 @@ function desmos(withSecondCurve = false, focusedExpression = false): RasterImage
     if (x < 180) {
       if (focusedExpression) {
         // The focused row: a solid blue icon square and a light-blue 2 px outline around the input.
+        if (focusedExpression === 'L') {
+          // As Desmos draws it: the icon block fills the row's left end, the outline (same blue) starts at its edge.
+          if (x < 30 && y >= 56 && y < 86) return [47, 114, 220];
+          if (x >= 30 && x < 176 && y >= 84 && y < 86) return [47, 114, 220];
+          if (x >= 10 && x < 28 && Math.abs(y - (70 + 5 * Math.sin((x - 10) / 3))) <= 1) return RED;
+          return [255, 255, 255];
+        }
         if (x >= 4 && x < 24 && y >= 56 && y < 86) return [61, 90, 254];
         const inBox = x >= 30 && x < 176 && y >= 56 && y < 86;
         const onBorder = inBox && (x < 32 || x >= 174 || y < 58 || y >= 84);
@@ -123,6 +135,18 @@ describe('graphs (Desmos screenshots)', () => {
     expect(result.mask![70 * img.width + 10]).toBe(0); // blue icon square
     expect(result.mask![57 * img.width + 100]).toBe(0); // input outline
     expect(result.mask![Math.round(300 - 0.012 * 140 ** 2) * img.width + 550]).toBe(0); // the right arm, outside the box
+  });
+
+  it('ignores a focused row that looks like an L (icon square and the bottom edge of its outline): not a curve', () => {
+    const img = desmos(false, 'L');
+    const rgb = toRgb(img);
+    const view = { range: 'whole' as const, scale: null, rows: 5, cols: 8, pinPitchRatio: 1, followZoom: true };
+    const result = smartSubject(rgb, img.width, img.height, opts, undefined, undefined, view);
+    expect(result.kind).toBe('curves');
+    // The parabola only (x = 263..557), not the expression panel (x < 180).
+    expect(near(result.box, { x: 263, y: 40, width: 295, height: 262 }, 4)).toBe(true);
+    expect(result.mask![70 * img.width + 10]).toBe(0); // blue icon square
+    expect(result.mask![85 * img.width + 100]).toBe(0); // the outline's bottom edge
   });
 
   it('finds the curve when the whole screen is shared, photo wallpaper and all', () => {

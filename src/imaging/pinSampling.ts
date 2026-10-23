@@ -142,10 +142,17 @@ export function patternFromSamples(s: CellSamples, rows: number, cols: number, p
  * A curve (a graph's, a drawn line) as a line exactly one pin wide, instead of every pin it touches. On a few
  * dozen pins a thickened curve becomes a band two pins wide that is hard to follow by touch.
  *
- * The curve's pixels are placed on the grid as `sampleCrop` would. In each pin column, each separate run of curve
- * pixels (one per branch crossing that column) raises the pin at its middle: that draws the flatter parts. The
- * same along each pin row draws the steep parts, which a column alone would leave as dots. Together: a connected
- * line, one pin wide, following the curve's centre. Runs of fewer than `minPixels` pixels are specks.
+ * The curve's pixels are placed on the grid as `sampleCrop` would. Each place where the curve crosses a pin
+ * column's centre line raises the pin there: that draws the flatter parts. The same across each pin row's centre
+ * line draws the steep parts, which columns alone would leave as dots. Together: a connected line following the
+ * curve's centre, the pins nearest to it.
+ *
+ * Crossings, not "the middle of the curve in each row": a parabola's two arms meet in its vertex row, so that row
+ * holds one stretch of curve, and its middle would raise a single pin on one side of the vertex (a lopsided U that
+ * flips sides from frame to frame). Its arms cross the row's centre line twice: two pins, symmetric.
+ *
+ * Bits of curve that cross no centre line (a short end, a small wiggle inside one pin) still raise their pin when
+ * nothing next to it is raised. Runs of fewer than `minPixels` pixels are specks.
  */
 export function traceLinePins(
   mask: ArrayLike<number>,
@@ -168,9 +175,14 @@ export function traceLinePins(
   const a = bounds(crop, width, height);
   const b = within ? bounds(within, width, height) : a;
   const [x0, y0, x1, y1] = [Math.max(a.x0, b.x0), Math.max(a.y0, b.y0), Math.min(a.x1, b.x1), Math.min(a.y1, b.y1)];
-  // Grid positions (pin units) of every curve pixel, by column and by row.
-  const byCol: number[][] = Array.from({ length: cols }, () => []);
-  const byRow: number[][] = Array.from({ length: rows }, () => []);
+  // A centre line's band, half-width in pin units: a few pixels, so a thin curve crossing it leaves a run of pixels.
+  const pxW = sx / pinPitchRatio;
+  const bandX = Math.max(0.08, 1.5 * pxW);
+  const bandY = Math.max(0.08, 1.5 * sy);
+  // Grid positions (pin units) of the curve pixels on each column's and row's centre line, and the count per pin.
+  const onCol: number[][] = Array.from({ length: cols }, () => []);
+  const onRow: number[][] = Array.from({ length: rows }, () => []);
+  const touched = new Int32Array(rows * cols);
   for (let y = y0; y < y1; y++)
     for (let x = x0; x < x1; x++) {
       if (!mask[y * width + x]) continue;
@@ -179,26 +191,47 @@ export function traceLinePins(
       const c = Math.floor(gx);
       const r = Math.floor(gy);
       if (c < 0 || c >= cols || r < 0 || r >= rows) continue;
-      byCol[c].push(gy);
-      byRow[r].push(gx);
+      touched[r * cols + c]++;
+      if (Math.abs(gx - c - 0.5) <= bandX) onCol[c].push(gy);
+      if (Math.abs(gy - r - 0.5) <= bandY) onRow[r].push(gx);
     }
   // A speck: under a fifth of a pin's width of curve pixels.
   const minPixels = Math.max(2, 0.2 / Math.max(sx, sy));
   const cells: PinValue[] = new Array(rows * cols).fill(0);
-  /** The middle of each run of positions without a gap of half a pin. */
-  const middles = (v: number[]) => {
+  /** The middle of each run of positions without a gap of a fifth of a pin: one per crossing. */
+  const crossings = (v: number[]) => {
     v.sort((a, b) => a - b);
     const out: number[] = [];
     let start = 0;
     for (let i = 1; i <= v.length; i++)
-      if (i === v.length || v[i] - v[i - 1] > 0.5) {
-        if (i - start >= minPixels) out.push(v[(start + i) >> 1]);
+      if (i === v.length || v[i] - v[i - 1] > 0.2) {
+        if (i - start >= 2) out.push(v[(start + i) >> 1]);
         start = i;
       }
     return out;
   };
-  for (let c = 0; c < cols; c++) for (const m of middles(byCol[c])) cells[Math.min(rows - 1, Math.floor(m)) * cols + c] = 1;
-  for (let r = 0; r < rows; r++) for (const m of middles(byRow[r])) cells[r * cols + Math.min(cols - 1, Math.floor(m))] = 1;
+  // A crossing on the line between two pins (within a pixel) takes the one nearer the middle of the board: rounding
+  // down would move a symmetric curve's two arms the same way (a shifted U instead of a mirrored one).
+  const tie = Math.max(0.04, pxW, sy);
+  const pinAt = (m: number, n: number) => {
+    const k = Math.round(m);
+    const onLine = Math.abs(m - k) <= tie && k > 0 && k < n;
+    const i = onLine ? (Math.abs(k - 0.5 - n / 2) < Math.abs(k + 0.5 - n / 2) ? k - 1 : k) : Math.floor(m);
+    return Math.max(0, Math.min(n - 1, i));
+  };
+  for (let c = 0; c < cols; c++) for (const m of crossings(onCol[c])) cells[pinAt(m, rows) * cols + c] = 1;
+  for (let r = 0; r < rows; r++) for (const m of crossings(onRow[r])) cells[r * cols + pinAt(m, cols)] = 1;
+  // Curve that crossed no centre line, with nothing raised next to it.
+  const near = (r: number, c: number) => {
+    for (let dr = -1; dr <= 1; dr++)
+      for (let dc = -1; dc <= 1; dc++) {
+        const rr = r + dr;
+        const cc = c + dc;
+        if (rr >= 0 && rr < rows && cc >= 0 && cc < cols && cells[rr * cols + cc]) return true;
+      }
+    return false;
+  };
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (touched[r * cols + c] >= minPixels && !near(r, c)) cells[r * cols + c] = 1;
   return { rows, cols, cells };
 }
 

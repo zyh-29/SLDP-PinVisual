@@ -17,8 +17,8 @@
  *
  * Pure functions on the working image (unit tested).
  */
-import { dilate, labelComponents } from './masks';
-import type { Rect } from './geometry';
+import { type Component, dilate, labelComponents } from './masks';
+import { type Rect, union } from './geometry';
 import type { GraphScale } from './graphScale';
 import { median } from './stats';
 
@@ -333,8 +333,8 @@ function traceCurve(mask: Float32Array, width: number, height: number, plot: Rec
   const widest = Math.max(...pieces.map((c) => c.box.width));
   const distTo = (r: Rect) => Math.hypot(Math.max(r.x - ref.x, 0, ref.x - (r.x + r.width)), Math.max(r.y - ref.y, 0, ref.y - (r.y + r.height)));
   const main = pieces.filter((c) => c.box.width >= widest * 0.8).reduce((a, b) => (distTo(b.box) < distTo(a.box) ? b : a));
-  const id = components.indexOf(main) + 1;
-  const box = main.box;
+  const ids = joinBreaks(main, pieces, components, labels, bin, width, Math.max(6, Math.min(plot.width, plot.height) * 0.03));
+  const box = [...ids].map((i) => components[i - 1].box).reduce(union);
   if (box.width < 8) return null;
   const ys: number[] = [];
   let prev = NaN;
@@ -345,7 +345,7 @@ function traceCurve(mask: Float32Array, width: number, height: number, plot: Rec
     let runs = 0;
     let runStart = -1;
     for (let y = box.y; y <= box.y + box.height; y++) {
-      const on = y < box.y + box.height && bin[y * width + x] === 1 && labels[y * width + x] === id;
+      const on = y < box.y + box.height && bin[y * width + x] === 1 && ids.has(labels[y * width + x]);
       if (on && runStart < 0) runStart = y;
       if (!on && runStart >= 0) {
         const c = (runStart + y - 1) / 2;
@@ -369,7 +369,71 @@ function traceCurve(mask: Float32Array, width: number, height: number, plot: Rec
   if (last < 0) return null;
   for (let k = last + 1; k < ys.length; k++) ys[k] = ys[last];
   const closed = multi >= box.width * 0.6 && box.height >= box.width * 0.2;
-  return { x0: box.x, ys, closed, box, pieces: pieces.map((c) => c.box) };
+  // The joined pieces count as one curve: the 1/x check in analyseCurve must not take two arms for two branches.
+  const others = pieces.filter((c) => !ids.has(components.indexOf(c) + 1)).map((c) => c.box);
+  return { x0: box.x, ys, closed, box, pieces: [box, ...others] };
+}
+
+/**
+ * The main piece plus the pieces that continue it across a short break: one whose end (leftmost or rightmost
+ * column) lies within `gap` px of the curve's end on that side. A curve loses a few pixels where it runs along a
+ * dark axis (a parabola's vertex sits on the x-axis) or fades in a shrunk live frame; traced as separate pieces,
+ * one arm of a parabola looks like a curve that stops at the vertex. Branches of 1/x or tan x end at opposite
+ * edges of the plot, far apart, so they stay separate. Returns the pieces' labels.
+ */
+function joinBreaks(
+  main: Component,
+  pieces: Component[],
+  components: Component[],
+  labels: Int32Array,
+  bin: Uint8Array,
+  width: number,
+  gap: number,
+): Set<number> {
+  /** Middle row of the piece's pixels in one column. */
+  const rowAt = (id: number, x: number, b: Rect) => {
+    let sum = 0;
+    let n = 0;
+    for (let y = b.y; y < b.y + b.height; y++)
+      if (bin[y * width + x] && labels[y * width + x] === id) {
+        sum += y;
+        n++;
+      }
+    return n ? sum / n : b.y + b.height / 2;
+  };
+  const ends = new Map<number, { left: { x: number; y: number }; right: { x: number; y: number } }>();
+  const endsOf = (id: number) => {
+    let e = ends.get(id);
+    if (!e) {
+      const b = components[id - 1].box;
+      const r = b.x + b.width - 1;
+      e = { left: { x: b.x, y: rowAt(id, b.x, b) }, right: { x: r, y: rowAt(id, r, b) } };
+      ends.set(id, e);
+    }
+    return e;
+  };
+  const mainId = components.indexOf(main) + 1;
+  const ids = new Set([mainId]);
+  let { left, right } = endsOf(mainId);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const piece of pieces) {
+      const id = components.indexOf(piece) + 1;
+      if (ids.has(id)) continue;
+      const e = endsOf(id);
+      // Continues the curve to the left (it lies left of it, its right end at the curve's left end), or right.
+      if (e.right.x <= left.x + 2 && Math.hypot(e.right.x - left.x, e.right.y - left.y) <= gap) {
+        ids.add(id);
+        left = e.left;
+        grew = true;
+      } else if (e.left.x >= right.x - 2 && Math.hypot(e.left.x - right.x, e.left.y - right.y) <= gap) {
+        ids.add(id);
+        right = e.right;
+        grew = true;
+      }
+    }
+  }
+  return ids;
 }
 
 function smooth(v: number[], r: number): number[] {
@@ -497,7 +561,19 @@ function analyseCurve(mask: Float32Array, width: number, height: number, axes: G
   const within = <T extends { i: number }>(found: T[]) => found.map((f) => ({ ...f, i: f.i + lo }));
 
   const swing = Math.max(3, plot.height * 0.03);
-  const turns = within(extremes(ys.slice(lo, hi + 1), swing)).filter((t) => inside(t.i));
+  // A turn is flat for a few pixels (a parabola's bottom lies in one pixel row over several columns), and the
+  // zig-zag filter returns one end of that flat stretch: the turn is its middle. Otherwise every vertex sits a few
+  // pixels to one side, and the window with it (the arms land unevenly on the pins).
+  const flatMiddle = (i: number) => {
+    let a = i;
+    let b = i;
+    while (a > lo && Math.abs(ys[a - 1] - ys[i]) <= 0.75) a--;
+    while (b < hi && Math.abs(ys[b + 1] - ys[i]) <= 0.75) b++;
+    return Math.round((a + b) / 2);
+  };
+  const turns = within(extremes(ys.slice(lo, hi + 1), swing))
+    .map((t) => ({ ...t, i: flatMiddle(t.i) }))
+    .filter((t) => inside(t.i));
   // Bends: where the direction (angle) stops turning one way and starts the other.
   const r = Math.max(2, Math.round(n * 0.02));
   const angle = ys.map((_, i) => Math.atan2(ys[Math.min(n - 1, i + r)] - ys[Math.max(0, i - r)], Math.min(n - 1, i + r) - Math.max(0, i - r)));

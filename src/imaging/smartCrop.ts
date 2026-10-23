@@ -294,12 +294,10 @@ function subjectIn(
 ): SmartCropResult {
   const wants = (r: Rect) => !focus || contains(expand(r, 0.05, width, height), focus);
   /** Graphs: read the axes, then (with a known scale) narrow the box to the window around the key point. */
-  const windowed = (detected: SmartCropResult, mask: Float32Array, known: Grid | null): SmartCropResult => {
+  /** `grid`: the plot the curves are in, found in the whole picture (null: none). */
+  const windowed = (detected: SmartCropResult, mask: Float32Array, grid: Grid | null): SmartCropResult => {
     let result = detected;
     if (!view) return result;
-    // The axes and grid from the whole picture: the search may be limited to around a locked item (live camera),
-    // but the graph's scale must not depend on where that limit falls.
-    const grid = known ?? gridFor(findGrids(rgb, width, height, fullRect(width, height)), result.box);
     if (!grid || !overlaps(grid.plot, result.box)) return result;
     const axes = readAxes(grid);
     const scale = !view.scale
@@ -322,17 +320,32 @@ function subjectIn(
   // area around them is flat (a screen or diagram), whatever else is on screen (a photo wallpaper, other windows).
   // Only a real tap picks one curve by colour; the camera's lock just keeps to the item.
   const tapped = focus?.tap ? focus : undefined;
-  const curves = o.flatSurface
-    ? CAMERA_CURVE_SATURATIONS.map((sat) => findCurves(rgb, width, height, region, tapped, sat)).reduce<CurveResult | null>(
-        (best, c) => (c && (!best || c.score > best.score) ? c : best),
-        null,
-      )
-    : findCurves(rgb, width, height, region, tapped);
+  const curvesIn = (area: Rect) =>
+    o.flatSurface
+      ? CAMERA_CURVE_SATURATIONS.map((sat) => findCurves(rgb, width, height, area, tapped, sat)).reduce<CurveResult | null>(
+          (best, c) => (c && (!best || c.score > best.score) ? c : best),
+          null,
+        )
+      : findCurves(rgb, width, height, area, tapped);
+  let curves = curvesIn(region);
+  // A graph's curves are drawn inside its plot. Coloured strokes reaching outside it are the graphing tool's UI
+  // (Desmos' focused expression row: a blue icon block and the edge of its outline, joined into an L that no
+  // rule for frames or straight lines catches), so the search is repeated inside the plot.
+  // Every plot counts: a worksheet with two graphs has curves in both. The plots are searched for in the whole
+  // picture: the search may be limited to around a locked item (live camera), but the graph's scale (read from
+  // its plot in windowed) must not depend on where that limit falls.
+  const grids = curves ? findGrids(rgb, width, height, fullRect(width, height)) : [];
+  if (curves && grids.length) {
+    const plot = clip(expand(grids.map((g) => g.plot).reduce(union), 0.02, width, height), region);
+    const b = curves.box;
+    const within = b.x >= plot.x && b.y >= plot.y && b.x + b.width <= plot.x + plot.width && b.y + b.height <= plot.y + plot.height;
+    if (!within) curves = curvesIn(plot) ?? curves;
+  }
   if (curves && wants(curves.box)) {
     const context = clip(expand(curves.box, 0.08, width, height), region);
     const pageLike = !o.camera || o.flatSurface || pageBackground(rgb, width, height, context, curves.mask);
     if (pageLike && (o.flatSurface || !isPhotoLike(rgb, width, height, context)) && !enclosesFill(rgb, width, curves))
-      return windowed({ box: curves.box, context, kind: 'curves', mask: curves.mask, target: curves.box }, curves.mask, null);
+      return windowed({ box: curves.box, context, kind: 'curves', mask: curves.mask, target: curves.box }, curves.mask, gridFor(grids, curves.box));
   }
   // Graphs whose curve has no colour (black, grey): find the plot area by its grid, then the curve inside it.
   // Several plots on the page (and no tap): the biggest.
@@ -352,7 +365,7 @@ function subjectIn(
     // A curve is long. Only short pieces left (the axis numbers and tick marks of an empty graph): no curve.
     if (box && hasLongStroke(mask, width, height, plot)) return windowed({ box, context: plot, kind: 'curves', mask, target: plot }, mask, grid);
   }
-  // Shapes and objects: decided on a smaller copy (fast enough for live sharing; a few pixels don't matter on 40 pins).
+  // Shapes and objects: decided on a smaller copy (fast enough for live sharing; a few pixels don't matter on a few dozen pins).
   const k = Math.max(1, Math.round(Math.max(width, height) / ANALYSIS_SIZE));
   const small = k > 1 ? downsample(rgb, width, height, k) : { rgb, width, height };
   const smallRegion = k > 1 ? { x: region.x / k, y: region.y / k, width: region.width / k, height: region.height / k } : region;

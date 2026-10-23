@@ -9,7 +9,7 @@ Everything runs on the device. There are no accounts and nothing is sent to a
 server.
 
 - Firmware protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md)
-- Grid size and hardware settings: `src/config/hardware.ts` (the grid is 5 × 8 for now)
+- Grid size and hardware settings: `src/config/hardware.ts` (the grid is 5 × 6 for now)
 
 Built with Expo (SDK 58), React Native and TypeScript.
 
@@ -184,7 +184,7 @@ The phone versions need a development build. In Expo Go the switch is hidden.
 
 ### Graphs
 
-Squeezing a whole curve onto 40 pins loses its shape, so Graph Range shows
+Squeezing a whole curve onto 30 pins loses its shape, so Graph Range shows
 ±2, ±5 or ±10 units at the graph's real proportions. It centres on the most
 interesting part: a parabola's vertex, the middle of a wave, where a line
 crosses the y-axis, and so on.

@@ -1,3 +1,4 @@
+import { GRID } from '@/config/hardware';
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
 import { base64ToBytes, bytesToBase64 } from '../base64';
 import { ChunkReassembler, chunkMessage, maxWriteSizeForMtu } from '../chunking';
@@ -23,15 +24,22 @@ describe('crc16 (CCITT-FALSE)', () => {
 
 describe('message encoding', () => {
   // These byte strings are copied into docs/PROTOCOL.md as firmware test vectors.
-  it('encodes SET_PATTERN (5x8, pins 0 and 39 raised) exactly', () => {
+  it('encodes SET_PATTERN (5x6, pins 0 and 29 raised) exactly', () => {
+    let p = createEmptyPattern(5, 6);
+    p = togglePin(p, 0, 0);
+    p = togglePin(p, 4, 5);
+    const msg = encodeSetPattern(1, p);
+    expect(hex(msg)).toBe('01 01 01 00 06 00 05 06 01 00 00 20 19 6c');
+    expect(msg.length).toBe(14);
+    expect(msg[12] | (msg[13] << 8)).toBe(crc16(msg, 0, 12));
+  });
+
+  it('encodes SET_PATTERN for other grid sizes too (5x8, pins 0 and 39 raised)', () => {
     let p = createEmptyPattern(5, 8);
     p = togglePin(p, 0, 0);
     p = togglePin(p, 4, 7);
     const msg = encodeSetPattern(1, p);
-    expect(hex(msg)).toBe('01 01 01 00 07 00 05 08 01 00 00 00 80 ' + hex(msg.slice(13)));
-    expect(msg.length).toBe(15);
-    const crc = crc16(msg, 0, 13);
-    expect(msg[13] | (msg[14] << 8)).toBe(crc);
+    expect(hex(msg)).toBe('01 01 01 00 07 00 05 08 01 00 00 00 80 c4 48');
   });
 
   it('encodes RESET with an empty payload', () => {
@@ -47,9 +55,9 @@ describe('message encoding', () => {
   });
 
   it('prints test vectors for the firmware docs', () => {
-    let p = createEmptyPattern(5, 8);
+    let p = createEmptyPattern(5, 6);
     p = togglePin(p, 0, 0);
-    p = togglePin(p, 4, 7);
+    p = togglePin(p, 4, 5);
     const vectors = {
       setPattern: hex(encodeSetPattern(1, p)),
       reset: hex(encodeReset(2)),
@@ -132,8 +140,8 @@ describe('chunking', () => {
     expect(last).toEqual({ type: 'complete', commandId: 300, message: msg });
   });
 
-  it('sends the 40-pin pattern in a single 20-byte write', () => {
-    const msg = encodeSetPattern(1, createEmptyPattern(5, 8));
+  it("sends the board's pattern in a single 20-byte write", () => {
+    const msg = encodeSetPattern(1, createEmptyPattern(GRID.rows, GRID.cols));
     expect(chunkMessage(1, msg, 20)).toHaveLength(1);
   });
 

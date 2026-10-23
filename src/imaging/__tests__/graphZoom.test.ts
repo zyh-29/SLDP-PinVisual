@@ -3,6 +3,7 @@
  * so once the screen shows less than that, the part off screen is empty pins rather than the visible part being
  * stretched over all of them.
  */
+import { GRID } from '@/config/hardware';
 import type { Pattern } from '@/domain/pattern';
 import { toRgb } from '../foreground';
 import { followZoom, type GraphAxes, type GraphScale } from '../graph';
@@ -173,10 +174,34 @@ describe('curves one pin wide', () => {
     expect(p.cells.filter(Boolean).length).toBeGreaterThan(30);
   });
 
-  it('on the real 5 x 8 board too', () => {
+  it.each([
+    ['unbroken', 0],
+    // A live share can lose the curve's pixels where it lies on the x-axis.
+    ['broken at the vertex', 4],
+  ])('y = x² at ±5 on the board (%s): a symmetric U, both pins under the vertex', (_name, gap) => {
+    // The window as the app shows it: x -5..5, as tall as the board's proportions make it, the vertex half a row
+    // above the bottom (on the line between the two middle columns). 27.5 px per unit.
+    const { rows, cols } = GRID;
+    const ppu = 27.5;
+    const unitsTall = (10 * rows) / cols;
+    const top = unitsTall - unitsTall / rows / 2;
+    const crop = { x: 0, y: 0, width: 10 * ppu, height: unitsTall * ppu };
+    const w = crop.width;
+    const h = Math.ceil(crop.height);
+    const mask = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const ux = (x + 0.5) / ppu - 5;
+        const py = (top - ux * ux) * ppu;
+        if (Math.abs(y + 0.5 - py) / Math.hypot(1, 2 * ux) <= 1.2 && Math.abs(x + 0.5 - w / 2) > gap) mask[y * w + x] = 1;
+      }
+    expect(show(traceLinePins(mask, w, h, crop, rows, cols, 1, true))).toBe(['.#..#.', '.#..#.', '.#..#.', '..##..', '..##..'].join('\n'));
+  });
+
+  it('on the real board too', () => {
     const rgb = plot(40, 320, 440);
-    const r = smartSubject(rgb, W, H, opts, undefined, undefined, { ...view(40), rows: 5, cols: 8 });
-    const p = traceLinePins(r.mask!, W, H, r.box, 5, 8, 1, true);
+    const r = smartSubject(rgb, W, H, opts, undefined, undefined, { ...view(40), rows: GRID.rows, cols: GRID.cols });
+    const p = traceLinePins(r.mask!, W, H, r.box, GRID.rows, GRID.cols, 1, true);
     expect(show(p)).toMatchSnapshot();
   });
 });

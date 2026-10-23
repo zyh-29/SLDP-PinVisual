@@ -242,7 +242,7 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   const filledMask = useMemo(() => (fg && shapesApply ? fillHoles(fg.mask, w, h, sampleBox) : null), [fg, shapesApply, w, h, sampleBox]);
   const shape = useMemo(() => (filledMask ? detectShape(filledMask, w, h, sampleBox) : null), [filledMask, w, h, sampleBox]);
   const pinMask = useMemo(
-    // Shapes are always shown filled: on 40 pins a solid shape is the easiest to feel.
+    // Shapes are always shown filled: on a few dozen pins a solid shape is the easiest to feel.
     () => filledMask ?? fg?.mask ?? null,
     [filledMask, fg],
   );

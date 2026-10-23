@@ -1,3 +1,4 @@
+import { GRID } from '@/config/hardware';
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
 import { DeviceController } from '../DeviceController';
 import type { DeviceDriver } from '../types';
@@ -20,7 +21,7 @@ function setup() {
   return { mock, controller };
 }
 
-const pattern = togglePin(createEmptyPattern(5, 8), 1, 1);
+const pattern = togglePin(createEmptyPattern(GRID.rows, GRID.cols), 1, 1);
 
 describe('DeviceController', () => {
   it('refuses to send or reset without a connection', async () => {
@@ -42,7 +43,7 @@ describe('DeviceController', () => {
     expect(mock.firmware?.simulatedPins).toEqual(pattern);
 
     expect((await controller.reset()).ok).toBe(true);
-    expect(mock.firmware?.simulatedPins).toEqual(createEmptyPattern(5, 8));
+    expect(mock.firmware?.simulatedPins).toEqual(createEmptyPattern(GRID.rows, GRID.cols));
   });
 
   it('prevents a reset while a send is in flight', async () => {

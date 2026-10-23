@@ -1,3 +1,4 @@
+import { GRID } from '@/config/hardware';
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
 import { MockFirmware, type MockBehavior } from '@/device/__tests__/support/MockFirmware';
 import type { Transport } from '@/device/types';
@@ -8,7 +9,7 @@ import { AckStatus, encodeAck, MessageType } from '../messages';
 function loopback(behavior: MockBehavior = 'normal', maxWriteSize = 20) {
   const receivers = new Set<(b: Uint8Array) => void>();
   const deliver = (b: Uint8Array) => receivers.forEach((r) => r(b));
-  const firmware = new MockFirmware({ rows: 5, cols: 8, behavior, ackDelayMs: 5 }, deliver);
+  const firmware = new MockFirmware({ rows: GRID.rows, cols: GRID.cols, behavior, ackDelayMs: 5 }, deliver);
   const writes: Uint8Array[] = [];
   const transport: Transport = {
     maxWriteSize,
@@ -25,7 +26,7 @@ function loopback(behavior: MockBehavior = 'normal', maxWriteSize = 20) {
 }
 
 const fast = { ackTimeoutMs: 60, retryDelayMs: 5, maxAttempts: 3, firstCommandId: 1 };
-const pattern = togglePin(togglePin(createEmptyPattern(5, 8), 0, 0), 2, 3);
+const pattern = togglePin(togglePin(createEmptyPattern(GRID.rows, GRID.cols), 0, 0), 2, 3);
 
 describe('CommandClient acknowledgement handling', () => {
   it('succeeds only after a matching ack and the board applies the pattern', async () => {
@@ -91,7 +92,7 @@ describe('CommandClient acknowledgement handling', () => {
 
   it('reports a dimension mismatch from the board', async () => {
     const { transport } = loopback();
-    const res = await new CommandClient(transport, fast).send({ kind: 'pattern', pattern: createEmptyPattern(6, 8) });
+    const res = await new CommandClient(transport, fast).send({ kind: 'pattern', pattern: createEmptyPattern(GRID.rows + 1, GRID.cols) });
     expect(res).toMatchObject({ ok: false, failure: 'rejected', status: AckStatus.DimensionMismatch });
   });
 
