@@ -14,7 +14,7 @@ import { SavePatternSheet } from '@/ui/SavePatternSheet';
 import { MIN_TOUCH, radius, space, useTheme } from '@/ui/theme';
 
 export default function DisplayScreen() {
-  const { pattern, source, toggle, clear } = usePattern();
+  const { pattern, source, toggle, clear, undo, canUndo } = usePattern();
   const { send, reset, connected, busy, state } = useBoardActions();
   const [saveOpen, setSaveOpen] = useState(false);
   const t = useTheme();
@@ -41,7 +41,21 @@ export default function DisplayScreen() {
         <PinGrid pattern={pattern} onToggle={toggle} />
         <View style={styles.buttonRow}>
           <Button
-            title="Clear Grid"
+            title="Undo"
+            icon="undo"
+            variant="secondary"
+            compact
+            style={{ flex: 1 }}
+            disabled={!canUndo}
+            accessibilityHint="Goes back to the preview before the last change. Does not move the physical pins."
+            onPress={() => {
+              undo();
+              AccessibilityInfo.announceForAccessibility('Undone');
+            }}
+          />
+          <Button
+            title="Clear"
+            accessibilityLabel="Clear Grid"
             icon="clear"
             variant="secondary"
             compact
