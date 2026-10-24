@@ -1,7 +1,9 @@
 import { StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
+import type { CommandState } from '@/device/DeviceController';
 import { countRaised, type Pattern } from '@/domain/pattern';
+import { CommandStatus } from './CommandStatus';
 import { Button, Label, Section, Separator } from './components';
 import { SwitchRow } from './SettingRows';
 import { PinGrid } from './PinGrid';
@@ -9,7 +11,7 @@ import { radius, space } from './theme';
 
 /**
  * The Image tab's Result card: the pins, the pin lock (and Reset after an edit), the live pin count, and
- * Use This Pattern / Save.
+ * Use This Pattern / Save, and Send to Board / Clear Board.
  */
 export function ImageResult({
   pattern,
@@ -20,6 +22,7 @@ export function ImageResult({
   onReset,
   onUse,
   onSave,
+  board,
   liveSend,
 }: {
   /** What the user gets: their edited pins, or the automatic ones. */
@@ -32,6 +35,8 @@ export function ImageResult({
   onReset: () => void;
   onUse: () => void;
   onSave: () => void;
+  /** Sending this pattern to the board, or lowering every pin, straight from the Image tab. */
+  board: { connected: boolean; command: CommandState; onSend: () => void; onClear: () => void };
   /** Live share or camera: the pins can follow it on the board. */
   liveSend?: { on: boolean; onChange: (on: boolean) => void; connected: boolean; error: string | null };
 }) {
@@ -94,6 +99,8 @@ export function ImageResult({
           accessibilityHint="Saves this pattern so you can load it later from the Saved tab."
         />
       </View>
+      <Separator />
+      <BoardButtons board={board} liveSending={!!liveSend?.on} />
       {liveSend ? (
         <>
           <Separator />
@@ -117,6 +124,54 @@ export function ImageResult({
         </>
       ) : null}
     </Section>
+  );
+}
+
+/** Send to Board and Clear Board (labelled Send and Clear, to fit a phone), with the result of the last command under them. */
+function BoardButtons({
+  board: { connected, command, onSend, onClear },
+  liveSending,
+}: {
+  board: { connected: boolean; command: CommandState; onSend: () => void; onClear: () => void };
+  /** Send Live to Board is on: it keeps the board up to date, and its updates would fill the status below. */
+  liveSending: boolean;
+}) {
+  const busy = command.status === 'sending';
+  const off = !connected || busy || liveSending;
+  const why = !connected ? 'Unavailable: no board connected.' : liveSending ? 'Unavailable while Send Live to Board is on.' : undefined;
+  return (
+    <>
+      <View style={styles.buttonRow}>
+        <Button
+          title="Send"
+          icon="send"
+          accessibilityLabel="Send to Board"
+          style={{ flex: 1 }}
+          onPress={onSend}
+          disabled={off}
+          loading={busy && !liveSending && command.kind === 'pattern'}
+          accessibilityHint={why ?? 'Sends these pins to the board and waits for acknowledgement.'}
+        />
+        <Button
+          title="Clear"
+          icon="reset"
+          accessibilityLabel="Clear Board"
+          variant="destructive"
+          style={{ flex: 1 }}
+          onPress={onClear}
+          disabled={off}
+          loading={busy && !liveSending && command.kind === 'reset'}
+          accessibilityHint={why ?? 'Tells the board to lower every pin.'}
+        />
+      </View>
+      {!connected ? (
+        <Label variant="footnote" secondary>
+          Send and Clear move the board’s pins. Connect a board on the Device tab first.
+        </Label>
+      ) : !liveSending ? (
+        <CommandStatus command={command} connected={connected} onRetrySend={onSend} onRetryReset={onClear} />
+      ) : null}
+    </>
   );
 }
 

@@ -27,6 +27,7 @@ import type { Focus } from '@/imaging/smartCrop';
 import { mapRect, type SurfaceView } from '@/imaging/surface';
 import { type CaptureWatch, carryRect, watchCapture } from '@/state/conversionLogic';
 import { useCameraLock, useLockTarget } from '@/state/useCameraLock';
+import { useBoardActions } from '@/state/useBoardActions';
 import { useLiveSend } from '@/state/useLiveSend';
 import { NO_PAN, useConversionSettings } from '@/state/useConversionSettings';
 import { type PickedImage, useImageConversion } from '@/state/useImageConversion';
@@ -397,6 +398,14 @@ export default function ImageScreen() {
 
   const dropping = useImageDrop(load, setError);
 
+  const board = useBoardActions();
+  /** Sends the result, and makes it the preview so the Display tab shows what the board has. */
+  const sendResult = () => {
+    if (!shown) return;
+    setPattern(shown, 'From image');
+    void board.sendPattern(shown);
+  };
+
   const use = () => {
     if (!shown) return;
     setPattern(shown, 'From image');
@@ -645,6 +654,7 @@ export default function ImageScreen() {
                     onReset={resetPins}
                     onUse={use}
                     onSave={() => setSaveOpen(true)}
+                    board={{ connected: board.connected, command: board.state.command, onSend: sendResult, onClear: () => void board.lowerPins(false) }}
                     liveSend={live ? { on: liveSendOn, onChange: setLiveSendOn, connected: liveSend.connected, error: liveSend.error } : undefined}
                   />
                 ) : null}
