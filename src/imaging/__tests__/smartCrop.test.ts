@@ -4,7 +4,7 @@ import { findForeground, toRgb } from '../foreground';
 import type { Rect } from '../geometry';
 import { findColouredCurves } from '../curves';
 import { findPlotArea } from '../plotGrid';
-import { flatness, isPhotoLike, smartSubject } from '../smartCrop';
+import { flatness, isPhotoLike, PHOTO_GRAIN, pictureKind, smartSubject } from '../smartCrop';
 
 type C = [number, number, number];
 
@@ -90,6 +90,39 @@ describe('kind of image', () => {
     const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 40;
     const photo = image(200, 150, (x, y) => [100 + rand() + x * 0.2, 90 + rand(), 70 + rand() + y * 0.2]);
     expect(isPhotoLike(toRgb(photo), photo.width, photo.height)).toBe(true);
+  });
+
+  describe('whole pictures: photo or screenshot, by grain (pictureKind)', () => {
+    let seed = 11;
+    /** Sensor noise: a few levels either way. */
+    const noise = (a: number) => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5) * a;
+    const kind = (img: RasterImage) => pictureKind(toRgb(img), img.width, img.height);
+
+    it('a photo with a soft, out-of-focus background (smooth, but grainy): a photo, though flatness calls it a screenshot', () => {
+      // A blurred background is a smooth blend; the camera adds a little noise everywhere.
+      const img = image(320, 240, (x, y) => {
+        const subject = (x - 160) ** 2 / 60 ** 2 + (y - 130) ** 2 / 80 ** 2 < 1;
+        const base: C = subject ? [190, 120, 60] : [90 + x * 0.25, 140 + y * 0.1, 120];
+        return base.map((v) => v + noise(5)) as C;
+      });
+      expect(isPhotoLike(toRgb(img), img.width, img.height)).toBe(false); // the old measure is fooled
+      expect(kind(img).photo).toBe(true);
+    });
+
+    it('a photo with a blown-out white wall over half of it: still a photo', () => {
+      const img = image(320, 240, (x, y) => (y < 120 ? [255, 255, 255] : ([120 + noise(16), 90 + noise(16), 60 + noise(16)] as C)));
+      expect(kind(img).photo).toBe(true);
+    });
+
+    it('screenshots: a Desmos graph, and a smooth gradient page with text, are not photos', () => {
+      expect(kind(desmos()).photo).toBe(false);
+      const page = image(400, 260, (x, y) => {
+        if (y > 100 && y < 120 && x > 60 && x < 340 && x % 9 < 6) return [255, 255, 255]; // a line of text
+        return [79 + (x + y) * 0.2, 70 + x * 0.25, 229 - y * 0.15]; // a diagonal gradient
+      });
+      expect(kind(page).grain).toBeLessThan(PHOTO_GRAIN);
+      expect(kind(page).photo).toBe(false);
+    });
   });
 });
 

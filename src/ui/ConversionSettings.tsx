@@ -3,7 +3,7 @@ import { AccessibilityInfo } from 'react-native';
 import { smartCutoutAvailable } from '@/imaging/segment';
 import type { ConversionPrefs } from '@/state/useConversionSettings';
 import type { useImageConversion } from '@/state/useImageConversion';
-import { Section, Separator } from './components';
+import { Label, Section, Separator } from './components';
 import { EquationInput } from './EquationInput';
 import { GraphRangeControl } from './GraphRangeControl';
 import { SliderRow, SwitchRow } from './SettingRows';
@@ -64,7 +64,9 @@ export function ConversionSettings({
       />
       {s.removeBackground ? (
         <>
-          {smartCutoutAvailable && !live && (c.busyPhoto || s.cutoutOverride !== null) ? (
+          {/* Always offered for a still picture: on by itself for photos with a busy background, and anyone can turn
+              it on or off whatever the app made of the picture. */}
+          {smartCutoutAvailable && !live ? (
             <>
               <Separator />
               <SwitchRow
@@ -73,6 +75,7 @@ export function ConversionSettings({
                 value={c.cutoutOn}
                 onChange={(v) => set('cutoutOverride', v)}
               />
+              {__DEV__ && c.pictureCheck ? <PictureCheck check={c.pictureCheck} /> : null}
             </>
           ) : null}
           {fg.lines.length > 0 || s.linesOverride !== null ? (
@@ -150,5 +153,20 @@ export function ConversionSettings({
         </>
       )}
     </Section>
+  );
+}
+
+/**
+ * Development builds only: what the app made of the picture and why, to check one it misjudges. Photo or not by
+ * its grain (see pictureKind in smartCrop.ts), and Smart Cut-Out on by itself when a photo's edge is busy.
+ */
+function PictureCheck({ check }: { check: NonNullable<ReturnType<typeof useImageConversion>['pictureCheck']> }) {
+  const grain = `grain ${check.grain.toFixed(2)} ${check.photo ? '≥' : '<'} ${check.photoGrain}`;
+  const edge = check.edgeNoise === null ? '' : `, edge ${check.edgeNoise.toFixed(0)} ${check.edgeNoise > check.busyEdge ? '>' : '≤'} ${check.busyEdge}`;
+  const auto = check.photo && check.edgeNoise !== null && check.edgeNoise > check.busyEdge ? 'Smart Cut-Out on by itself' : 'Smart Cut-Out off by itself';
+  return (
+    <Label variant="footnote" secondary>
+      {`Debug: ${check.photo ? 'photo' : 'screenshot or drawing'} (${grain}${edge}). ${auto}.`}
+    </Label>
   );
 }

@@ -20,7 +20,7 @@ import { cellSizePx, inkFromGray, inkFromMask, patternFromSamples, renderCrop, s
 import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
 import { detectShape, fillHoles, renderShape } from '@/imaging/shapes';
-import { type Focus, type GraphView, isPhotoLike, keepPieceAt, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
+import { type Focus, type GraphView, keepPieceAt, PHOTO_GRAIN, pictureKind, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
 
 export interface PickedImage {
   uri: string;
@@ -95,14 +95,14 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   const removeLines = linesOverride ?? 'auto';
 
   // Smart Cut-Out (AI subject segmentation, on-device) only for photos with a busy background. Screenshots,
-  // graphs and drawings (lots of perfectly flat colour) never get it automatically: the AI keeps one solid
-  // object and would throw away thin curves.
+  // graphs and drawings (no photographic grain) never get it automatically: the AI keeps one solid object and
+  // would throw away thin curves.
   // Not while live (Smart Cut-Out is off then): no point paying for it on every frame.
-  const photoLike = useMemo(() => (picked && !live ? isPhotoLike(picked.rgb, w, h) : false), [picked, live, w, h]);
-  const busyPhoto = useMemo(
-    () => (picked && photoLike ? estimateBackground(picked.rgb, w, h).noise > BUSY_BACKGROUND : false),
-    [picked, photoLike, w, h],
-  );
+  const kind = useMemo(() => (picked && !live ? pictureKind(picked.rgb, w, h) : null), [picked, live, w, h]);
+  const photoLike = !!kind?.photo;
+  /** How busy the background along the picture's edge is (see estimateBackground). */
+  const edgeNoise = useMemo(() => (picked && photoLike ? estimateBackground(picked.rgb, w, h).noise : null), [picked, photoLike, w, h]);
+  const busyPhoto = edgeNoise !== null && edgeNoise > BUSY_BACKGROUND;
   const cutoutOn = removeBackground && smartCutoutAvailable && !live && (cutoutOverride ?? busyPhoto);
   const cuttingOut = cutoutOn && cutout?.for !== picked;
   const cutoutMask = cutoutOn && cutout?.for === picked ? (cutout.mask ?? undefined) : undefined;
@@ -318,6 +318,12 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     width: w,
     height: h,
     busyPhoto,
+    /**
+     * Why the picture was taken for a photo or not, and Smart Cut-Out switched on or not (shown in development
+     * builds, to check a picture the app misjudges): its grain against PHOTO_GRAIN, and how busy its edge is
+     * against BUSY_BACKGROUND.
+     */
+    pictureCheck: kind ? { ...kind, photoGrain: PHOTO_GRAIN, edgeNoise, busyEdge: BUSY_BACKGROUND } : null,
     cutoutOn,
     cuttingOut,
     cutoutError: cutoutOn ? cutout?.error : undefined,

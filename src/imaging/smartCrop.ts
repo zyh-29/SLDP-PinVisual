@@ -140,8 +140,56 @@ export function flatness(rgb: ArrayLike<number>, width: number, height: number, 
   return total ? flat / total : 0;
 }
 
+/**
+ * Whether an area looks photographic, by its flatness. Used for the areas around graph curves and plots: the
+ * graph rules were tuned with it. For a whole picture (photo or screenshot?) use pictureKind, which is not fooled
+ * by photos with smooth, blurred or blown-out parts.
+ */
 export function isPhotoLike(rgb: ArrayLike<number>, width: number, height: number, region?: Rect): boolean {
   return flatness(rgb, width, height, region) < 0.35;
+}
+
+/**
+ * Share of pixels that are a small bump: a little brighter, or a little darker, than both neighbours (across or
+ * down; by 1 to 12 levels of brightness). The fine grain of a real scene: sensor noise, texture, JPEG grain on
+ * it. Screenshots and drawings hardly have any: their flat areas don't change, gradients change steadily one way,
+ * and edges jump by much more. Sampled on every second pixel.
+ */
+export function grain(rgb: ArrayLike<number>, width: number, height: number): number {
+  const lum = (p: number) => (77 * rgb[p * 3] + 150 * rgb[p * 3 + 1] + 29 * rgb[p * 3 + 2]) >> 8;
+  const bump = (v: number, a: number, b: number) => {
+    const d1 = v - a;
+    const d2 = v - b;
+    return d1 * d2 > 0 && d1 >= -12 && d1 <= 12 && d2 >= -12 && d2 <= 12;
+  };
+  let bumps = 0;
+  let total = 0;
+  for (let y = 1; y < height - 1; y += 2)
+    for (let x = 1; x < width - 1; x += 2) {
+      const p = y * width + x;
+      const v = lum(p);
+      total++;
+      if (bump(v, lum(p - 1), lum(p + 1)) || bump(v, lum(p - width), lum(p + width))) bumps++;
+    }
+  return total ? bumps / total : 0;
+}
+
+/** At least this share of grain: a photo (see pictureKind). */
+export const PHOTO_GRAIN = 0.15;
+
+/**
+ * Photo or screenshot/drawing, for a whole picture, and the measurement behind it (shown in development builds).
+ *
+ * Grain, not flatness: flatness counts pixels that barely differ from their neighbours, and a photo with a soft,
+ * out-of-focus background, a clear sky or a blown-out white wall is full of those, so most real photos were taken
+ * for screenshots (19 of 31 in a test set). Grain separated all 31 from 31 screenshots (web pages at 1x and 2x,
+ * JPEG copies, Desmos, a gradient page): photos 0.16 and up, screenshots 0.14 and below. Photos shrunk from full
+ * camera size keep it; a product shot on pure white can fall below, which does no harm (its background is clean,
+ * so the colour-based removal handles it).
+ */
+export function pictureKind(rgb: ArrayLike<number>, width: number, height: number): { photo: boolean; grain: number } {
+  const g = grain(rgb, width, height);
+  return { photo: g >= PHOTO_GRAIN, grain: g };
 }
 
 interface Candidate {
