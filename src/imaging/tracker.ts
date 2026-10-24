@@ -9,6 +9,7 @@
  * smart crop is then pointed at that place, so it picks the same item, and its exact box refines the tracker
  * and slowly refreshes the template (the item looks a little different from a new angle).
  */
+import type { FrameShift } from './cameraShake';
 import { iou, type Point, type Rect } from './geometry';
 
 /** Brightness of a frame, shrunk so a search takes a few milliseconds. */
@@ -166,8 +167,13 @@ export class TargetTracker {
     return { x: (b.x + this.rel.x * b.width) * this.k, y: (b.y + this.rel.y * b.height) * this.k };
   }
 
-  /** Finds the item in a new frame. Null when not locked or after losing it for too long (the lock is then released). */
-  track(f: SmallGray): TrackResult | null {
+  /**
+   * Finds the item in a new frame. Null when not locked or after losing it for too long (the lock is then released).
+   * `shake`: how far the whole picture moved since the last frame (cameraShake.ts). The search then starts where
+   * that puts the item, instead of where its recent movement would: a shaking hand reverses every few frames, so
+   * "keeps going the same way" points the wrong way.
+   */
+  track(f: SmallGray, shake?: FrameShift | null): TrackResult | null {
     if (!this.template || !this.box) return null;
     if (f.k !== this.k) {
       // The frame size changed (camera flipped or rotated): the old picture no longer applies.
@@ -178,8 +184,8 @@ export class TargetTracker {
     const tw = TW;
     const th = this.th;
     const prev = this.box;
-    const cx = prev.x + prev.width / 2 + this.velocity.x;
-    const cy = prev.y + prev.height / 2 + this.velocity.y;
+    const cx = prev.x + prev.width / 2 + (shake ? shake.dx / f.k : this.velocity.x);
+    const cy = prev.y + prev.height / 2 + (shake ? shake.dy / f.k : this.velocity.y);
     const reach = 0.35 * Math.max(prev.width, prev.height) + 0.06 * Math.max(f.w, f.h);
     const patch = new Float32Array(tw * th);
     let best = { score: -2, box: prev };

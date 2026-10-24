@@ -10,6 +10,7 @@
  * step, ready to take over). When they don't, the template searches. The lock is released after GIVE_UP frames
  * in a row with neither finding it. Pure, unit tested.
  */
+import { frameShift } from './cameraShake';
 import { type FeatureTrack, FeatureTracker } from './featureTracker';
 import { type GrayImage, grayImage } from './features';
 import { iou, type Point, type Rect } from './geometry';
@@ -49,6 +50,8 @@ export class ItemTracker {
   private lastPoints: FeatureTrack | null = null;
   /** How the item was found in the last frame. */
   by: 'points' | 'template' | null = null;
+  /** The last frame looked at, to measure the camera's shake against (see cameraShake.ts). */
+  private previous: SmallGray | null = null;
 
   get locked() {
     return this.template.locked || this.points.locked;
@@ -61,6 +64,7 @@ export class ItemTracker {
     this.missed = 0;
     this.last = null;
     this.by = null;
+    this.previous = f.small;
     return t || p;
   }
 
@@ -70,13 +74,17 @@ export class ItemTracker {
     this.missed = 0;
     this.last = null;
     this.by = null;
+    this.previous = null;
   }
 
   track(f: TrackFrame): TrackResult | null {
     if (!this.locked) return null;
     this.lastPoints = null;
+    // A shaking hand moves the whole picture: both ways look for the item where the shake put it.
+    const shake = this.previous ? frameShift(this.previous, f.small) : null;
+    this.previous = f.small;
     if (this.points.locked) {
-      const r = this.points.track(f.gray);
+      const r = this.points.track(f.gray, shake);
       if (r && r.inliers >= SURE_INLIERS && r.spread >= SURE_SPREAD) {
         this.lastPoints = r;
         if (r.inliers >= SOLID_INLIERS && r.spread >= SOLID_SPREAD && this.points.renew(f.gray, r)) this.lastPoints = null;
@@ -92,7 +100,7 @@ export class ItemTracker {
       }
     }
     if (this.template.locked) {
-      const r = this.template.track(f.small);
+      const r = this.template.track(f.small, shake);
       if (r) {
         // The template reports a weak match (below its own threshold) while it holds the last place.
         const found = r.score >= 0.45;

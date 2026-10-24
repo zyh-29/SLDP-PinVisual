@@ -454,7 +454,7 @@ export default function ImageScreen() {
                       if (live?.kind === 'camera') {
                         // Lock onto the tapped item from now on (another graph may have other units: read them again),
                         // and focus the lens there (where the browser allows it).
-                        lock.tap(point);
+                        lock.tap(point, picked.rgb);
                         dropCapture();
                         c.resetGraph();
                         const vw = surface?.frameWidth ?? w;

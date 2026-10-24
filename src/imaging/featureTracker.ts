@@ -15,6 +15,7 @@
  * The kept points are renewed from the current frame when the item has come much closer, gone much further or
  * turned a lot, so the descriptions keep matching.
  */
+import type { FrameShift } from './cameraShake';
 import { detectFeatures, type GrayImage, type Keypoint, matchFeatures } from './features';
 import { cross, type Point, polygonArea, type Rect } from './geometry';
 
@@ -309,8 +310,12 @@ export class FeatureTracker {
     this.last = null;
   }
 
-  /** Where the item is in this frame; null when it isn't found here (covered, out of view, too blurred). */
-  track(img: GrayImage): FeatureTrack | null {
+  /**
+   * Where the item is in this frame; null when it isn't found here (covered, out of view, too blurred).
+   * `shake`: how far the whole picture moved since the last frame (cameraShake.ts): the points are looked for that
+   * much further on.
+   */
+  track(img: GrayImage, shake?: FrameShift | null): FeatureTrack | null {
     if (!this.points.length || img.k !== this.k) return null;
     const frame = detectFeatures(img, { max: 500 });
     const diag = Math.hypot(this.corners[2].x - this.corners[0].x, this.corners[2].y - this.corners[0].y);
@@ -331,7 +336,13 @@ export class FeatureTracker {
     // After a big jump "near" can land on a look-alike that moved into the item's old place (the next graph's
     // identical gridlines). So when the two disagree about where the item is, "wide" wins.
     const last = this.last;
-    const near = last ? attempt({ at: (i) => last.map(this.points[i]), radius: 0.25 * diag * last.scale + 12 }) : null;
+    const sx = shake ? shake.dx / this.k : 0;
+    const sy = shake ? shake.dy / this.k : 0;
+    const expected = (i: number) => {
+      const p = last!.map(this.points[i]);
+      return { x: p.x + sx, y: p.y + sy };
+    };
+    const near = last ? attempt({ at: expected, radius: 0.25 * diag * last.scale + 12 }) : null;
     const wide = attempt();
     let est = near ?? wide;
     if (near && wide) {
