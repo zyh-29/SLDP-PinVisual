@@ -9,6 +9,7 @@ Everything runs on the device. There are no accounts and nothing is sent to a
 server.
 
 - Firmware protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md)
+- Board firmware (ESP32 + PCA9685), wiring and setup: [firmware/README.md](firmware/README.md)
 - Grid size and hardware settings: `src/config/hardware.ts` (the grid is 5 × 6 for now)
 
 Built with Expo (SDK 58), React Native and TypeScript.
@@ -37,7 +38,8 @@ Built with Expo (SDK 58), React Native and TypeScript.
 | Web layout (laptop, tablet, phone) | Works |
 | Web Bluetooth (Chrome, Edge) | Written, never run against a board |
 | Letter recognition | Not started |
-| BLE UUIDs | Placeholders until the firmware picks real ones |
+| Board firmware (ESP32 + PCA9685) | Written. Its protocol code passes its tests on a computer; not yet run on an ESP32 |
+| BLE UUIDs | Set; the app and the firmware use the same ones (checked by a test) |
 | Checking where the pins really are | Not possible: the hardware has no position sensors. The app only knows the board acknowledged a command |
 
 ## Project layout
@@ -240,8 +242,7 @@ The simulator can't check these:
 1. Permission prompts: Bluetooth, Android "Nearby devices", location on
    Android 11 and older, and the photo library.
 2. Scanning finds the ESP32 (named `PinVisual…`).
-3. Connecting finds the service and both characteristics. With the
-   placeholder UUIDs this fails with a clear message, which is expected.
+3. Connecting finds the service and both characteristics.
 4. The Device tab shows the negotiated MTU.
 5. Send: the firmware receives the right bytes (see the test vectors in
    `docs/PROTOCOL.md`) and the app shows "Board received pattern".

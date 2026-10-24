@@ -21,14 +21,12 @@ export const GRID = {
 export const GRID_LIMITS = { maxRows: 64, maxCols: 64 } as const;
 
 /**
- * BLE identifiers.
- *
- * PLACEHOLDERS: these UUIDs were generated for this app and are NOT yet defined
- * by the ESP32 firmware. Replace them with the firmware's values, then set
- * `uuidsArePlaceholders` to false.
+ * BLE identifiers. The board firmware (firmware/pinvisual-esp32/config.h) uses the same ones; a test checks that
+ * they match (src/config/__tests__/firmwareConfig.test.ts). Change both together.
  */
 export const BLE = {
-  uuidsArePlaceholders: true,
+  /** True while no firmware defines these IDs (the Device tab then warns). */
+  uuidsArePlaceholders: false,
   /** Advertised name prefix used to highlight likely boards during a scan. */
   deviceNamePrefix: 'PinVisual',
   /** PLACEHOLDER primary service UUID. */

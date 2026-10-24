@@ -55,6 +55,7 @@
     "lint": "expo lint",
     "test": "jest",
     "typecheck": "tsc --noEmit",
+    "test:firmware": "mkdir -p node_modules/.cache && c++ -std=c++17 -Wall -Wextra -Werror -o node_modules/.cache/firmware-protocol-test firmware/test/protocol_test.cpp firmware/pinvisual-esp32/protocol.cpp && node_modules/.cache/firmware-protocol-test",
     "build:android:dev": "npx eas-cli@latest build --profile development --platform android",
     "postinstall": "node scripts/copy-ort.mjs"
   },

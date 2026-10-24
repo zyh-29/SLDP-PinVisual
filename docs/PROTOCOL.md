@@ -1,8 +1,9 @@
-# PinVisual BLE Protocol v1 (proposed)
+# PinVisual BLE Protocol v1
 
-This is what the ESP32 firmware must implement to work with the app. It is a
-**proposal**: the app and its test firmware model implement it, but no real
-firmware has been tested against it yet.
+This is what the ESP32 firmware must implement to work with the app. The board
+firmware in [`firmware/pinvisual-esp32/`](../firmware/README.md) implements it.
+Its protocol code is tested on a computer (`npm run test:firmware`), but it
+hasn't been run on a real ESP32 yet.
 
 Source of truth in the app: `src/protocol/messages.ts`, `src/protocol/chunking.ts`,
 `src/protocol/crc16.ts`. The test firmware model in
@@ -19,9 +20,9 @@ the firmware side (in TypeScript), used by the automated tests only.
 | Command characteristic | `7a1e0002-3c4b-4f2a-9b8e-5d6c7b8a9f01` | **Write With Response** | app → board |
 | Ack characteristic | `7a1e0003-3c4b-4f2a-9b8e-5d6c7b8a9f01` | **Notify** | board → app |
 
-- These UUIDs are placeholders generated for the app. When the firmware picks
-  its own, update `BLE` in `src/config/hardware.ts` and set
-  `uuidsArePlaceholders: false`.
+- The app (`BLE` in `src/config/hardware.ts`) and the firmware
+  (`firmware/pinvisual-esp32/config.h`) use these UUIDs. A test checks that the
+  two match; change both together.
 - Advertise a name starting with **`PinVisual`** (e.g. `PinVisual-01`) and, if
   space allows, the service UUID. The app lists such devices first.
 - Accept an MTU request up to 185 (Android asks for 185; iOS negotiates itself).
@@ -171,7 +172,10 @@ ACK OK for commandId 1 / SET_PATTERN: `01 80 01 00 02 00 01 00 ed 46`
 
 ACK OK for commandId 2 / RESET: `01 80 02 00 02 00 02 00 5e dd`
 
-## 8. Firmware reference (C, untested sketch)
+## 8. Firmware reference
+
+The full firmware is in `firmware/pinvisual-esp32/` (see its README for wiring,
+flashing and calibration). The core of it, in C:
 
 ```c
 uint16_t crc16_ccitt_false(const uint8_t *d, size_t n) {
@@ -196,10 +200,13 @@ bool pin_raised(const uint8_t *bitmap, int index) {
 
 ## 9. Open questions for the hardware team
 
-- Real UUIDs and the advertised name.
 - Final grid size and pin pitch (update `GRID` in `src/config/hardware.ts`).
 - Should the ACK wait until servos finish moving? (If so, keep it under 3 s or
   raise `ackTimeoutMs`.)
-- Power budget: moving 40 servos at once may brown out the supply. Firmware may
-  need to stagger moves, which affects ACK timing.
-- Should the board lower all pins on disconnect or power-up?
+- Power budget: moving every servo at once may brown out the supply. The
+  firmware moves them in groups (`PV_MOVE_GROUP`, `PV_MOVE_PAUSE_MS` in
+  `config.h`): 30 pins in groups of 6 take about 0.1 s, well inside the 3 s
+  ACK timeout.
+- Should the board lower all pins on disconnect or power-up? The firmware lowers
+  them on power-up and keeps them on disconnect; both are settings in
+  `config.h`.
