@@ -96,6 +96,11 @@ export function refineSubject(
   region: Rect,
   /** Where the subject is (GrabCut's rectangle), e.g. what the smart crop picked; else the first mask's box. */
   subjectBox?: Rect,
+  /**
+   * Pixels known to be background although inside the subject's box (shadows found by removeShadows): sure
+   * background. Otherwise a shadow tinted like the subject (a red apple's) is learnt as subject and put back.
+   */
+  knownBackground?: Uint8Array,
 ): Uint8Array | null {
   const { x0, y0, x1, y1 } = bounds(region, width, height);
   const rw = x1 - x0;
@@ -114,6 +119,7 @@ export function refineSubject(
   const sb = new Uint32Array(n);
   const sf = new Uint32Array(n);
   const sc = new Uint32Array(n);
+  const sk = new Uint32Array(n);
   let firstArea = 0;
   let bx0 = width;
   let by0 = height;
@@ -130,6 +136,7 @@ export function refineSubject(
       sg[c] += rgb[i + 1];
       sb[c] += rgb[i + 2];
       sc[c]++;
+      if (knownBackground?.[p]) sk[c]++;
       if (mask[p]) {
         sf[c]++;
         firstArea++;
@@ -178,7 +185,7 @@ export function refineSubject(
     for (let cx = 0; cx < sw; cx++) {
       const c = cy * sw + cx;
       const edge = cx === 0 || cy === 0 || cx === sw - 1 || cy === sh - 1;
-      if ((edge && frac[c] < 0.5) || !inBox(cx, cy)) {
+      if ((edge && frac[c] < 0.5) || !inBox(cx, cy) || sk[c] * 2 > sc[c]) {
         sure[c] = 1;
         sureCount++;
       }

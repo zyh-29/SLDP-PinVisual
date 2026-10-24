@@ -62,6 +62,28 @@ describe('typed equations', () => {
     expect(red).toBeGreaterThan(500);
   });
 
+  it('Whole on a wavy curve: only the waves the pins can show, not a board full of pins', () => {
+    const pinsFor = (eq: string) => {
+      const { raster, scale } = renderEquation(parseEquation(eq));
+      const { width: W, height: H } = EQUATION_PLOT;
+      const r = smartSubject(toRgb(raster), W, H, { tolerance: 'auto', minPieceRatio: 0.15, removeLines: 'auto' }, undefined, undefined, {
+        range: 'whole',
+        scale,
+        rows: 5,
+        cols: 6,
+        pinPitchRatio: 1,
+      });
+      return { r, raised: traceLinePins(r.mask!, W, H, r.box, 5, 6, 1, true).cells.filter(Boolean).length };
+    };
+    // 2 sin x over the plot is 3 waves; 6 columns show 1 clearly (3 waves raised nearly every pin).
+    const wave = pinsFor('2sin(x)');
+    expect(wave.r.graph!.waves).toEqual({ shown: 1, total: 3 });
+    expect(wave.raised).toBeLessThanOrEqual(15);
+    // Curves without waves are shown whole, as before.
+    expect(pinsFor('x^2').r.graph!.waves ?? null).toBeNull();
+    expect(pinsFor('x^3/5 - 2x').r.graph!.waves ?? null).toBeNull();
+  });
+
   it('1/x: two branches, no line joining them across the gap', () => {
     const { raster } = renderEquation(parseEquation('1/x'));
     const { width: W, height: H } = EQUATION_PLOT;

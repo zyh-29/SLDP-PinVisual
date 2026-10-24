@@ -364,3 +364,58 @@ describe('removing anti-aliased axes', () => {
     expect(fg.mask[60 * W + 150]).toBe(0); // vertical axis gone
   });
 });
+
+describe('shadows', () => {
+  const W = 320;
+  const H = 240;
+  const disc = (x: number, y: number) => Math.hypot(x - 150, y - 110) <= 60;
+  /** A soft shadow down and to the right: 60% as bright in the middle, fading out over 18 px. */
+  const shade = (x: number, y: number) => {
+    const d = Math.hypot((x - 168) / 1.15, y - 140) - 58;
+    return d < 0 ? 0.6 : d < 18 ? 0.6 + 0.4 * (d / 18) : 1;
+  };
+  const table: [number, number, number] = [245, 243, 238];
+  const picture = (subject: [number, number, number], shadow: boolean, noise = 0) => {
+    let seed = 3;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5) * 2 * noise;
+    return toRgb(
+      image(W, H, (x, y) => {
+        const c = disc(x, y) ? subject : shadow ? (table.map((v) => v * shade(x, y)) as [number, number, number]) : table;
+        return c.map((v) => Math.max(0, Math.min(255, v + rnd()))) as [number, number, number];
+      }),
+    );
+  };
+  /** Pixels kept outside the disc, and pixels of the disc lost. */
+  const errors = (mask: Uint8Array) => {
+    let extra = 0;
+    let missed = 0;
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const m = mask[y * W + x];
+        if (m && !disc(x, y)) extra++;
+        if (!m && disc(x, y)) missed++;
+      }
+    return { extra, missed };
+  };
+
+  it('a soft shadow is background, in a drawing and in a photo', () => {
+    for (const noise of [0, 10]) {
+      const fg = findForeground(picture([200, 40, 40], true, noise), W, H, { tolerance: 'auto', minPieceRatio: 0.15, camera: noise > 0, refine: true });
+      const e = errors(fg.mask);
+      expect(e.extra).toBeLessThan(100); // the shadow covers about 9500 px
+      expect(e.missed).toBeLessThan(100);
+    }
+  });
+
+  it('a light grey object with a sharp edge is kept, though it is a darker shade of the table', () => {
+    const fg = findForeground(picture([205, 204, 200], false, 6), W, H, { tolerance: 'auto', minPieceRatio: 0.15, camera: true, refine: true });
+    expect(errors(fg.mask).missed).toBeLessThan(100);
+  });
+
+  it('a dark grey object keeps its edge where its own shadow begins', () => {
+    const fg = findForeground(picture([90, 90, 90], true, 6), W, H, { tolerance: 'auto', minPieceRatio: 0.15, camera: true, refine: true });
+    const e = errors(fg.mask);
+    expect(e.extra).toBeLessThan(100);
+    expect(e.missed).toBeLessThan(100);
+  });
+});

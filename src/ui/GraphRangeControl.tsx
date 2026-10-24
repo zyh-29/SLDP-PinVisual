@@ -41,11 +41,18 @@ export function GraphRangeControl({
   const step = panStep(range);
   const move = (dx: number, dy: number) => onPan({ x: pan.x + dx * step, y: pan.y + dy * step });
   const moved = pan.x !== 0 || pan.y !== 0;
-  const summary = !readingNumbers && range !== 'whole' ? describeGraph(graph) : null;
-  const { window: win, scale, axes } = graph;
+  const { window: win, scale, axes, waves } = graph;
+  // Whole curve with more waves than the pins can show: say how many are shown, and how to see the rest.
+  const wavesNote =
+    range === 'whole' && waves
+      ? `The curve has ${waves.total} waves, more than the pins can show clearly: the middle ${waves.shown === 1 ? 'one is' : `${waves.shown} are`} shown. Pick ±2, ±5 or ±10 to look along it.`
+      : null;
+  const summary = wavesNote ?? (!readingNumbers && range !== 'whole' ? describeGraph(graph) : null);
   const shown =
     range === 'whole'
-      ? 'Whole curve'
+      ? waves
+        ? `${waves.shown} of ${waves.total} waves`
+        : 'Whole curve'
       : readingNumbers
         ? 'Reading numbers…'
         : win && scale && axes.originX !== null

@@ -21,7 +21,19 @@
 import { CAMERA_CURVE_SATURATIONS, type CurveResult, dropFramedPieces, enclosesFill, findCurves, hasLongStroke } from './curves';
 import { findForeground } from './foreground';
 import { area, clip, contains, distanceTo, expand, fullRect, inset, overlaps, type Point, type Rect, type Rgb, union } from './geometry';
-import { curveKeyPoint, followZoom, type GraphAxes, type GraphScale, graphWindow, type GraphWindow, type KeyPoint, readAxes, rescale, tidyKeyPoint } from './graph';
+import {
+  curveKeyPoint,
+  followZoom,
+  type GraphAxes,
+  type GraphScale,
+  graphWindow,
+  type GraphWindow,
+  type KeyPoint,
+  readAxes,
+  rescale,
+  tidyKeyPoint,
+  wavesThatFit,
+} from './graph';
 import { dilate, labelComponents } from './masks';
 import { findGrids, type Grid } from './plotGrid';
 
@@ -89,6 +101,8 @@ export interface GraphInfo {
   window: Rect | null;
   /** How the window fits the range asked for (see graphWindow); null for the whole curve. */
   fit: GraphWindow['fit'] | null;
+  /** Whole curve with more waves than the pins can show: how many are shown, of how many (see wavesThatFit). */
+  waves?: { shown: number; total: number } | null;
 }
 
 export interface SmartCropOptions {
@@ -359,7 +373,12 @@ function subjectIn(
     const key = found && scale ? tidyKeyPoint(found, axes, scale) : found;
     const info: GraphInfo = { axes, key, scale, window: null, fit: null };
     result = { ...result, target: grid.plot };
-    if (view.range === 'whole' || !key || !scale) return { ...result, graph: info };
+    if (view.range === 'whole') {
+      // Too many waves for the pins: as many whole waves as fit, around the middle.
+      const fit = wavesThatFit(key, result.box, view.cols);
+      return fit ? { ...result, box: fit.box, graph: { ...info, waves: { shown: fit.shown, total: fit.total } } } : { ...result, graph: info };
+    }
+    if (!key || !scale) return { ...result, graph: info };
     const win = graphWindow(key, scale, view.range, axes.plot, view.rows, view.cols, view.pinPitchRatio, view.pan);
     // The window may reach past the plot (zoomed in, see graphWindow): only the plot part is analysed.
     return { ...result, box: win.box, context: clip(union(result.context, clip(win.box, axes.plot)), region), graph: { ...info, window: win.box, fit: win.fit } };

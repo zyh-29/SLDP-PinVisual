@@ -7,6 +7,7 @@ import {
   labelBands,
   MIN_PX_PER_PIN,
   tidyKeyPoint,
+  wavesThatFit,
   findLabelBoxes,
   type GraphAxes,
   graphWindow,
@@ -399,5 +400,24 @@ describe('the grid guess (no readable numbers)', () => {
     const s = scaleFromGrid({ plot, originX: 1, originY: 1, majorX: 86.4, majorY: 125.7 })!;
     expect(s.pxPerUnitX).toBeCloseTo(86.4, 1);
     expect(s.pxPerUnitY).toBeCloseTo(125.7, 1);
+  });
+});
+
+describe('whole curve: waves the pins can show', () => {
+  const box = { x: 0, y: 50, width: 600, height: 200 };
+  const key = (turns: number[]) => ({ x: 300, y: 150, place: 'centre' as const, kind: 'inflection' as const, turns });
+
+  it('3 waves on 6 columns: the middle wave, whole, at the full height of the curve', () => {
+    const fit = wavesThatFit(key([50, 150, 250, 350, 450, 550]), box, 6)!;
+    expect(fit).toMatchObject({ shown: 1, total: 3 });
+    // Turns 250 and 350, half a wave (50 px) beyond each.
+    expect(fit.box).toEqual({ x: 200, y: 50, width: 200, height: 200 });
+    // 8 columns show 2 waves.
+    expect(wavesThatFit(key([50, 150, 250, 350, 450, 550]), box, 8)).toMatchObject({ shown: 2, total: 3 });
+  });
+
+  it('a curve that fits (the two turns of a cubic, one wave) is shown whole', () => {
+    expect(wavesThatFit(key([200, 400]), box, 6)).toBeNull();
+    expect(wavesThatFit({ x: 300, y: 150, place: 'bottom', kind: 'vertex' }, box, 6)).toBeNull();
   });
 });

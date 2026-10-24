@@ -1,4 +1,4 @@
-import { convexHull, detectShape, fillHoles, isMirrorSymmetric, outlineOf, polygonArea, renderShape, simplifyConvex } from '../shapes';
+import { closeShape, convexHull, detectShape, fillHoles, isMirrorSymmetric, outlineOf, polygonArea, renderShape, simplifyConvex } from '../shapes';
 
 const W = 120;
 const H = 100;
@@ -51,6 +51,31 @@ describe('fill and outline', () => {
     const filled = fillHoles(ring, W, H, full);
     expect(filled[50 * W + 60]).toBe(1); // centre now solid
     expect(filled[5 * W + 5]).toBe(0); // outside stays empty
+  });
+
+  it('keeps real holes: a donut and a thick frame stay open, and are not snapped to a solid shape', () => {
+    const donut = maskOf((x, y) => {
+      const d = Math.hypot(x - 60, y - 50);
+      return d >= 20 && d <= 45;
+    });
+    const d = closeShape(donut, W, H, full);
+    expect(d.mask[50 * W + 60]).toBe(0);
+    expect(d.keptHoles).toBe(1);
+    expect(detectShape(d.mask, W, H, full)).toBeNull();
+    const frame = maskOf((x, y) => {
+      const a = Math.max(Math.abs(x - 60), Math.abs(y - 50));
+      return a <= 45 && a >= 22;
+    });
+    const f = closeShape(frame, W, H, full);
+    expect(f.mask[50 * W + 60]).toBe(0);
+    expect(f.keptHoles).toBe(1);
+  });
+
+  it('fills specks: pinholes in a solid shape', () => {
+    const speckled = maskOf((x, y) => Math.hypot(x - 60, y - 50) <= 45 && !(Math.abs(x - 60.5) < 1 && Math.abs(y - 50.5) < 1));
+    const r = closeShape(speckled, W, H, full);
+    expect(r.mask[50 * W + 60]).toBe(1);
+    expect(r.keptHoles).toBe(0);
   });
 
   it('keeps only the edge for outline style', () => {

@@ -10,6 +10,7 @@
  */
 import type { Pattern, PinValue } from '@/domain/pattern';
 import { bounds, convexHull, cross, polygonArea, type Rect } from './geometry';
+import { labelComponents } from './masks';
 
 // Kept here too for code that thinks of them as shape helpers.
 export { convexHull, polygonArea };
@@ -29,11 +30,25 @@ export interface DetectedShape {
   points: Point[];
 }
 
+/** A hole this small a share of its shape (with the hole) is a speck: filled whatever the shape. */
+const PINHOLE = 0.03;
+/** A shape whose band is thinner than this share of the hole's width is a drawn outline: the hole is filled. */
+const OUTLINE = 0.3;
+
 /**
- * Fills areas enclosed by content inside `region`. Gaps of a pixel or two in
- * the outline are bridged first, so slightly broken drawings still close.
+ * Fills areas enclosed by content inside `region`: a drawn outline becomes a solid shape. Gaps of a pixel or two
+ * in the outline are bridged first, so slightly broken drawings still close.
+ *
+ * Real holes stay: a donut, a ring, a picture frame, the letter O. A hole is filled when the shape around it is a
+ * thin outline compared to the hole (band thinner than OUTLINE x the hole's width; a drawn circle is a few pixels
+ * round a wide hole, a donut's band is as wide as its hole), or when it is a speck (pinholes from noise).
  */
 export function fillHoles(mask: Uint8Array, width: number, height: number, region: Rect, gap = 1): Uint8Array {
+  return closeShape(mask, width, height, region, gap).mask;
+}
+
+/** fillHoles, also saying how many real holes were kept (a shape with holes can't be snapped to a solid shape). */
+export function closeShape(mask: Uint8Array, width: number, height: number, region: Rect, gap = 1): { mask: Uint8Array; keptHoles: number } {
   const { x0, y0, x1, y1 } = bounds(region, width, height);
   // Closed = mask grown by `gap` pixels.
   const closed = new Uint8Array(mask.length);
@@ -74,20 +89,74 @@ export function fillHoles(mask: Uint8Array, width: number, height: number, regio
     if (y > y0) push(x, y - 1);
     if (y < y1 - 1) push(x, y + 1);
   }
-  const out = mask.slice();
+  // The enclosed pixels: open interior, or the grown ring on the inside of the stroke (not touching the outside).
+  const enclosed = new Uint8Array(mask.length);
   for (let y = y0; y < y1; y++)
     for (let x = x0; x < x1; x++) {
       const p = y * width + x;
       if (outside[p] || mask[p]) continue;
-      // Enclosed: either open interior, or the grown ring on the inside of the stroke (not touching the outside).
       const touchesOutside =
         (x > x0 && outside[p - 1]) ||
         (x < x1 - 1 && outside[p + 1]) ||
         (y > y0 && outside[p - width]) ||
         (y < y1 - 1 && outside[p + width]);
-      if (!closed[p] || !touchesOutside) out[p] = 1;
+      if (!closed[p] || !touchesOutside) enclosed[p] = 1;
     }
-  return out;
+
+  // Each hole against the piece of the shape around it: its band's width (area / half its edge, see strokeWidth),
+  // and the hole's own width (of a circle with its area).
+  const pieces = labelComponents(mask, width, height);
+  const edges = new Float64Array(pieces.components.length);
+  for (let y = y0; y < y1; y++)
+    for (let x = x0; x < x1; x++) {
+      const p = y * width + x;
+      if (!mask[p]) continue;
+      if (x === 0 || y === 0 || x === width - 1 || y === height - 1 || !mask[p - 1] || !mask[p + 1] || !mask[p - width] || !mask[p + width])
+        edges[pieces.labels[p] - 1]++;
+    }
+  const holes = labelComponents(enclosed, width, height);
+  const fill = new Uint8Array(holes.components.length);
+  let keptHoles = 0;
+  holes.components.forEach((hole, i) => {
+    // The piece around it: the one most of the hole's rim touches.
+    const touching = new Map<number, number>();
+    const { x: hx, y: hy, width: hw, height: hh } = hole.box;
+    for (let y = Math.max(y0, hy - 1); y < Math.min(y1, hy + hh + 1); y++)
+      for (let x = Math.max(x0, hx - 1); x < Math.min(x1, hx + hw + 1); x++) {
+        const p = y * width + x;
+        const l = pieces.labels[p];
+        if (!l) continue;
+        const nextToHole =
+          (x > x0 && holes.labels[p - 1] === i + 1) ||
+          (x < x1 - 1 && holes.labels[p + 1] === i + 1) ||
+          (y > y0 && holes.labels[p - width] === i + 1) ||
+          (y < y1 - 1 && holes.labels[p + width] === i + 1);
+        if (nextToHole) touching.set(l, (touching.get(l) ?? 0) + 1);
+      }
+    let around = 0;
+    let most = 0;
+    touching.forEach((n, l) => {
+      if (n > most) {
+        most = n;
+        around = l;
+      }
+    });
+    if (!around) {
+      fill[i] = 1;
+      return;
+    }
+    const area = pieces.components[around - 1].area;
+    const band = area / Math.max(1, edges[around - 1] / 2);
+    const holeWidth = 2 * Math.sqrt(hole.area / Math.PI);
+    const speck = hole.area < PINHOLE * (area + hole.area);
+    const outline = band < OUTLINE * holeWidth;
+    if (speck || outline) fill[i] = 1;
+    else keptHoles++;
+  });
+
+  const out = mask.slice();
+  for (let p = 0; p < out.length; p++) if (enclosed[p] && fill[holes.labels[p] - 1]) out[p] = 1;
+  return { mask: out, keptHoles };
 }
 
 /** Keeps the edge pixels of the mask (content with a background 4-neighbour). */

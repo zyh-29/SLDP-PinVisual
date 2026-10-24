@@ -275,6 +275,8 @@ export interface KeyPoint {
   kind: 'vertex' | 'inflection' | 'intercept' | 'root' | 'start' | 'asymptote' | 'shape' | 'middle';
   /** The traced curve, for 'follow': its first column and one height per column. */
   trace?: { x0: number; ys: number[] };
+  /** Where the curve turns (picture columns, left to right), when it turns more than once (a wave, a cubic). */
+  turns?: number[];
 }
 
 /** Turning points of a sequence whose swing on both sides is at least `h` (a zig-zag filter, ignores noise). */
@@ -604,7 +606,7 @@ function analyseCurve(mask: Float32Array, width: number, height: number, axes: G
     // Halfway between them: exact for a cubic (symmetric about its middle) and a wave, and steadier than locating
     // the bend itself on a steep stretch.
     const i = Math.round((turns[pick].i + turns[pick + 1].i) / 2);
-    return wrap({ ...at(i), place: 'centre', kind: 'inflection' }, 2);
+    return wrap({ ...at(i), place: 'centre', kind: 'inflection', turns: turns.map((t) => x0 + t.i) }, 2);
   }
   if (bends.length) {
     const i = bends.reduce((p, q) => (dist(q.i) < dist(p.i) ? q : p)).i;
@@ -641,6 +643,51 @@ function analyseCurve(mask: Float32Array, width: number, height: number, axes: G
   let best = 0;
   for (let i = 1; i < n; i++) if (dist(i) < dist(best)) best = i;
   return follow(best, 'middle');
+}
+
+// ---------- Whole curve ----------
+
+/**
+ * Pin columns one wave needs to read as a wave (down, up and back). With fewer, each column holds a steep stretch
+ * that crosses every row, and the wave fills in: 2 waves on 6 columns raised 19 of 30 pins, 1 wave 13 in a clear
+ * trough-and-peak.
+ */
+export const COLUMNS_PER_WAVE = 4;
+
+/**
+ * The whole curve, unless it has more waves than the pins can show: then as many whole waves as fit, the ones
+ * nearest the key point (the middle of the graph). On 6 columns that is 1 wave, on 8 columns 2; a sine drawn over 3
+ * waves would raise nearly every pin. Null when everything fits (show the whole curve as it is).
+ *
+ * `box` is the whole curve's box; the part returned keeps its height (the waves' full swing) and is cut across at
+ * half a wave beyond the outer turns shown, so every wave shown is complete.
+ */
+export function wavesThatFit(key: KeyPoint | null, box: Rect, cols: number): { box: Rect; shown: number; total: number } | null {
+  const turns = key?.turns;
+  if (!key || !turns || turns.length < 3) return null;
+  // Two turns to a wave (a peak and a trough); whole waves only.
+  const maxTurns = 2 * Math.max(1, Math.floor(cols / COLUMNS_PER_WAVE));
+  if (turns.length <= maxTurns) return null;
+  const gaps = turns.slice(1).map((t, i) => t - turns[i]);
+  const half = median(gaps) / 2;
+  // The run of maxTurns turns whose middle is nearest the key point.
+  let start = 0;
+  let best = Infinity;
+  for (let a = 0; a + maxTurns <= turns.length; a++) {
+    const mid = (turns[a] + turns[a + maxTurns - 1]) / 2;
+    const d = Math.abs(mid - key.x);
+    if (d < best) {
+      best = d;
+      start = a;
+    }
+  }
+  const x0 = Math.max(box.x, turns[start] - half);
+  const x1 = Math.min(box.x + box.width, turns[start + maxTurns - 1] + half);
+  return {
+    box: { x: x0, y: box.y, width: x1 - x0, height: box.height },
+    shown: maxTurns / 2,
+    total: Math.round(turns.length / 2),
+  };
 }
 
 // ---------- Window ----------

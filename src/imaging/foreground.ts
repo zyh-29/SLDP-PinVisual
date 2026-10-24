@@ -437,10 +437,15 @@ export function edgePalette(rgb: ArrayLike<number>, width: number, height: numbe
 }
 
 /**
- * Distance from the nearest background colour, allowing for shading: the same colour in a shadow or brighter
- * light (40% darker to 25% brighter) is still that colour. Not on dark backgrounds, where "shaded" would also
- * swallow a black object.
+ * Distance from the nearest background colour, allowing for a little unevenness of the light (SHADE_MIN..SHADE_MAX
+ * of its brightness). Not on dark backgrounds, where "shaded" would also swallow a black object.
+ *
+ * Only a little: anything from 40% darker counted as background once, which took shadows away but also every light
+ * grey object on a white table. Deeper shadows are now told from objects by their soft edge (removeShadows).
  */
+const SHADE_MIN = 0.96;
+const SHADE_MAX = 1.04;
+
 export function paletteDistance(r: number, g: number, b: number, palette: Rgb[]): number {
   return Math.sqrt(paletteDistance2(palette)(r, g, b));
 }
@@ -471,8 +476,8 @@ export function paletteDistance2(palette: Rgb[]): (r: number, g: number, b: numb
       let s = 1;
       if (shade[k]) {
         s = (r * pr[k] + g * pg[k] + b * pb[k]) * inv[k];
-        if (s < 0.6) s = 0.6;
-        else if (s > 1.25) s = 1.25;
+        if (s < SHADE_MIN) s = SHADE_MIN;
+        else if (s > SHADE_MAX) s = SHADE_MAX;
       }
       const dr = r - s * pr[k];
       const dg = g - s * pg[k];
@@ -643,6 +648,9 @@ interface BackgroundDistances {
   background: Rgb;
   borderNoise: number;
   distances: Float32Array;
+  /** The background as a function of position (one colour or a gradient), and its main colours (camera). */
+  plane: BackgroundModel['plane'];
+  palette: Rgb[];
 }
 
 /**
@@ -701,7 +709,7 @@ function backgroundDistances(rgb: ArrayLike<number>, width: number, height: numb
         eb += P.b[1];
       }
     }
-  const out = { background, borderNoise, distances };
+  const out = { background, borderNoise, distances, plane: P, palette };
   if (holder) {
     let m = distanceCache.get(holder);
     if (!m) distanceCache.set(holder, (m = new Map()));
@@ -715,7 +723,7 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
   const region = o.region ?? fullRect(width, height);
   const { x0, y0, x1, y1 } = bounds(region, width, height);
 
-  const { background, borderNoise, distances } = backgroundDistances(rgb, width, height, region, o);
+  const { background, borderNoise, distances, plane, palette } = backgroundDistances(rgb, width, height, region, o);
   const tolerance = o.tolerance === 'auto' ? autoTolerance(distances, borderNoise) : o.tolerance;
   const mask = new Uint8Array(width * height);
   for (let y = y0, i = 0; y < y1; y++)
@@ -737,13 +745,15 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
   const remove = o.removeLines === 'auto' || o.removeLines === undefined ? graphLikely : o.removeLines;
   const linesRemoved = remove && lines.length > 0;
   if (linesRemoved) eraseLines(mask, rgb, width, height, region, lines);
+  // Shadows the subject casts on the background (not on graphs: a curve is never a shadow).
+  const shadows = !o.subjectMask && !graphLikely && !linesRemoved ? removeShadows(mask, rgb, width, height, region, plane, palette) : null;
 
   // Clutter: tiny specks always go; otherwise drop pieces much smaller than the main one.
   let { subject, removed } = keepMainPieces(mask, rgb, width, height, o.minPieceRatio);
   // A filled subject (not a graph, not a line drawing): the GrabCut-style second opinion, then clutter again.
   let refined = false;
   if (o.refine && !o.subjectMask && !linesRemoved && !graphLikely && subject && filled(mask, width, height)) {
-    const better = refineSubject(rgb, width, height, mask, region, o.subjectBox);
+    const better = refineSubject(rgb, width, height, mask, region, o.subjectBox, shadows ?? undefined);
     if (better) {
       mask.set(better);
       ({ subject, removed } = keepMainPieces(mask, rgb, width, height, o.minPieceRatio));
@@ -766,6 +776,207 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
     strokeWidth: strokeWidth(mask, width, height),
     tolerance,
   };
+}
+
+/** A shadow is the background colour darkened to at least this share of its brightness (deeper is an object). */
+const SHADOW_DEEPEST = 0.4;
+/** ...and at most this share (lighter is the background itself, give or take the light). */
+const SHADOW_LIGHTEST = 0.98;
+/**
+ * A hard shadow (a lamp, the sun: a sharp edge) is at most this share of the background's brightness. Lighter
+ * grey is left alone even when sharp-edged and next to the subject: a light grey thing, not a shadow.
+ */
+const HARD_SHADOW_LIGHTEST = 0.8;
+/** Brightness change per pixel (3 x 3 averaged) a shadow's fading edge stays under. A drawn or real edge jumps more. */
+const SHADOW_STEP = 7;
+/**
+ * How far a shadow's colour may stray from a darker shade of the background (colour distance): a little, plus a
+ * share of how much darker it is. Light bouncing off the subject tints its shadow (a red apple's is reddish), and
+ * more so where the shadow is deep.
+ */
+const SHADOW_TINT = 18;
+const SHADOW_TINT_PER_DEPTH = 0.08;
+/**
+ * Most a shadow's colour can be saturated ((max - min) / max of its channels). A shadow on a light surface is
+ * nearly grey even when tinted (the apple's: 0.24); a coloured part of the subject is not (a muted green outline:
+ * 0.42).
+ */
+const SHADOW_SATURATION = 0.3;
+
+/**
+ * Removes shadows from the mask (in place): what the subject casts on the background, and uneven light on it.
+ * Returns the pixels removed (for the refinement to count as background for sure), or null when none were.
+ *
+ * A shadow is the background's own colour, only darker, and it fades into the background: its brightness changes
+ * a little from pixel to pixel. An object can be the very same grey (a light grey mug on a white table) but it has
+ * an edge: a jump in brightness. So the background is spread into the mask, pixel by pixel, through pixels that are
+ * a darker shade of the background (SHADOW_DEEPEST..SHADOW_LIGHTEST of its brightness, about the same tint), and
+ * only across small steps (SHADOW_STEP). A soft shadow is swallowed whole; an object's edge stops it.
+ *
+ * Hard shadows (a lamp, the sun) have a sharp edge too. They are told from objects by where they are: a shadow is
+ * attached to what casts it. A clearly darker shade of the background (up to HARD_SHADOW_LIGHTEST of its
+ * brightness) that touches both the background and another part of the subject (not a shade of the background)
+ * is a shadow. A grey object on its own touches only the background, and stays. (A grey object right against a
+ * coloured one would be taken for its shadow: rare, and the soft rule never does it.)
+ *
+ * Only on a light background (on a dark one there is no darker shade to speak of). If it would take nearly
+ * everything, it gives up: the subject itself is a soft, grey blur, not a shadow.
+ */
+function removeShadows(
+  mask: Uint8Array,
+  rgb: ArrayLike<number>,
+  width: number,
+  height: number,
+  region: Rect,
+  plane: BackgroundModel['plane'],
+  palette: Rgb[],
+): Uint8Array | null {
+  const { x0, y0, x1, y1 } = bounds(region, width, height);
+  const rw = x1 - x0;
+  const rh = y1 - y0;
+  if (rw < 3 || rh < 3) return null;
+  const lum = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b;
+  // The background colours to compare with: the plane where the pixel is, and the edge palette (camera).
+  const refAt = (x: number, y: number): Rgb => ({
+    r: plane.r[0] + plane.r[1] * x + plane.r[2] * y,
+    g: plane.g[0] + plane.g[1] * x + plane.g[2] * y,
+    b: plane.b[0] + plane.b[1] * x + plane.b[2] * y,
+  });
+  const centre = refAt((x0 + x1) / 2, (y0 + y1) / 2);
+  if (lum(centre.r, centre.g, centre.b) < 100) return null;
+
+  // Brightness, averaged over 3 x 3 (camera noise would otherwise look like steps).
+  const L = new Float32Array(rw * rh);
+  for (let y = 0; y < rh; y++)
+    for (let x = 0; x < rw; x++) {
+      const q = ((y0 + y) * width + x0 + x) * 3;
+      L[y * rw + x] = lum(rgb[q], rgb[q + 1], rgb[q + 2]);
+    }
+  const S = new Float32Array(rw * rh);
+  for (let y = 0; y < rh; y++)
+    for (let x = 0; x < rw; x++) {
+      let sum = 0;
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          const yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= rw || yy >= rh) continue;
+          sum += L[yy * rw + xx];
+          n++;
+        }
+      S[y * rw + x] = sum / n;
+    }
+
+  /** How dark a shade of a background colour the pixel is (its share of that colour's brightness), or 0 if none. */
+  const shadeOf = (x: number, y: number) => {
+    const q = (y * width + x) * 3;
+    const r = rgb[q];
+    const g = rgb[q + 1];
+    const b = rgb[q + 2];
+    const hi = Math.max(r, g, b);
+    if (hi > 0 && (hi - Math.min(r, g, b)) / hi > SHADOW_SATURATION) return 0;
+    let best = 0;
+    for (const c of [refAt(x, y), ...palette]) {
+      const len2 = c.r * c.r + c.g * c.g + c.b * c.b;
+      if (lum(c.r, c.g, c.b) < 100 || !len2) continue;
+      const k = (r * c.r + g * c.g + b * c.b) / len2;
+      if (k < SHADOW_DEEPEST || k > SHADOW_LIGHTEST) continue;
+      const depth = (1 - k) * Math.sqrt(len2);
+      if (Math.hypot(r - k * c.r, g - k * c.g, b - k * c.b) <= SHADOW_TINT + SHADOW_TINT_PER_DEPTH * depth) best = Math.max(best, k);
+    }
+    return best;
+  };
+  const shade = (x: number, y: number) => shadeOf(x, y) > 0;
+
+  // Spread from the background into the mask across small steps, through shades of the background.
+  const taken = new Uint8Array(rw * rh);
+  const stack: number[] = [];
+  let inMask = 0;
+  for (let y = 0; y < rh; y++)
+    for (let x = 0; x < rw; x++) {
+      const p = (y0 + y) * width + x0 + x;
+      if (!mask[p]) continue;
+      inMask++;
+      const i = y * rw + x;
+      const bgNeighbour =
+        (x > 0 && !mask[p - 1] && Math.abs(S[i] - S[i - 1]) <= SHADOW_STEP) ||
+        (x < rw - 1 && !mask[p + 1] && Math.abs(S[i] - S[i + 1]) <= SHADOW_STEP) ||
+        (y > 0 && !mask[p - width] && Math.abs(S[i] - S[i - rw]) <= SHADOW_STEP) ||
+        (y < rh - 1 && !mask[p + width] && Math.abs(S[i] - S[i + rw]) <= SHADOW_STEP);
+      if (bgNeighbour && shade(x0 + x, y0 + y)) {
+        taken[i] = 1;
+        stack.push(i);
+      }
+    }
+  let count = stack.length;
+  while (stack.length) {
+    const i = stack.pop()!;
+    const x = i % rw;
+    const y = (i - x) / rw;
+    const visit = (j: number, xx: number, yy: number) => {
+      if (taken[j] || !mask[(y0 + yy) * width + x0 + xx] || Math.abs(S[i] - S[j]) > SHADOW_STEP || !shade(x0 + xx, y0 + yy)) return;
+      taken[j] = 1;
+      count++;
+      stack.push(j);
+    };
+    if (x > 0) visit(i - 1, x - 1, y);
+    if (x < rw - 1) visit(i + 1, x + 1, y);
+    if (y > 0) visit(i - rw, x, y - 1);
+    if (y < rh - 1) visit(i + rw, x, y + 1);
+  }
+
+  // Hard shadows: clearly darker shades, in pieces, each touching the background and the rest of the subject.
+  const hard = new Uint8Array(rw * rh);
+  for (let y = 0; y < rh; y++)
+    for (let x = 0; x < rw; x++) {
+      const i = y * rw + x;
+      if (taken[i] || !mask[(y0 + y) * width + x0 + x]) continue;
+      const k = shadeOf(x0 + x, y0 + y);
+      if (k > 0 && k <= HARD_SHADOW_LIGHTEST) hard[i] = 1;
+    }
+  const pieces = labelComponents(hard, rw, rh);
+  const touchesBg = new Uint8Array(pieces.components.length);
+  const touchesSubject = new Int32Array(pieces.components.length);
+  for (let y = 0; y < rh; y++)
+    for (let x = 0; x < rw; x++) {
+      const i = y * rw + x;
+      const l = pieces.labels[i];
+      if (!l) continue;
+      const look = (j: number, xx: number, yy: number) => {
+        if (xx < 0 || yy < 0 || xx >= rw || yy >= rh) return;
+        const inMaskNow = mask[(y0 + yy) * width + x0 + xx] && !taken[j];
+        if (!inMaskNow) touchesBg[l - 1] = 1;
+        else if (!hard[j]) touchesSubject[l - 1]++;
+      };
+      look(i - 1, x - 1, y);
+      look(i + 1, x + 1, y);
+      look(i - rw, x, y - 1);
+      look(i + rw, x, y + 1);
+    }
+  pieces.components.forEach((c, k) => {
+    if (!touchesBg[k] || touchesSubject[k] < 3) return;
+    const { x: bx, y: by, width: bw, height: bh } = c.box;
+    for (let y = by; y < by + bh; y++)
+      for (let x = bx; x < bx + bw; x++) {
+        const i = y * rw + x;
+        if (pieces.labels[i] === k + 1 && !taken[i]) {
+          taken[i] = 1;
+          count++;
+        }
+      }
+  });
+
+  // Nearly everything: the subject is the soft grey thing, not a shadow of something.
+  if (!count || count > 0.9 * inMask) return null;
+  const removed = new Uint8Array(width * height);
+  for (let i = 0; i < taken.length; i++)
+    if (taken[i]) {
+      const p = (y0 + ((i / rw) | 0)) * width + x0 + (i % rw);
+      mask[p] = 0;
+      removed[p] = 1;
+    }
+  return removed;
 }
 
 /** Below this typical stroke thickness (pixels, after closing small gaps) the subject is a line drawing: no refinement. */
