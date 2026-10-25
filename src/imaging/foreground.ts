@@ -747,13 +747,23 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
   if (linesRemoved) eraseLines(mask, rgb, width, height, region, lines);
   // Shadows the subject casts on the background (not on graphs: a curve is never a shadow).
   const shadows = !o.subjectMask && !graphLikely && !linesRemoved ? removeShadows(mask, rgb, width, height, region, plane, palette) : null;
+  // Screens and drawings: background whose colour drifts (a gradient wallpaper around a window, the window's own
+  // shadow, a soft backdrop behind a product picture), which one colour or a two-colour gradient can't describe.
+  const flatPicture = !o.camera && !o.subjectMask && !graphLikely && !linesRemoved;
+  const drift = flatPicture ? removeDriftingBackground(mask, rgb, width, height, region) : null;
+  // A photo wallpaper around the windows: textured, where windows and pages are flat. After the drifting
+  // background: it also takes a window's outermost pixels (their neighbourhood is half wallpaper), and the drift
+  // would spread from there into the window's flat inside.
+  const wallpaper = flatPicture ? removeTexturedSurround(mask, rgb, width, height, region) : null;
+  const drifting = wallpaper && drift ? orMasks(wallpaper, drift) : (wallpaper ?? drift);
+  const sureBackground = drifting && shadows ? orMasks(drifting, shadows) : (drifting ?? shadows);
 
   // Clutter: tiny specks always go; otherwise drop pieces much smaller than the main one.
   let { subject, removed } = keepMainPieces(mask, rgb, width, height, o.minPieceRatio);
   // A filled subject (not a graph, not a line drawing): the GrabCut-style second opinion, then clutter again.
   let refined = false;
   if (o.refine && !o.subjectMask && !linesRemoved && !graphLikely && subject && filled(mask, width, height)) {
-    const better = refineSubject(rgb, width, height, mask, region, o.subjectBox, shadows ?? undefined);
+    const better = refineSubject(rgb, width, height, mask, region, o.subjectBox, sureBackground ?? undefined);
     if (better) {
       mask.set(better);
       ({ subject, removed } = keepMainPieces(mask, rgb, width, height, o.minPieceRatio));
@@ -776,6 +786,196 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
     strokeWidth: strokeWidth(mask, width, height),
     tolerance,
   };
+}
+
+/**
+ * Colour change between neighbouring pixels (the largest of the three channels) that background drifting across
+ * the picture stays under. A gradient wallpaper changes by about 1 per pixel, a window's soft shadow by 2-3; a
+ * drawn edge jumps by more, even a faint or anti-aliased one.
+ */
+const DRIFT_STEP = 4;
+/** Fewer subject pixels than this share left: the subject itself is a soft blur, and nothing is removed. */
+const DRIFT_KEEP_AT_LEAST = 0.01;
+
+function orMasks(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length);
+  for (let i = 0; i < a.length; i++) out[i] = a[i] | b[i];
+  return out;
+}
+
+/**
+ * Removes background whose colour drifts from the mask (in place), for flat pictures (screens, drawings): the
+ * background is spread into the mask, pixel by pixel, wherever the colour changes only a little from one pixel to
+ * the next (DRIFT_STEP). A gradient wallpaper of any number of colours is swallowed, and so are soft shadows; the
+ * sharp edge of a window, a card or a drawn shape stops it. Returns the pixels removed, or null when none were.
+ *
+ * Not for camera pictures: their noise makes every step look big, and a real background is handled there by its
+ * colours along the edge (edgePalette) and its shadows (removeShadows).
+ */
+function removeDriftingBackground(mask: Uint8Array, rgb: ArrayLike<number>, width: number, height: number, region: Rect): Uint8Array | null {
+  const { x0, y0, x1, y1 } = bounds(region, width, height);
+  const w = x1 - x0;
+  const h = y1 - y0;
+  if (w < 3 || h < 3) return null;
+  // Colour change between two neighbours (region-local indices): the largest of the three channels. Raw pixels: a
+  // screen has no noise to average away, and averaging would blur a sharp tip or a thin line into the background.
+  const step = (a: number, b: number) => {
+    const ax = a % w;
+    const bx = b % w;
+    const p = ((y0 + (a - ax) / w) * width + x0 + ax) * 3;
+    const q = ((y0 + (b - bx) / w) * width + x0 + bx) * 3;
+    return Math.max(Math.abs(rgb[p] - rgb[q]), Math.abs(rgb[p + 1] - rgb[q + 1]), Math.abs(rgb[p + 2] - rgb[q + 2]));
+  };
+
+  // Spread from the background (region-local indices) into the mask.
+  const taken = new Uint8Array(w * h);
+  // Each pixel is queued at most once: first as outer background, or later as taken.
+  const queue = new Int32Array(w * h);
+  let head = 0;
+  let tail = 0;
+  let inMask = 0;
+  const inM = (x: number, y: number) => mask[(y0 + y) * width + x0 + x] === 1;
+  const neighbours = (i: number, visit: (j: number, x: number, y: number) => void) => {
+    const x = i % w;
+    const y = (i - x) / w;
+    if (x > 0) visit(i - 1, x - 1, y);
+    if (x < w - 1) visit(i + 1, x + 1, y);
+    if (y > 0) visit(i - w, x, y - 1);
+    if (y < h - 1) visit(i + w, x, y + 1);
+  };
+  // Only the outer background spreads: what is reached from the region's edge without crossing the subject. A
+  // patch inside the subject that happens to match the background (the blurry backdrop of a photo on a web page)
+  // is not a start: spreading from it would eat the photo, whose own colours drift too.
+  const outer = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      if (inM(x, y)) inMask++;
+      else if (x === 0 || y === 0 || x === w - 1 || y === h - 1) {
+        outer[y * w + x] = 1;
+        queue[tail++] = y * w + x;
+      }
+    }
+  if (!inMask || tail === 0) return null;
+  while (head < tail)
+    neighbours(queue[head++], (j, x, y) => {
+      if (outer[j] || inM(x, y)) return;
+      outer[j] = 1;
+      queue[tail++] = j;
+    });
+  // Then into the mask, across small steps.
+  let count = 0;
+  head = 0;
+  while (head < tail) {
+    const i = queue[head++];
+    neighbours(i, (j, x, y) => {
+      if (taken[j] || !inM(x, y) || step(i, j) > DRIFT_STEP) return;
+      taken[j] = 1;
+      queue[tail++] = j;
+      count++;
+    });
+  }
+  if (!count || inMask - count < inMask * DRIFT_KEEP_AT_LEAST) return null;
+  const removed = new Uint8Array(width * height);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (taken[y * w + x]) {
+        const p = (y0 + y) * width + x0 + x;
+        mask[p] = 0;
+        removed[p] = 1;
+      }
+  return removed;
+}
+
+/** Neighbouring pixels differing by more than this (any channel) are texture; a screen's flat areas repeat exactly. */
+const TEXTURE_STEP = 2;
+/** Share of textured pixels around a pixel (7 x 7) from which it counts as part of a photo. */
+const TEXTURE_DENSITY = 0.5;
+/** Texture joined to the edge over more than this share of the region: the picture itself is a photo (full screen). */
+const SURROUND_MOST = 0.9;
+
+/**
+ * Removes a photo wallpaper from the mask (in place), for flat pictures (screens): textured areas joined to the
+ * region's edge. Windows, pages and menus are flat (runs of identical pixels); a photo has texture almost
+ * everywhere. A window's flat frame stops the spread, so a photo inside a window stays. Returns the pixels removed,
+ * or null when none were (or when the texture covers nearly the whole region: then the picture is the photo).
+ */
+function removeTexturedSurround(mask: Uint8Array, rgb: ArrayLike<number>, width: number, height: number, region: Rect): Uint8Array | null {
+  const { x0, y0, x1, y1 } = bounds(region, width, height);
+  const w = x1 - x0;
+  const h = y1 - y0;
+  if (w < 16 || h < 16) return null;
+  // Textured pixels: different from the pixel to the right or below. Counted in 7 x 7 boxes (an integral image).
+  const sum = new Int32Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let row = 0;
+    for (let x = 0; x < w; x++) {
+      const p = ((y0 + y) * width + x0 + x) * 3;
+      const right = x < w - 1 ? p + 3 : p;
+      const below = y < h - 1 ? p + width * 3 : p;
+      let busy = 0;
+      for (let c = 0; c < 3; c++)
+        if (Math.abs(rgb[p + c] - rgb[right + c]) > TEXTURE_STEP || Math.abs(rgb[p + c] - rgb[below + c]) > TEXTURE_STEP) busy = 1;
+      row += busy;
+      sum[(y + 1) * (w + 1) + x + 1] = sum[y * (w + 1) + x + 1] + row;
+    }
+  }
+  const R = 3;
+  const textured = (x: number, y: number) => {
+    const ax = Math.max(0, x - R);
+    const ay = Math.max(0, y - R);
+    const bx = Math.min(w, x + R + 1);
+    const by = Math.min(h, y + R + 1);
+    const n = sum[by * (w + 1) + bx] - sum[ay * (w + 1) + bx] - sum[by * (w + 1) + ax] + sum[ay * (w + 1) + ax];
+    return n >= (bx - ax) * (by - ay) * TEXTURE_DENSITY;
+  };
+  // Spread from the region's edge through textured pixels.
+  const seen = new Uint8Array(w * h);
+  const queue = new Int32Array(w * h);
+  let tail = 0;
+  const push = (x: number, y: number) => {
+    const i = y * w + x;
+    if (seen[i] || !textured(x, y)) return;
+    seen[i] = 1;
+    queue[tail++] = i;
+  };
+  for (let x = 0; x < w; x++) {
+    push(x, 0);
+    push(x, h - 1);
+  }
+  for (let y = 0; y < h; y++) {
+    push(0, y);
+    push(w - 1, y);
+  }
+  for (let head = 0; head < tail; head++) {
+    const i = queue[head];
+    const x = i % w;
+    const y = (i - x) / w;
+    if (x > 0) push(x - 1, y);
+    if (x < w - 1) push(x + 1, y);
+    if (y > 0) push(x, y - 1);
+    if (y < h - 1) push(x, y + 1);
+  }
+  let inMask = 0;
+  let taken = 0;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const p = (y0 + y) * width + x0 + x;
+      if (!mask[p]) continue;
+      inMask++;
+      if (seen[y * w + x]) taken++;
+    }
+  // Texture over nearly the whole region: the picture is a photo (shared full screen), not a desktop around one.
+  if (!taken || tail > w * h * SURROUND_MOST) return null;
+  const removed = new Uint8Array(width * height);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const p = (y0 + y) * width + x0 + x;
+      if (mask[p] && seen[y * w + x]) {
+        mask[p] = 0;
+        removed[p] = 1;
+      }
+    }
+  return removed;
 }
 
 /** A shadow is the background colour darkened to at least this share of its brightness (deeper is an object). */

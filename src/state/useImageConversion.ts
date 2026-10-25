@@ -4,6 +4,7 @@
  * pin sampling. The screen keeps the settings and the pin lock; this hook only derives.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 
 import { GRID } from '@/config/hardware';
 import type { Pattern } from '@/domain/pattern';
@@ -18,6 +19,7 @@ import { type GraphScale, labelBands, scaleFromGrid, scaleFromLabels } from '@/i
 import type { LiveCapture } from '@/imaging/imageInput';
 import { cellSizePx, inkFromGray, inkFromMask, patternFromSamples, renderCrop, sampleCrop, thickenThinLines, traceLinePins } from '@/imaging/pinSampling';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
+import { cropPixels, pasteMask, sameBox, uncutPhoto } from '@/imaging/screenPhoto';
 import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
 import { detectShape, fillHoles, renderShape } from '@/imaging/shapes';
 import { type Focus, type GraphView, keepPieceAt, PHOTO_GRAIN, pictureKind, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
@@ -197,6 +199,16 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   // Carry the scale on to the next frame (see nextGraphScale; React's "adjust state while rendering" pattern).
   const nextScale = nextGraphScale(graphScale, graph?.scale, trackedWidth, !!graphView.followZoom);
   if (nextScale) setGraphScale(nextScale);
+  // A busy photo on a screen or in a screenshot (a picture on a web page): colour-based removal finds the photo but
+  // can't cut it from its own background, so Smart Cut-Out is run on the photo alone (see screenPhoto.ts). In the
+  // browser, where it works from the pixels; Smart Cut-Out turned off by the user turns this off too.
+  const [screenCut, setScreenCut] = useState<{ box: Rect; width: number; height: number; mask: Float32Array | null } | null>(null);
+  const screenCutAllowed =
+    Platform.OS === 'web' && smartCutoutAvailable && removeBackground && !camera && !picked?.equation && !manualCrop && cutoutOverride !== false;
+  const photoBox = screenCutAllowed && !subjectMask && smart?.kind === 'shape' ? smart.box : null;
+  /** The cut made for this photo (a live frame later: the same box), whether or not it found a subject. */
+  const cutForPhoto = !!(photoBox && screenCut && screenCut.width === w && screenCut.height === h && sameBox(screenCut.box, photoBox, w, h));
+  const screenPhotoMask = cutForPhoto ? (screenCut?.mask ?? undefined) : undefined;
   // Inside the user's own box the same logic picks the subject, so stray UI caught by the box is ignored.
   const smartInCrop = useMemo(
     () => (picked && manualCrop && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, manualCrop) : null),
@@ -210,7 +222,7 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   // Graph curves mean axes and gridlines around them should go.
   const lines = linesOverride ?? (chosen?.kind === 'curves' || smart?.kind === 'curves' ? true : 'auto');
   // The subject's pixels when they are known exactly: the AI cut-out, or the graph curves' own pixels.
-  const knownSubject = subjectMask ?? (removeBackground ? chosen?.mask : undefined);
+  const knownSubject = subjectMask ?? screenPhotoMask ?? (removeBackground ? chosen?.mask : undefined);
   const fg = useMemo(
     () =>
       picked
@@ -229,11 +241,39 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
         : null,
     [picked, w, h, tolerance, minPieceRatio, lines, region, manualCrop, autoContext, knownSubject, camera, chosen],
   );
+  // A photo on a screen, its background not cut yet (colour-based removal kept the whole rectangle).
+  const photoUncut = useMemo(
+    () => !!(photoBox && !cutForPhoto && picked && fg && uncutPhoto(picked.rgb, w, h, photoBox, fg.mask)),
+    [photoBox, cutForPhoto, picked, fg, w, h],
+  );
+  // Cut it out. Keyed by the box, not the frame: a live screen sends a new frame whenever anything on it changes
+  // (a clock), and the cut-out takes longer than that.
+  const photoKey = photoUncut && photoBox ? `${w}x${h}:${Math.round(photoBox.x)},${Math.round(photoBox.y)},${Math.round(photoBox.width)},${Math.round(photoBox.height)}` : null;
+  const latest = useRef({ picked, photoBox });
+  useEffect(() => {
+    latest.current = { picked, photoBox };
+  });
+  useEffect(() => {
+    const { picked: p, photoBox: box } = latest.current;
+    if (!photoKey || !p || !box) return;
+    let cancelled = false;
+    const width = p.raster.width;
+    const height = p.raster.height;
+    const crop = cropPixels(p.rgb, width, height, box);
+    segmentSubject({ rgb: crop.rgb, width: crop.width, height: crop.height })
+      .then((m) => !cancelled && setScreenCut({ box, width, height, mask: m ? pasteMask(m, crop.box, width, height) : null }))
+      .catch(() => !cancelled && setScreenCut({ box, width, height, mask: null }));
+    return () => {
+      cancelled = true;
+    };
+  }, [photoKey]);
+
   const autoBox = smart ? smart.box : (fg?.subject ?? fullImage);
   /** The crop box shown to the user (a graph window can reach past the picture when zoomed in; see graphWindow). */
   const crop = manualCrop ?? clip(autoBox, fullImage);
   /** What the pins use: the chosen subject's tight box (inside the user's box, if any), so empty margins don't waste pins. */
-  const sampleBox = chosen?.box ?? (manualCrop ? (fg?.subject ?? manualCrop) : autoBox);
+  // A photo cut out on a screen: just the subject, not the photo's whole rectangle.
+  const sampleBox = (screenPhotoMask ? fg?.subject : null) ?? chosen?.box ?? (manualCrop ? (fg?.subject ?? manualCrop) : autoBox);
   // Graphs have arbitrary x and y scales, so they stretch to use every pin.
   const stretch = removeBackground && (!!fg?.linesRemoved || (chosen ?? smart)?.kind === 'curves');
 
@@ -324,8 +364,8 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
      * against BUSY_BACKGROUND.
      */
     pictureCheck: kind ? { ...kind, photoGrain: PHOTO_GRAIN, edgeNoise, busyEdge: BUSY_BACKGROUND } : null,
-    cutoutOn,
-    cuttingOut,
+    cutoutOn: cutoutOn || !!screenPhotoMask,
+    cuttingOut: cuttingOut || photoUncut,
     cutoutError: cutoutOn ? cutout?.error : undefined,
     /** The subject is known exactly (cut-out or curve pixels), so Tolerance doesn't apply. */
     subjectKnown: !!knownSubject,

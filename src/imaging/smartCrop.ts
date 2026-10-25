@@ -278,6 +278,43 @@ function pickAt(candidates: Candidate[], labels: Int32Array, width: number, heig
   return candidates.reduce((a, b) => (distanceTo(b.box, p) < distanceTo(a.box, p) ? b : a));
 }
 
+/** A piece's area with its holes filled: everything in its box not reachable from the box's edge around it. */
+function solidArea(labels: Int32Array, width: number, c: Candidate): number {
+  const x0 = Math.floor(c.box.x);
+  const y0 = Math.floor(c.box.y);
+  const w = Math.round(c.box.width);
+  const h = Math.round(c.box.height);
+  if (w <= 2 || h <= 2) return c.area;
+  const outside = new Uint8Array(w * h);
+  const queue = new Int32Array(w * h);
+  let tail = 0;
+  const own = (x: number, y: number) => labels[(y0 + y) * width + x0 + x] === c.label;
+  const push = (x: number, y: number) => {
+    const i = y * w + x;
+    if (outside[i] || own(x, y)) return;
+    outside[i] = 1;
+    queue[tail++] = i;
+  };
+  for (let x = 0; x < w; x++) {
+    push(x, 0);
+    push(x, h - 1);
+  }
+  for (let y = 0; y < h; y++) {
+    push(0, y);
+    push(w - 1, y);
+  }
+  for (let head = 0; head < tail; head++) {
+    const i = queue[head];
+    const x = i % w;
+    const y = (i - x) / w;
+    if (x > 0) push(x - 1, y);
+    if (x < w - 1) push(x + 1, y);
+    if (y > 0) push(x, y - 1);
+    if (y < h - 1) push(x, y + 1);
+  }
+  return w * h - tail;
+}
+
 /** Box-averaged copy, `k` times smaller in each direction. */
 function downsample(
   rgb: ArrayLike<number>,
@@ -551,8 +588,9 @@ function analyse(
   const reach = Math.max(2, Math.hypot(r.width, r.height) * 0.02);
   const best = focus ? pickAt(candidates, scored.labels, width, height, focus, reach) : candidates[0];
 
-  // Cards: a nearly solid rectangle with something different inside it. Look inside.
-  const fill = best.area / area(best.box);
+  // Cards: a nearly solid rectangle with something different inside it. Look inside. Holes count as filled: a
+  // window whose page partly matches the background (a photo with a backdrop like the wallpaper) is still a window.
+  const fill = solidArea(scored.labels, width, best) / area(best.box);
   if (depth < 3 && fill >= 0.85 && best.box.width >= 12 && best.box.height >= 12 && area(best.box) < area(r) * 0.98) {
     const within = inset(best.box, 2);
     const inner = analyse(rgb, width, height, o, within, depth + 1, focus);
