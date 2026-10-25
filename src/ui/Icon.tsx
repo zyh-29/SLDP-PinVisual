@@ -45,6 +45,11 @@ const ICONS = {
   up: { ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' },
   down: { ios: 'arrow.down', android: 'arrow_downward', web: 'arrow_downward' },
   centre: { ios: 'scope', android: 'center_focus_strong', web: 'center_focus_strong' },
+  play: { ios: 'play.fill', android: 'play_arrow', web: 'play_arrow' },
+  pause: { ios: 'pause.fill', android: 'pause', web: 'pause' },
+  previous: { ios: 'backward.end.fill', android: 'skip_previous', web: 'skip_previous' },
+  next: { ios: 'forward.end.fill', android: 'skip_next', web: 'skip_next' },
+  sequence: { ios: 'play.rectangle.on.rectangle', android: 'playlist_play', web: 'playlist_play' },
 } as const satisfies Record<string, SymbolName>;
 
 export type IconName = keyof typeof ICONS;

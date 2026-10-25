@@ -6,14 +6,18 @@ import { GRID } from '@/config/hardware';
 import { countRaised, fitPatternToGrid, patternsEqual } from '@/domain/pattern';
 import { usePattern } from '@/state/PatternProvider';
 import { patternStore, useSavedPatterns } from '@/state/useSavedPatterns';
+import { sequenceStore, useSavedSequences } from '@/state/useSavedSequences';
 import { canPickFile, pickPatternFile, savePatternFile } from '@/storage/patternFile';
 import { exportFileName, exportPatterns, isCompatible, parseExport, type SavedPattern, toPattern } from '@/storage/patternStore';
+import { type SavedSequence, stepPattern } from '@/storage/sequenceStore';
 import { Button, Label, Screen, Section, Separator, StatusBanner } from '@/ui/components';
 import { confirmAsync } from '@/ui/dialogs';
 import { useResponsive } from '@/ui/layout';
 import { Icon } from '@/ui/Icon';
 import { ImportPasteSheet } from '@/ui/ImportPasteSheet';
 import { PinGrid } from '@/ui/PinGrid';
+import { SequenceEditorSheet } from '@/ui/SequenceEditorSheet';
+import { SequencePlayerSheet } from '@/ui/SequencePlayerSheet';
 import { radius, space, useTheme } from '@/ui/theme';
 
 /** "3 patterns", "1 pattern". */
@@ -23,6 +27,10 @@ export default function SavedScreen() {
   const t = useTheme();
   const { patterns, skipped, loading, error, reload } = useSavedPatterns();
   const { pattern: current, setPattern } = usePattern();
+  const sequences = useSavedSequences();
+  /** The sequence sheet that's open: making or changing one, or playing one. */
+  const [editor, setEditor] = useState<{ editing?: SavedSequence } | null>(null);
+  const [playing, setPlaying] = useState<SavedSequence | null>(null);
   const { twoColumn, width } = useResponsive();
   const columns = width >= 1280 ? 3 : 2;
   /** The last export or import, reported under the buttons. */
@@ -137,6 +145,99 @@ export default function SavedScreen() {
     AccessibilityInfo.announceForAccessibility(`Deleted ${saved.name}`);
   };
 
+  const removeSequence = async (seq: SavedSequence) => {
+    const ok = await confirmAsync({
+      title: 'Delete sequence?',
+      message: `"${seq.name}" will be removed from this ${DEVICE_WORD}. Its patterns stay saved.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
+    await sequenceStore.remove(seq.id);
+    await sequences.reload();
+    AccessibilityInfo.announceForAccessibility(`Deleted ${seq.name}`);
+  };
+
+  const sequenceSection = (
+    <Section
+      title={`Sequences · ${sequences.sequences.length}`}
+      footer="A sequence plays saved patterns on the board one after another, at your pace or on a timer."
+      padded={false}
+      style={twoColumn ? { maxWidth: 560 } : undefined}>
+      {sequences.error ? (
+        <View style={styles.item}>
+          <StatusBanner tone="error" title="Could not read sequences" message={sequences.error} />
+        </View>
+      ) : null}
+      {sequences.skipped > 0 ? (
+        <View style={styles.item}>
+          <StatusBanner tone="warning" title="Some sequences were unreadable" message={`${sequences.skipped} damaged sequence(s) were skipped.`} />
+        </View>
+      ) : null}
+      {sequences.sequences.map((seq, i) => {
+        const first = stepPattern(seq.steps[0]);
+        const steps = `${seq.steps.length} step${seq.steps.length === 1 ? '' : 's'}`;
+        return (
+          <View key={seq.id}>
+            {i > 0 ? <Separator inset={space.lg} /> : null}
+            <View style={styles.item}>
+              <View style={styles.itemTop}>
+                {first ? <PinGrid pattern={first} cellSize={Math.max(6, Math.min(11, Math.floor(96 / first.cols)))} /> : null}
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Label variant="headline" numberOfLines={2}>
+                    {seq.name}
+                  </Label>
+                  <Label variant="footnote" secondary numberOfLines={2}>
+                    {steps} · {seq.steps.map((s) => s.name).join(', ')}
+                  </Label>
+                </View>
+              </View>
+              <View style={styles.actions}>
+                <Button
+                  title="Play"
+                  icon="play"
+                  compact
+                  style={{ flex: 1 }}
+                  accessibilityLabel={`Play ${seq.name}, ${steps}`}
+                  onPress={() => setPlaying(seq)}
+                />
+                <Button
+                  title="Edit"
+                  icon="edit"
+                  variant="secondary"
+                  compact
+                  style={{ flex: 1 }}
+                  accessibilityLabel={`Edit ${seq.name}`}
+                  onPress={() => setEditor({ editing: seq })}
+                />
+                <Button
+                  title="Delete"
+                  icon="trash"
+                  variant="destructive"
+                  compact
+                  style={{ flex: 1 }}
+                  accessibilityLabel={`Delete ${seq.name}`}
+                  onPress={() => removeSequence(seq)}
+                />
+              </View>
+            </View>
+          </View>
+        );
+      })}
+      {sequences.sequences.length > 0 ? <Separator inset={space.lg} /> : null}
+      <View style={styles.item}>
+        <Button
+          title="New Sequence"
+          icon="plus"
+          variant="secondary"
+          compact
+          onPress={() => setEditor({})}
+          accessibilityHint="Puts saved patterns in an order to play on the board"
+        />
+      </View>
+    </Section>
+  );
+
   const renderItem = (saved: SavedPattern) => {
     const p = toPattern(saved);
     const compatible = isCompatible(saved, GRID.rows, GRID.cols);
@@ -215,6 +316,7 @@ export default function SavedScreen() {
         </Section>
       ) : (
         <>
+          {sequenceSection}
           <Section
             title="Backup"
             footer={`Export keeps a copy of every pattern outside this ${DEVICE_WORD}; Import adds them back here or on another device. Nothing is replaced.`}
@@ -247,7 +349,22 @@ export default function SavedScreen() {
           )}
         </>
       )}
+      {!loading && patterns.length === 0 && sequences.sequences.length > 0 ? sequenceSection : null}
       <ImportPasteSheet visible={pasteOpen} onClose={() => setPasteOpen(false)} onImport={importText} />
+      {editor ? (
+        <SequenceEditorSheet
+          editing={editor.editing}
+          patterns={patterns}
+          preview={current}
+          onClose={() => setEditor(null)}
+          onSaved={async (name) => {
+            setEditor(null);
+            await sequences.reload();
+            AccessibilityInfo.announceForAccessibility(`Saved sequence ${name}`);
+          }}
+        />
+      ) : null}
+      {playing ? <SequencePlayerSheet sequence={playing} onClose={() => setPlaying(null)} /> : null}
     </Screen>
   );
 }

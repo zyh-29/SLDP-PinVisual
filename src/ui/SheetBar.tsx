@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { space, type, useTheme } from './theme';
 
-/** The top bar of a page sheet: Cancel, the title, and the action (dimmed while it runs). */
+/** The top bar of a page sheet: Cancel (left out without `onCancel`), the title, and the action (dimmed while it runs). */
 export function SheetBar({
   title,
   action,
@@ -13,15 +13,19 @@ export function SheetBar({
   title: string;
   action: string;
   busy: boolean;
-  onCancel: () => void;
+  onCancel?: () => void;
   onAction: () => void;
 }) {
   const t = useTheme();
   return (
     <View style={[styles.bar, { borderBottomColor: t.separator }]}>
-      <Pressable accessibilityRole="button" onPress={onCancel} hitSlop={12} style={styles.button}>
-        <Text style={[type.body, { color: t.tint }]}>Cancel</Text>
-      </Pressable>
+      {onCancel ? (
+        <Pressable accessibilityRole="button" onPress={onCancel} hitSlop={12} style={styles.button}>
+          <Text style={[type.body, { color: t.tint }]}>Cancel</Text>
+        </Pressable>
+      ) : (
+        <View style={styles.button} />
+      )}
       <Text accessibilityRole="header" style={[type.headline, { color: t.text }]}>
         {title}
       </Text>
