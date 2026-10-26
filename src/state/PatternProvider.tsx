@@ -2,7 +2,7 @@ import { createContext, type ReactNode, useCallback, useContext, useMemo, useSta
 
 import { GRID } from '@/config/hardware';
 import { createEmptyPattern, type Pattern, togglePin } from '@/domain/pattern';
-import { change, type PreviewHistory, startHistory, undo as undoOnce } from './previewHistory';
+import { change, type PreviewHistory, startHistory, undo as undoSteps, undoAll as undoEverything } from './previewHistory';
 
 /**
  * The editable preview. Editing here never talks to the board; sending is an
@@ -15,8 +15,15 @@ interface PatternContextValue {
   setPattern: (p: Pattern, source?: string | null) => void;
   toggle: (row: number, col: number) => void;
   clear: () => void;
-  /** Back to the preview before the last change: a pin tap, Clear, or a pattern from the Image or Saved tab. */
-  undo: () => void;
+  /**
+   * Back `steps` changes (1 by default), or as many as there are. A change: a pin tap, Clear, or a pattern from
+   * the Image or Saved tab.
+   */
+  undo: (steps?: number) => void;
+  /** Back to the oldest preview kept. */
+  undoAll: () => void;
+  /** How many changes can be undone. */
+  undoCount: number;
   canUndo: boolean;
 }
 
@@ -39,13 +46,15 @@ export function PatternProvider({ children }: { children: ReactNode }) {
     [],
   );
   const clear = useCallback(() => setHistory((h) => change(h, { pattern: empty(), source: null })), []);
-  const undo = useCallback(() => setHistory(undoOnce), []);
+  const undo = useCallback((steps = 1) => setHistory((h) => undoSteps(h, steps)), []);
+  const undoAll = useCallback(() => setHistory(undoEverything), []);
 
   const { now, past } = history;
-  const canUndo = past.length > 0;
+  const undoCount = past.length;
+  const canUndo = undoCount > 0;
   const value = useMemo(
-    () => ({ pattern: now.pattern, source: now.source, setPattern, toggle, clear, undo, canUndo }),
-    [now, setPattern, toggle, clear, undo, canUndo],
+    () => ({ pattern: now.pattern, source: now.source, setPattern, toggle, clear, undo, undoAll, undoCount, canUndo }),
+    [now, setPattern, toggle, clear, undo, undoAll, undoCount, canUndo],
   );
   return <PatternContext.Provider value={value}>{children}</PatternContext.Provider>;
 }

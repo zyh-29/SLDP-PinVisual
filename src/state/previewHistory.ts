@@ -26,8 +26,27 @@ export function change(h: PreviewHistory, next: Preview): PreviewHistory {
   return { now: next, past: [...h.past, h.now].slice(-MAX_UNDO) };
 }
 
-/** Back to the preview before the last change (nothing happens when there is none). */
-export function undo(h: PreviewHistory): PreviewHistory {
-  const before = h.past.at(-1);
-  return before ? { now: before, past: h.past.slice(0, -1) } : h;
+/**
+ * Back `steps` changes (1 by default), or as many as there are when fewer: nothing happens when there are none.
+ * Fractions are rounded down.
+ */
+export function undo(h: PreviewHistory, steps = 1): PreviewHistory {
+  const n = Math.min(Math.floor(steps), h.past.length);
+  if (!(n > 0)) return h;
+  return { now: h.past[h.past.length - n], past: h.past.slice(0, -n) };
+}
+
+/** Back to the oldest preview kept (up to MAX_UNDO changes ago). */
+export const undoAll = (h: PreviewHistory): PreviewHistory => undo(h, h.past.length);
+
+/** Most steps that can be typed: more than the history can hold makes no difference. */
+export const MAX_UNDO_STEPS = MAX_UNDO;
+
+/** Steps typed by the user: a whole number from 1; empty means 1. Null when it isn't one. */
+export function parseUndoSteps(text: string): number | null {
+  const s = text.trim();
+  if (!s) return 1;
+  if (!/^\d+$/.test(s)) return null;
+  const n = Number(s);
+  return n >= 1 ? Math.min(n, MAX_UNDO_STEPS) : null;
 }

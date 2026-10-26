@@ -11,10 +11,11 @@ import { Button, Columns, Label, Screen, Section, StatusBanner } from '@/ui/comp
 import { Icon } from '@/ui/Icon';
 import { PinGrid } from '@/ui/PinGrid';
 import { SavePatternSheet } from '@/ui/SavePatternSheet';
+import { UndoControls } from '@/ui/UndoControls';
 import { MIN_TOUCH, radius, space, useTheme } from '@/ui/theme';
 
 export default function DisplayScreen() {
-  const { pattern, source, toggle, clear, undo, canUndo } = usePattern();
+  const { pattern, source, toggle, clear, undo, undoAll, undoCount } = usePattern();
   const { send, reset, connected, busy, state } = useBoardActions();
   const [saveOpen, setSaveOpen] = useState(false);
   const t = useTheme();
@@ -41,21 +42,7 @@ export default function DisplayScreen() {
         <PinGrid pattern={pattern} onToggle={toggle} />
         <View style={styles.buttonRow}>
           <Button
-            title="Undo"
-            icon="undo"
-            variant="secondary"
-            compact
-            style={{ flex: 1 }}
-            disabled={!canUndo}
-            accessibilityHint="Goes back to the preview before the last change. Does not move the physical pins."
-            onPress={() => {
-              undo();
-              AccessibilityInfo.announceForAccessibility('Undone');
-            }}
-          />
-          <Button
-            title="Clear"
-            accessibilityLabel="Clear Grid"
+            title="Clear Grid"
             icon="clear"
             variant="secondary"
             compact
@@ -68,6 +55,7 @@ export default function DisplayScreen() {
           />
           <Button title="Save" icon="save" variant="secondary" compact style={{ flex: 1 }} onPress={() => setSaveOpen(true)} />
         </View>
+        <UndoControls count={undoCount} onUndo={undo} onUndoAll={undoAll} />
       </Section>
         }
         right={
