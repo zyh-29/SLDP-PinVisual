@@ -105,7 +105,7 @@ describe('Graph Range on a worksheet with two graphs (at the 800 px the browser 
   });
   const rgb = toRgb(img);
   const view = (scale: null | { ppu: number }) => ({
-    range: 5,
+    range: { kind: 'window' as const, units: 5, side: 'both' as const },
     scale: scale && {
       pxPerUnitX: scale.ppu,
       pxPerUnitY: scale.ppu,
@@ -288,7 +288,7 @@ describe('a tap on a graph also places the Graph Range window on the tapped curv
   const rgb = toRgb(img);
   it('the key point is on the tapped curve', () => {
     const view = {
-      range: 2,
+      range: { kind: 'window' as const, units: 2, side: 'both' as const },
       scale: { pxPerUnitX: 30, pxPerUnitY: 30, unitsPerMajorX: 1, unitsPerMajorY: 1, majorX: 30, majorY: 30, from: 'grid' as const },
       rows: 5,
       cols: 8,

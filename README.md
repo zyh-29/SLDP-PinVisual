@@ -29,7 +29,7 @@ Built with Expo (SDK 58), React Native and TypeScript.
 | Tap to pick what becomes pins | Works |
 | Live camera (web, phones and laptops) | Works in Chrome; not yet tried on a real phone |
 | Camera lock and capture | Works in Chrome; not yet tried on a real phone |
-| Graph Range (±2, ±5 or ±10 units around the curve) | Works on the web. Reading axis numbers needs `tesseract.js`; on phones one grid square counts as one unit |
+| Graph Range (Auto, or a typed range such as `5`, `+5` or `-5`) | Works on the web. Reading axis numbers needs `tesseract.js`; on phones one grid square counts as one unit |
 | Graph zoom, panning, and a spoken description of the graph | Works |
 | One-Pin Lines (curves drawn one pin wide) | Works |
 | Typing an equation to draw it | Works |
@@ -186,10 +186,23 @@ The phone versions need a development build. In Expo Go the switch is hidden.
 
 ### Graphs
 
-Squeezing a whole curve onto 30 pins loses its shape, so Graph Range shows
-±2, ±5 or ±10 units at the graph's real proportions. It centres on the most
-interesting part: a parabola's vertex, the middle of a wave, where a line
-crosses the y-axis, and so on.
+Squeezing a whole curve onto 30 pins can lose its shape. Graph Range starts on
+Auto: the whole curve when that shows everything (a parabola, a line), or the
+part where it turns and bends (the two humps of `x^3 - 3x`, the top of a bell
+curve). Waves show one at a time.
+
+To see a set part instead, type a range in the Graph Range field:
+
+| Type | Shows |
+|---|---|
+| `5`, `±5`, `+-5` or `+/-5` | 5 units each side of the middle of the graph |
+| `+5` | the 5 units right of the middle |
+| `-5` | the 5 units left of the middle |
+| `whole` | the whole curve |
+| nothing | Auto |
+
+A typed range keeps the graph's real proportions, and the curve's lowest or
+highest point sits in the bottom or top row when it is in view.
 
 The units come from the numbers on the axes, read with Tesseract.js on the
 device. If they can't be read, one grid square counts as one unit, which can

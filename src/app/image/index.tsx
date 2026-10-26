@@ -99,7 +99,7 @@ export default function ImageScreen() {
   /** Live camera: the picture is essentially black (analysis paused). */
   const [tooDark, setTooDark] = useState(false);
   const cameraDark = live?.kind === 'camera' && tooDark;
-  /** Graphs: how much of the graph the pins show (around the curve's vertex or middle), at its true proportions. */
+  /** Graphs: how much of the graph the pins show (around the middle of the graph), at its true proportions. */
   /** The graph window moved with the arrows (units, right and up); back to the curve for each new graph. */
 
   // Stop screen sharing when the session is replaced or the screen goes away.

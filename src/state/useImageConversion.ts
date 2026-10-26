@@ -16,6 +16,7 @@ import { type RasterImage, toGrayscale } from '@/imaging/convert';
 import { DEFAULT_MIN_PIECE_RATIO, estimateBackground, findForeground } from '@/imaging/foreground';
 import { clip, fullRect, type Rect } from '@/imaging/geometry';
 import { type GraphScale, labelBands, scaleFromGrid, scaleFromLabels } from '@/imaging/graph';
+import type { GraphRange } from '@/imaging/graphRange';
 import type { LiveCapture } from '@/imaging/imageInput';
 import { cellSizePx, inkFromGray, inkFromMask, patternFromSamples, renderCrop, sampleCrop, thickenThinLines, traceLinePins } from '@/imaging/pinSampling';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
@@ -42,8 +43,7 @@ export interface PickedImage {
 }
 
 /** Graph Range: units each side of the curve's key point, or the whole curve. */
-/** Units each side of the curve's key point, the whole curve, or Auto (the whole curve or its turns and bends). */
-export type GraphRange = 'auto' | '2' | '5' | '10' | 'whole';
+export type { GraphRange } from '@/imaging/graphRange';
 
 export interface ConversionSettings {
   removeBackground: boolean;
@@ -137,7 +137,7 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   );
   const graphView = useMemo<GraphView>(
     () => ({
-      range: graphRange === 'whole' || graphRange === 'auto' ? graphRange : Number(graphRange),
+      range: graphRange,
       scale: graphScale ?? picked?.equation?.scale ?? null,
       rows: GRID.rows,
       cols: GRID.cols,
@@ -162,7 +162,7 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   const graph = !manualCrop ? smart?.graph : undefined;
   const scaleKey = graph ? `${Math.round(graph.axes.majorX ?? 0)}x${Math.round(graph.axes.majorY ?? 0)}` : null;
   // Whole and Auto are measured on the curve itself: no numbers to read.
-  const wholeCurve = graphRange === 'whole' || graphRange === 'auto';
+  const wholeCurve = graphRange.kind !== 'window';
   const readingNumbers = !!graph && !wholeCurve && !graph.scale;
   // A scale carried through a zoom (followZoom) is checked against the numbers once the zoom has settled.
   const checkingScale = !!graph?.scale?.followed && !wholeCurve;

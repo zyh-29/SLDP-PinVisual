@@ -6,7 +6,7 @@
 import { useCallback, useState } from 'react';
 
 import { DEFAULT_PIN_FILL } from '@/imaging/foreground';
-import type { GraphRange } from './useImageConversion';
+import { AUTO_RANGE, type GraphRange } from '@/imaging/graphRange';
 
 export interface ConversionPrefs {
   removeBackground: boolean;
@@ -37,7 +37,7 @@ const DEFAULTS: ConversionPrefs = {
   snap: true,
   cutoutOverride: null,
   linesOverride: null,
-  graphRange: 'auto',
+  graphRange: AUTO_RANGE,
   graphPan: NO_PAN,
   thinLines: true,
 };

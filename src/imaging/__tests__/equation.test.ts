@@ -1,5 +1,6 @@
 import { EQUATION_PLOT, parseEquation, renderEquation } from '../equation';
 import { toRgb } from '../foreground';
+import { type GraphRange, parseGraphRange } from '../graphRange';
 import { traceLinePins } from '../pinSampling';
 import { smartSubject } from '../smartCrop';
 
@@ -38,7 +39,7 @@ describe('typed equations', () => {
     const { width: W, height: H, ppu } = EQUATION_PLOT;
     const rgb = toRgb(raster);
     const r = smartSubject(rgb, W, H, { tolerance: 'auto', minPieceRatio: 0.15, removeLines: 'auto' }, undefined, undefined, {
-      range: 5,
+      range: { kind: 'window', units: 5, side: 'both' },
       scale,
       rows: 5,
       cols: 8,
@@ -67,7 +68,7 @@ describe('typed equations', () => {
       const { raster, scale } = renderEquation(parseEquation(eq));
       const { width: W, height: H } = EQUATION_PLOT;
       const r = smartSubject(toRgb(raster), W, H, { tolerance: 'auto', minPieceRatio: 0.15, removeLines: 'auto' }, undefined, undefined, {
-        range: 'whole',
+        range: { kind: 'whole' },
         scale,
         rows: 5,
         cols: 6,
@@ -89,7 +90,7 @@ describe('typed equations', () => {
     const auto = (eq: string) => {
       const { raster, scale } = renderEquation(parseEquation(eq));
       const r = smartSubject(toRgb(raster), W, H, { tolerance: 'auto', minPieceRatio: 0.15, removeLines: 'auto' }, undefined, undefined, {
-        range: 'auto',
+        range: { kind: 'auto' },
         scale,
         rows: 5,
         cols: 6,
@@ -121,6 +122,48 @@ describe('typed equations', () => {
     expect(bell.to - bell.from).toBeLessThan(4);
     // Waves: one wave, as Whole shows them.
     expect(auto('2sin(x)').g.waves).toEqual({ shown: 1, total: 3 });
+  });
+
+  it('a typed range: ±, + and − around the vertex, each a new window over the same detection', () => {
+    const { raster, scale } = renderEquation(parseEquation('y = x^2 - 3'));
+    const { width: W, height: H, ppu } = EQUATION_PLOT;
+    const rgb = toRgb(raster);
+    const o = { tolerance: 'auto' as const, minPieceRatio: 0.15, removeLines: 'auto' as const };
+    const view = (range: GraphRange) => smartSubject(rgb, W, H, o, undefined, undefined, { range, scale, rows: 5, cols: 6, pinPitchRatio: 1 });
+    const read = (text: string) => {
+      const r = parseGraphRange(text);
+      if (!('range' in r)) throw new Error(r.error);
+      const res = view(r.range);
+      const ox = res.graph!.axes.originX!;
+      return { res, from: (res.box.x - ox) / ppu, to: (res.box.x + res.box.width - ox) / ppu };
+    };
+    const both = read('+-2');
+    expect(both.from).toBeCloseTo(-2, 0);
+    expect(both.to).toBeCloseTo(2, 0);
+    const right = read('+2');
+    expect(right.from).toBeGreaterThan(-0.5);
+    expect(right.to).toBeCloseTo(2, 0);
+    const left = read('-2');
+    expect(left.from).toBeCloseTo(-2, 0);
+    expect(left.to).toBeLessThan(0.5);
+    // Measured from the middle of the graph (x = 0), not the curve's vertex: (x − 3)² at ±2 shows x from −2 to 2.
+    const shifted = renderEquation(parseEquation('(x-3)^2'));
+    const sr = smartSubject(toRgb(shifted.raster), W, H, o, undefined, undefined, {
+      range: { kind: 'window', units: 2, side: 'both' },
+      scale: shifted.scale,
+      rows: 5,
+      cols: 6,
+      pinPitchRatio: 1,
+    });
+    const sox = sr.graph!.axes.originX!;
+    expect((sr.box.x - sox) / ppu).toBeCloseTo(-2, 0);
+    expect((sr.box.x + sr.box.width - sox) / ppu).toBeCloseTo(2, 0);
+    // The curve's vertex still describes it in words.
+    expect((sr.graph!.key!.x - sox) / ppu).toBeCloseTo(3, 0);
+    // The curves were found once for this picture: every range reuses them (the same pixels, not found again).
+    expect(right.res.mask).toBe(both.res.mask);
+    expect(left.res.mask).toBe(both.res.mask);
+    expect(view({ kind: 'auto' }).mask).toBe(both.res.mask);
   });
 
   it('1/x: two branches, no line joining them across the gap', () => {

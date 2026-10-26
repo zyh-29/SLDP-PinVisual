@@ -173,7 +173,7 @@ describe('graphs (Desmos screenshots)', () => {
   it('ignores a focused row that looks like an L (icon square and the bottom edge of its outline): not a curve', () => {
     const img = desmos(false, 'L');
     const rgb = toRgb(img);
-    const view = { range: 'whole' as const, scale: null, rows: 5, cols: 8, pinPitchRatio: 1, followZoom: true };
+    const view = { range: { kind: 'whole' as const }, scale: null, rows: 5, cols: 8, pinPitchRatio: 1, followZoom: true };
     const result = smartSubject(rgb, img.width, img.height, opts, undefined, undefined, view);
     expect(result.kind).toBe('curves');
     // The parabola only (x = 263..557), not the expression panel (x < 180).

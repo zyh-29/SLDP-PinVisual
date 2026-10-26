@@ -40,7 +40,7 @@ function plot(ppu: number, ox: number, oy: number) {
 
 const opts = { tolerance: 'auto' as const, minPieceRatio: 0.15, removeLines: 'auto' as const };
 const view = (ppu: number) => ({
-  range: 5,
+  range: { kind: 'window' as const, units: 5, side: 'both' as const },
   scale: { pxPerUnitX: ppu, pxPerUnitY: ppu, unitsPerMajorX: 1, unitsPerMajorY: 1, majorX: ppu, majorY: ppu, from: 'labels' as const },
   rows: ROWS,
   cols: COLS,

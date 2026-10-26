@@ -5,6 +5,7 @@ import {
   type AxisReading,
   curveKeyPoint,
   featureWindow,
+  graphMiddle,
   labelBands,
   MIN_PX_PER_PIN,
   tidyKeyPoint,
@@ -260,7 +261,7 @@ describe('window', () => {
   const plot: Rect = { x: 0, y: 0, width: 1000, height: 800 };
 
   it('+/-5 units across, same scale up and down, in the pins proportions (8 x 5)', () => {
-    const { box: w, fit } = graphWindow({ x: 500, y: 400, place: 'centre', kind: 'inflection' }, scale(40), 5, plot, 5, 8);
+    const { box: w, fit } = graphWindow({ x: 500, y: 400, place: 'centre', kind: 'inflection' }, scale(40), { units: 5, side: 'both' as const }, plot, 5, 8);
     expect(fit).toBe('exact');
     expect(w.width).toBe(400); // 10 units
     expect(w.height).toBe(250); // 10 * 5/8 units
@@ -268,18 +269,44 @@ describe('window', () => {
     expect(w.y + w.height / 2).toBeCloseTo(400, 0);
   });
 
+  it('+5 is the right side only, from the key point; -5 the left side only, up to it', () => {
+    const key = { x: 500, y: 400, place: 'centre' as const, kind: 'inflection' as const };
+    const right = graphWindow(key, scale(40), { units: 5, side: 'right' }, plot, 5, 8).box;
+    expect(right.width).toBe(200); // 5 units
+    expect(right.height).toBe(125); // same scale up and down: 5 * 5/8 units
+    // The key point is in the first pin column, the window reaching right of it.
+    expect(500 - right.x).toBeGreaterThan(0);
+    expect(500 - right.x).toBeLessThan(right.width / 8);
+    const left = graphWindow(key, scale(40), { units: 5, side: 'left' }, plot, 5, 8).box;
+    expect(left.width).toBe(200);
+    expect(left.x + left.width - 500).toBeGreaterThan(0);
+    expect(left.x + left.width - 500).toBeLessThan(left.width / 8);
+  });
+
+  it('a typed range starts from the middle of the graph; a turning point inside it keeps its row', () => {
+    const trace = { x0: 100, ys: Array.from({ length: 800 }, (_, i) => 300 + i * 0.1) };
+    // A vertex 50 px right of the middle, inside a 200 px window: the window keeps it in the bottom row.
+    const vertex = { x: 550, y: 600, place: 'bottom' as const, kind: 'vertex' as const, trace };
+    expect(graphMiddle(plot, vertex, 200, 'both')).toMatchObject({ x: 500, y: 600, place: 'bottom' });
+    // Outside the window (+2 to the left of the middle doesn't reach it): the window follows the curve.
+    expect(graphMiddle(plot, vertex, 200, 'left')).toMatchObject({ x: 500, place: 'follow' });
+    // A curve that only starts right of the middle: from its first column.
+    const late = { x: 800, y: 200, place: 'centre' as const, kind: 'middle' as const, trace: { x0: 700, ys: [200, 210, 220] } };
+    expect(graphMiddle(plot, late, 200, 'both')).toMatchObject({ x: 700, y: 200 });
+  });
+
   it('a vertex sits in the bottom row', () => {
-    const w = graphWindow({ x: 500, y: 600, place: 'bottom', kind: 'vertex' }, scale(40), 5, plot, 5, 8).box;
+    const w = graphWindow({ x: 500, y: 600, place: 'bottom', kind: 'vertex' }, scale(40), { units: 5, side: 'both' as const }, plot, 5, 8).box;
     const row = w.height / 5;
     expect(600 - w.y).toBeGreaterThan(4 * row);
     expect(600 - w.y).toBeLessThan(5 * row);
   });
 
   it('stays inside the plot, and keeps its size (reaching past the plot) when the plot shows less than the range', () => {
-    const near = graphWindow({ x: 20, y: 20, place: 'centre', kind: 'middle' }, scale(40), 5, plot, 5, 8).box;
+    const near = graphWindow({ x: 20, y: 20, place: 'centre', kind: 'middle' }, scale(40), { units: 5, side: 'both' as const }, plot, 5, 8).box;
     expect(near.x).toBe(0);
     expect(near.y).toBe(0);
-    const small = graphWindow({ x: 100, y: 100, place: 'centre', kind: 'middle' }, scale(40), 5, { x: 0, y: 0, width: 200, height: 200 }, 5, 8);
+    const small = graphWindow({ x: 100, y: 100, place: 'centre', kind: 'middle' }, scale(40), { units: 5, side: 'both' as const }, { x: 0, y: 0, width: 200, height: 200 }, 5, 8);
     expect(small.fit).toBe('shrunk');
     // Still 10 units across (the curve keeps its size on the pins), centred on the key point, not slid into the plot.
     expect(small.box.width).toBe(400);
@@ -289,7 +316,7 @@ describe('window', () => {
 
   it('zoomed far out: grows to a usable size instead of a few pixels', () => {
     // 0.9 px per unit: +/-5 units would be 9 px for 8 pins.
-    const g = graphWindow({ x: 500, y: 400, place: 'centre', kind: 'middle' }, scale(0.9), 5, plot, 5, 8);
+    const g = graphWindow({ x: 500, y: 400, place: 'centre', kind: 'middle' }, scale(0.9), { units: 5, side: 'both' as const }, plot, 5, 8);
     expect(g.fit).toBe('grown');
     expect(g.box.width).toBeGreaterThanOrEqual(8 * MIN_PX_PER_PIN - 1);
   });

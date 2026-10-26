@@ -8,7 +8,7 @@ const scale: GraphScale = { pxPerUnitX: 40, pxPerUnitY: 40, unitsPerMajorX: 1, u
 describe('a graph in words', () => {
   it('a parabola: its lowest point, and the part of the graph on the pins', () => {
     const key = { x: 500, y: 480, place: 'bottom' as const, kind: 'vertex' as const };
-    const win = graphWindow(key, scale, 5, axes.plot, 5, 8).box;
+    const win = graphWindow(key, scale, { units: 5, side: 'both' as const }, axes.plot, 5, 8).box;
     expect(describeGraph({ axes, key, scale, window: win })).toBe('Lowest point at (0, −2). Pins show x from −5 to 5, y from −2.6 to 3.6.');
   });
 
@@ -35,11 +35,11 @@ describe('a graph in words', () => {
 describe('moving the graph window', () => {
   it('pans by whole units right and up, even past the plot', () => {
     const key = { x: 500, y: 400, place: 'centre' as const, kind: 'middle' as const };
-    const home = graphWindow(key, scale, 5, axes.plot, 5, 8).box;
-    const moved = graphWindow(key, scale, 5, axes.plot, 5, 8, 1, { x: 2, y: 1 }).box;
+    const home = graphWindow(key, scale, { units: 5, side: 'both' as const }, axes.plot, 5, 8).box;
+    const moved = graphWindow(key, scale, { units: 5, side: 'both' as const }, axes.plot, 5, 8, 1, { x: 2, y: 1 }).box;
     expect(moved.x - home.x).toBe(80);
     expect(moved.y - home.y).toBe(-40);
-    const far = graphWindow(key, scale, 5, axes.plot, 5, 8, 1, { x: 10, y: 0 }).box;
+    const far = graphWindow(key, scale, { units: 5, side: 'both' as const }, axes.plot, 5, 8, 1, { x: 10, y: 0 }).box;
     expect(far.x + far.width).toBeGreaterThan(axes.plot.width);
   });
 });

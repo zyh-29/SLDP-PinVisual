@@ -20,6 +20,7 @@
  */
 import { CAMERA_CURVE_SATURATIONS, type CurveResult, dropFramedPieces, enclosesFill, findCurves, hasLongStroke } from './curves';
 import { findForeground } from './foreground';
+import { type GraphRange, rangeWidth } from './graphRange';
 import { area, clip, contains, distanceTo, expand, fullRect, inset, overlaps, type Point, type Rect, type Rgb, union } from './geometry';
 import {
   curveKeyPoint,
@@ -29,6 +30,7 @@ import {
   graphWindow,
   type GraphWindow,
   featureWindow,
+  graphMiddle,
   type KeyPoint,
   readAxes,
   rescale,
@@ -70,11 +72,8 @@ export interface Focus extends Point {
 
 /** Showing a portion of a graph (e.g. x from -5 to 5 around its vertex) instead of the whole curve. */
 export interface GraphView {
-  /**
-   * Units each side of the curve's key point; 'whole' for the whole curve; 'auto' for the part with the most to
-   * feel (the whole curve, or its turns and bends: see featureWindow).
-   */
-  range: number | 'whole' | 'auto';
+  /** How much of the curve: Auto, the whole curve, or a number of units around its key point (see graphRange.ts). */
+  range: GraphRange;
   /** The measured scale (from the axis numbers, or the grid); null until known. */
   scale: GraphScale | null;
   rows: number;
@@ -362,6 +361,24 @@ function scaleRect(r: Rect, k: number, width: number, height: number): Rect {
 const ANALYSIS_SIZE = 400;
 
 /**
+ * What a picture holds, before any graph view is applied: the subject and, for a graph, its curves' pixels and
+ * the plot they are in. The curve's axes and key point are worked out on first use and kept here.
+ */
+interface Detected {
+  result: SmartCropResult;
+  /** The area searched (the window may not reach past it). */
+  region: Rect;
+  graph?: { mask: Float32Array; grid: Grid; axes?: GraphAxes; key?: KeyPoint | null };
+}
+
+/**
+ * Detection is kept per picture (the pixel array: a new frame is a new array, and old ones are let go) and
+ * settings. Changing the graph view (another range, the arrows) then only places a new window: about 1 ms,
+ * instead of finding and tracing the curves again (about 50 ms, more on a phone).
+ */
+const detectCache = new WeakMap<object, Map<string, Detected>>();
+
+/**
  * The part of the image that should become pins. See the criteria at the
  * top of this file. Curves are found at full size; shapes and objects are
  * decided on a smaller copy (fast enough for live screen sharing).
@@ -377,15 +394,65 @@ export function smartSubject(
   /** For graphs: show this portion instead of the whole curve. */
   view?: GraphView,
 ): SmartCropResult {
+  const found = detect(rgb, width, height, o, region, focus);
+  return view ? frameGraph(found, rgb, width, height, view) : found.result;
+}
+
+function detect(rgb: ArrayLike<number>, width: number, height: number, o: SmartCropOptions, region: Rect, focus: Focus | undefined): Detected {
+  const holder = typeof rgb === 'object' ? (rgb as object) : null;
+  const key = JSON.stringify([width, height, o, region, focus ?? null]);
+  const cached = holder ? detectCache.get(holder)?.get(key) : undefined;
+  if (cached) return cached;
+  let found: Detected | null = null;
   // A tap inside one of several graphs (a worksheet with two plots): only that graph is searched.
   if (focus) {
     const grids = findGrids(rgb, width, height, region);
     if (grids.length > 1) {
       const tapped = grids.find((g) => contains(expand(g.plot, 0.03, width, height), focus));
-      if (tapped) return subjectIn(rgb, width, height, o, clip(expand(tapped.plot, 0.03, width, height), region), focus, view);
+      if (tapped) found = subjectIn(rgb, width, height, o, clip(expand(tapped.plot, 0.03, width, height), region), focus);
     }
   }
-  return subjectIn(rgb, width, height, o, region, focus, view);
+  found ??= subjectIn(rgb, width, height, o, region, focus);
+  if (holder) {
+    let m = detectCache.get(holder);
+    if (!m) detectCache.set(holder, (m = new Map()));
+    m.set(key, found);
+  }
+  return found;
+}
+
+/** Graphs: read the axes, then (with a known scale) narrow the box to the part of the curve the view asks for. */
+function frameGraph(d: Detected, rgb: ArrayLike<number>, width: number, height: number, view: GraphView): SmartCropResult {
+  const g = d.graph;
+  if (!g) return d.result;
+  g.axes ??= readAxes(g.grid);
+  if (g.key === undefined) g.key = curveKeyPoint(g.mask, width, height, g.axes, rgb);
+  const axes = g.axes;
+  const scale = !view.scale
+    ? null
+    : view.anyZoom && view.scale.atWidth && view.targetWidth
+      ? zoomed(view.scale, view.targetWidth / view.scale.atWidth)
+      : view.followZoom
+        ? (followZoom(view.scale, axes) ?? rescale(view.scale, axes))
+        : rescale(view.scale, axes, view.anyZoom);
+  const key = g.key && scale ? tidyKeyPoint(g.key, axes, scale) : g.key;
+  const info: GraphInfo = { axes, key, scale, window: null, fit: null };
+  const result: SmartCropResult = { ...d.result, target: g.grid.plot };
+  const range = view.range;
+  if (range.kind !== 'window') {
+    // Too many waves for the pins: as many whole waves as fit, around the middle.
+    const fit = wavesThatFit(key, result.box, view.cols);
+    if (fit) return { ...result, box: fit.box, graph: { ...info, waves: { shown: fit.shown, total: fit.total } } };
+    // Auto: the curve's turns and bends, when the whole curve would squash them.
+    const features = range.kind === 'auto' ? featureWindow(key, result.box) : null;
+    return features ? { ...result, box: features, graph: { ...info, features } } : { ...result, graph: info };
+  }
+  if (!key || !scale) return { ...result, graph: info };
+  // A typed range is measured from the middle of the graph (the key point still describes the curve in words).
+  const from = graphMiddle(axes.plot, key, rangeWidth(range) * scale.pxPerUnitX, range.side);
+  const win = graphWindow(from, scale, range, axes.plot, view.rows, view.cols, view.pinPitchRatio, view.pan);
+  // The window may reach past the plot (zoomed in, see graphWindow): only the plot part is analysed.
+  return { ...result, box: win.box, context: clip(union(result.context, clip(win.box, axes.plot)), d.region), graph: { ...info, window: win.box, fit: win.fit } };
 }
 
 function subjectIn(
@@ -395,40 +462,11 @@ function subjectIn(
   o: SmartCropOptions,
   region: Rect,
   focus: Focus | undefined,
-  view: GraphView | undefined,
-): SmartCropResult {
+): Detected {
   const wants = (r: Rect) => !focus || contains(expand(r, 0.05, width, height), focus);
-  /** Graphs: read the axes, then (with a known scale) narrow the box to the window around the key point. */
-  /** `grid`: the plot the curves are in, found in the whole picture (null: none). */
-  const windowed = (detected: SmartCropResult, mask: Float32Array, grid: Grid | null): SmartCropResult => {
-    let result = detected;
-    if (!view) return result;
-    if (!grid || !overlaps(grid.plot, result.box)) return result;
-    const axes = readAxes(grid);
-    const scale = !view.scale
-      ? null
-      : view.anyZoom && view.scale.atWidth && view.targetWidth
-        ? zoomed(view.scale, view.targetWidth / view.scale.atWidth)
-        : view.followZoom
-          ? (followZoom(view.scale, axes) ?? rescale(view.scale, axes))
-          : rescale(view.scale, axes, view.anyZoom);
-    const found = curveKeyPoint(mask, width, height, axes, rgb);
-    const key = found && scale ? tidyKeyPoint(found, axes, scale) : found;
-    const info: GraphInfo = { axes, key, scale, window: null, fit: null };
-    result = { ...result, target: grid.plot };
-    if (view.range === 'whole' || view.range === 'auto') {
-      // Too many waves for the pins: as many whole waves as fit, around the middle.
-      const fit = wavesThatFit(key, result.box, view.cols);
-      if (fit) return { ...result, box: fit.box, graph: { ...info, waves: { shown: fit.shown, total: fit.total } } };
-      // Auto: the curve's turns and bends, when the whole curve would squash them.
-      const features = view.range === 'auto' ? featureWindow(key, result.box) : null;
-      return features ? { ...result, box: features, graph: { ...info, features } } : { ...result, graph: info };
-    }
-    if (!key || !scale) return { ...result, graph: info };
-    const win = graphWindow(key, scale, view.range, axes.plot, view.rows, view.cols, view.pinPitchRatio, view.pan);
-    // The window may reach past the plot (zoomed in, see graphWindow): only the plot part is analysed.
-    return { ...result, box: win.box, context: clip(union(result.context, clip(win.box, axes.plot)), region), graph: { ...info, window: win.box, fit: win.fit } };
-  };
+  /** A graph's curves, and `grid`, the plot they are in (found in the whole picture; null: none). */
+  const curvesFound = (result: SmartCropResult, mask: Float32Array, grid: Grid | null): Detected =>
+    grid && overlaps(grid.plot, result.box) ? { result, region, graph: { mask, grid } } : { result, region };
   // Curves are found at full size: shrinking would fade a thin line below the colour threshold. They count when the
   // area around them is flat (a screen or diagram), whatever else is on screen (a photo wallpaper, other windows).
   // Only a real tap picks one curve by colour; the camera's lock just keeps to the item.
@@ -458,7 +496,7 @@ function subjectIn(
     const context = clip(expand(curves.box, 0.08, width, height), region);
     const pageLike = !o.camera || o.flatSurface || pageBackground(rgb, width, height, context, curves.mask);
     if (pageLike && (o.flatSurface || !isPhotoLike(rgb, width, height, context)) && !enclosesFill(rgb, width, curves))
-      return windowed({ box: curves.box, context, kind: 'curves', mask: curves.mask, target: curves.box }, curves.mask, gridFor(grids, curves.box));
+      return curvesFound({ box: curves.box, context, kind: 'curves', mask: curves.mask, target: curves.box }, curves.mask, gridFor(grids, curves.box));
   }
   // Graphs whose curve has no colour (black, grey): find the plot area by its grid, then the curve inside it.
   // Several plots on the page (and no tap): the biggest.
@@ -476,7 +514,7 @@ function subjectIn(
     // UI inside the plot (Desmos' zoom buttons, framed boxes) is not part of the graph.
     const { mask, box } = dropFramedPieces(fg.mask, width, height);
     // A curve is long. Only short pieces left (the axis numbers and tick marks of an empty graph): no curve.
-    if (box && hasLongStroke(mask, width, height, plot)) return windowed({ box, context: plot, kind: 'curves', mask, target: plot }, mask, grid);
+    if (box && hasLongStroke(mask, width, height, plot)) return curvesFound({ box, context: plot, kind: 'curves', mask, target: plot }, mask, grid);
   }
   // Shapes and objects: decided on a smaller copy (fast enough for live sharing; a few pixels don't matter on a few dozen pins).
   const k = Math.max(1, Math.round(Math.max(width, height) / ANALYSIS_SIZE));
@@ -486,7 +524,7 @@ function subjectIn(
   const smallFocus = focus && (k > 1 ? { x: focus.x / k, y: focus.y / k } : focus);
   const res = analyse(small.rgb, small.width, small.height, o, isWhole ? undefined : smallRegion, 0, smallFocus);
   const up = (r: Rect) => clip(k > 1 ? scaleRect(r, k, width, height) : r, region);
-  return { box: up(res.box), context: up(res.context), kind: res.kind, target: up(res.box) };
+  return { result: { box: up(res.box), context: up(res.context), kind: res.kind, target: up(res.box) }, region };
 }
 
 /** A scale measured earlier, for the same graph seen `f` times larger (the camera came closer). */

@@ -17,6 +17,7 @@
  *
  * Pure functions on the working image (unit tested).
  */
+import { type RangeSide, rangeWidth } from './graphRange';
 import { type Component, dilate, labelComponents } from './masks';
 import { type Rect, union } from './geometry';
 import type { GraphScale } from './graphScale';
@@ -771,8 +772,9 @@ export interface GraphWindow {
 }
 
 /**
- * The part of the graph to show: `range` units each side of the key point across, the same scale up and down,
- * in the pins' proportions (cols x rows). A lowest point sits in the bottom row, a highest in the top row.
+ * The part of the graph to show: `range.units` each side of the key point across (or on one side only: right
+ * for '+', left for '-'), the same scale up and down, in the pins' proportions (cols x rows). A lowest point sits
+ * in the bottom row, a highest in the top row.
  * Kept inside the visible plot where it fits, and at least MIN_PX_PER_PIN pixels per pin.
  *
  * Zoomed in so far that the plot shows less than the range, the window is NOT shrunk to the plot: that would
@@ -783,7 +785,7 @@ export interface GraphWindow {
 export function graphWindow(
   key: KeyPoint,
   scale: GraphScale,
-  range: number,
+  range: { units: number; side: RangeSide },
   plot: Rect,
   rows: number,
   cols: number,
@@ -791,7 +793,7 @@ export function graphWindow(
   /** Moved by the user (graph units, right and up) from where the key point puts it. */
   pan: { x: number; y: number } = { x: 0, y: 0 },
 ): GraphWindow {
-  const unitsWide = 2 * range;
+  const unitsWide = rangeWidth(range);
   const unitsTall = (unitsWide * rows) / (cols * pinPitchRatio);
   let w = unitsWide * scale.pxPerUnitX;
   let h = unitsTall * scale.pxPerUnitY;
@@ -808,7 +810,9 @@ export function graphWindow(
     fits ? Math.min(Math.max(v, start), start + length - size) : v;
   const row = h / rows;
   const col = w / cols;
-  let x = key.align === 'start' ? key.x - col / 2 : key.align === 'end' ? key.x + col / 2 - w : key.x - w / 2;
+  // One side only: the key point in the first column (to its right) or the last (to its left).
+  const align = range.side === 'right' ? 'start' : range.side === 'left' ? 'end' : key.align;
+  let x = align === 'start' ? key.x - col / 2 : align === 'end' ? key.x + col / 2 - w : key.x - w / 2;
   x = keepIn(x, w, plot.x, plot.width, fitsX);
   let y: number;
   if (key.place === 'bottom') y = key.y + row / 2 - h;
@@ -832,6 +836,28 @@ export function graphWindow(
   const rx = Math.round(x);
   const ry = Math.round(y);
   return { box: { x: rx, y: ry, width: Math.max(1, Math.round(x + w) - rx), height: Math.max(1, Math.round(y + h) - ry) }, fit };
+}
+
+/**
+ * Where a typed range is measured from: the middle of the graph as shown (its plot's centre column). ±5 is 5 units
+ * each side of it, +5 the 5 units to its right, -5 the 5 to its left. Up and down, the window shows the curve:
+ *  - a lowest (highest) point of the curve inside the window sits in the bottom (top) row, as with the curve's own
+ *    key point, so a parabola's arms rise from it and the window is the same at every zoom;
+ *  - otherwise the window follows the curve's height across it.
+ * A curve that doesn't reach the middle (a tapped line on the right, √x of a shifted graph) is measured from its
+ * end nearest the middle instead, so the window always has some of it. Without a traced curve: the plot's centre.
+ *
+ * `width`: the window's width in pixels (to know whether the curve's turning point falls inside it).
+ */
+export function graphMiddle(plot: Rect, curve: KeyPoint | null, width: number, side: RangeSide): KeyPoint {
+  const middle = plot.x + plot.width / 2;
+  const trace = curve?.trace;
+  if (!curve || !trace || !trace.ys.length) return { x: middle, y: plot.y + plot.height / 2, place: 'centre', kind: 'middle' };
+  const x = Math.min(trace.x0 + trace.ys.length - 1, Math.max(trace.x0, middle));
+  const from = side === 'right' ? x : side === 'left' ? x - width : x - width / 2;
+  const turnInside = (curve.place === 'bottom' || curve.place === 'top') && curve.x >= from && curve.x <= from + width;
+  if (turnInside) return { x, y: curve.y, place: curve.place, kind: 'middle' };
+  return { x, y: trace.ys[Math.round(x - trace.x0)], place: 'follow', kind: 'middle', trace };
 }
 
 /**
