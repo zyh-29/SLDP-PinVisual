@@ -84,6 +84,45 @@ describe('typed equations', () => {
     expect(pinsFor('x^3/5 - 2x').r.graph!.waves ?? null).toBeNull();
   });
 
+  it('Auto: the whole curve when it hides nothing, else the part where it turns and bends', () => {
+    const { width: W, height: H, ppu } = EQUATION_PLOT;
+    const auto = (eq: string) => {
+      const { raster, scale } = renderEquation(parseEquation(eq));
+      const r = smartSubject(toRgb(raster), W, H, { tolerance: 'auto', minPieceRatio: 0.15, removeLines: 'auto' }, undefined, undefined, {
+        range: 'auto',
+        scale,
+        rows: 5,
+        cols: 6,
+        pinPitchRatio: 1,
+      });
+      const g = r.graph!;
+      const ux = (px: number) => (px - g.axes.originX!) / ppu;
+      const rows = traceLinePins(r.mask!, W, H, r.box, 5, 6, 1, true).cells;
+      /** Highest raised row (0 = top) in each pin column. */
+      const tops = Array.from({ length: 6 }, (_, c) => [0, 1, 2, 3, 4].find((row) => rows[row * 6 + c]) ?? 5);
+      return { g, from: ux(r.box.x), to: ux(r.box.x + r.box.width), tops };
+    };
+    // A parabola: whole, as before (a U).
+    const parabola = auto('x^2');
+    expect(parabola.g.features ?? null).toBeNull();
+    expect(parabola.tops[0]).toBe(0);
+    expect(parabola.tops[5]).toBe(0);
+    // A cubic with two turns at x = ±1 (y = ±2): whole, its arms reach y = ±10 and the turns fall in one row. Auto
+    // shows x from about −2 to 2, where the pins go up, down and up again.
+    const cubic = auto('x^3 - 3x');
+    expect(cubic.g.features).toBeTruthy();
+    expect(cubic.from).toBeGreaterThan(-2.5);
+    expect(cubic.to).toBeLessThan(2.5);
+    const t = cubic.tops;
+    expect(Math.min(t[1], t[2])).toBeLessThan(Math.max(t[0], t[3])); // a peak on the left
+    expect(Math.max(t[3], t[4])).toBeGreaterThan(Math.min(t[2], t[5])); // a trough on the right
+    // A bell curve: its bump, not a wide flat line with a spike.
+    const bell = auto('e^(-x^2)');
+    expect(bell.to - bell.from).toBeLessThan(4);
+    // Waves: one wave, as Whole shows them.
+    expect(auto('2sin(x)').g.waves).toEqual({ shown: 1, total: 3 });
+  });
+
   it('1/x: two branches, no line joining them across the gap', () => {
     const { raster } = renderEquation(parseEquation('1/x'));
     const { width: W, height: H } = EQUATION_PLOT;

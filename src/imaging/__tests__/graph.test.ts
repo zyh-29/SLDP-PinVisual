@@ -4,6 +4,7 @@ import { toRgb } from '../foreground';
 import {
   type AxisReading,
   curveKeyPoint,
+  featureWindow,
   labelBands,
   MIN_PX_PER_PIN,
   tidyKeyPoint,
@@ -419,5 +420,56 @@ describe('whole curve: waves the pins can show', () => {
   it('a curve that fits (the two turns of a cubic, one wave) is shown whole', () => {
     expect(wavesThatFit(key([200, 400]), box, 6)).toBeNull();
     expect(wavesThatFit({ x: 300, y: 150, place: 'bottom', kind: 'vertex' }, box, 6)).toBeNull();
+  });
+
+  it('three turns are one shape (the W of x⁴ − 4x²), shown whole on 6 columns', () => {
+    expect(wavesThatFit(key([150, 300, 450]), box, 6)).toBeNull();
+  });
+
+  it('the waves shown get their own height: the middle waves of x sin x are smaller than the outer ones', () => {
+    // A trace whose swing grows outwards: 20 px around the middle, 200 px at the ends.
+    const ys = Array.from({ length: 600 }, (_, i) => 150 + Math.sin((i / 100) * Math.PI) * (10 + Math.abs(i - 300) * 0.3));
+    const fit = wavesThatFit({ ...key([50, 150, 250, 350, 450, 550]), trace: { x0: 0, ys } }, box, 6)!;
+    expect(fit.box.x).toBe(200);
+    expect(fit.box.height).toBeLessThan(80);
+  });
+});
+
+describe('Auto: the part of the curve with its turns and bends', () => {
+  const box = { x: 0, y: 0, width: 600, height: 400 };
+  /** A key point at `x`, with these features and a trace that is flat at 200 except for `bump`. */
+  const key = (x: number, features: number[], bump = (i: number) => 0) => ({
+    x,
+    y: 200,
+    place: 'centre' as const,
+    kind: 'inflection' as const,
+    features,
+    trace: { x0: 0, ys: Array.from({ length: 600 }, (_, i) => 200 + bump(i)) },
+  });
+
+  it('whole curve when there is at most one feature (a parabola’s vertex, the bend of x³)', () => {
+    expect(featureWindow(key(300, [300]), box)).toBeNull();
+    expect(featureWindow(key(300, []), box)).toBeNull();
+    expect(featureWindow({ x: 300, y: 200, place: 'bottom', kind: 'vertex' }, box)).toBeNull();
+  });
+
+  it('frames the features with a gap of margin each side, at the curve’s height there', () => {
+    // Turns at 250 and 350 (a cubic’s), its bend at 300: gap 50, so x from 200 to 400.
+    const w = featureWindow(key(300, [250, 300, 350], (i) => (i >= 200 && i <= 400 ? Math.sin(((i - 200) / 200) * 2 * Math.PI) * 40 : 0)), box)!;
+    expect(w.x).toBe(200);
+    expect(w.width).toBe(200);
+    // Its height: the bumps' 80 px, plus the stroke, not the box's 400.
+    expect(w.height).toBeGreaterThan(70);
+    expect(w.height).toBeLessThan(90);
+  });
+
+  it('leaves out a faint ripple far from the rest (the tail of sin x / x, found on one side only)', () => {
+    const w = featureWindow(key(300, [230, 300, 370, 520]), box)!;
+    expect(w.x).toBe(160);
+    expect(w.x + w.width).toBe(440);
+  });
+
+  it('whole curve when the features already span most of it', () => {
+    expect(featureWindow(key(300, [60, 300, 540]), box)).toBeNull();
   });
 });

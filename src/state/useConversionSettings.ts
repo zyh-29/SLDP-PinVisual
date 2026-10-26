@@ -37,7 +37,7 @@ const DEFAULTS: ConversionPrefs = {
   snap: true,
   cutoutOverride: null,
   linesOverride: null,
-  graphRange: '5',
+  graphRange: 'auto',
   graphPan: NO_PAN,
   thinLines: true,
 };

@@ -28,6 +28,7 @@ import {
   type GraphScale,
   graphWindow,
   type GraphWindow,
+  featureWindow,
   type KeyPoint,
   readAxes,
   rescale,
@@ -69,8 +70,11 @@ export interface Focus extends Point {
 
 /** Showing a portion of a graph (e.g. x from -5 to 5 around its vertex) instead of the whole curve. */
 export interface GraphView {
-  /** Units each side of the curve's key point, or 'whole' for the whole curve. */
-  range: number | 'whole';
+  /**
+   * Units each side of the curve's key point; 'whole' for the whole curve; 'auto' for the part with the most to
+   * feel (the whole curve, or its turns and bends: see featureWindow).
+   */
+  range: number | 'whole' | 'auto';
   /** The measured scale (from the axis numbers, or the grid); null until known. */
   scale: GraphScale | null;
   rows: number;
@@ -103,6 +107,8 @@ export interface GraphInfo {
   fit: GraphWindow['fit'] | null;
   /** Whole curve with more waves than the pins can show: how many are shown, of how many (see wavesThatFit). */
   waves?: { shown: number; total: number } | null;
+  /** Auto: the part of the curve the pins show, around its turns and bends (see featureWindow); else none. */
+  features?: Rect | null;
 }
 
 export interface SmartCropOptions {
@@ -410,10 +416,13 @@ function subjectIn(
     const key = found && scale ? tidyKeyPoint(found, axes, scale) : found;
     const info: GraphInfo = { axes, key, scale, window: null, fit: null };
     result = { ...result, target: grid.plot };
-    if (view.range === 'whole') {
+    if (view.range === 'whole' || view.range === 'auto') {
       // Too many waves for the pins: as many whole waves as fit, around the middle.
       const fit = wavesThatFit(key, result.box, view.cols);
-      return fit ? { ...result, box: fit.box, graph: { ...info, waves: { shown: fit.shown, total: fit.total } } } : { ...result, graph: info };
+      if (fit) return { ...result, box: fit.box, graph: { ...info, waves: { shown: fit.shown, total: fit.total } } };
+      // Auto: the curve's turns and bends, when the whole curve would squash them.
+      const features = view.range === 'auto' ? featureWindow(key, result.box) : null;
+      return features ? { ...result, box: features, graph: { ...info, features } } : { ...result, graph: info };
     }
     if (!key || !scale) return { ...result, graph: info };
     const win = graphWindow(key, scale, view.range, axes.plot, view.rows, view.cols, view.pinPitchRatio, view.pan);

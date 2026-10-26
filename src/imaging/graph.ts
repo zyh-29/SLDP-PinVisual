@@ -273,10 +273,15 @@ export interface KeyPoint {
   /** Across: centred, or where the curve starts at the window's left edge ('start'), or ends at its right ('end'). */
   align?: 'centre' | 'start' | 'end';
   kind: 'vertex' | 'inflection' | 'intercept' | 'root' | 'start' | 'asymptote' | 'shape' | 'middle';
-  /** The traced curve, for 'follow': its first column and one height per column. */
+  /** The traced curve: its first column and one height per column (smoothed). */
   trace?: { x0: number; ys: number[] };
   /** Where the curve turns (picture columns, left to right), when it turns more than once (a wave, a cubic). */
   turns?: number[];
+  /**
+   * Where its shape changes (picture columns, left to right): every turn (a peak or a trough) and every bend (where
+   * it starts curving the other way). What a reader needs to find on the pins; see featureWindow.
+   */
+  features?: number[];
 }
 
 /** Turning points of a sequence whose swing on both sides is at least `h` (a zig-zag filter, ignores noise). */
@@ -534,15 +539,16 @@ function analyseCurve(mask: Float32Array, width: number, height: number, axes: G
   const { x0 } = trace;
   const n = trace.ys.length;
   /** `features`: 2 for a turn or a closed shape, 1 for a bend only, 0 for neither (a line). */
-  const wrap = (key: KeyPoint, features: number) => ({ key, features, span: n });
+  let found: number[] = [];
 
   // A closed curve (a circle, an ellipse): the whole shape, centred.
   if (trace.closed) {
     const b = trace.box;
-    return wrap({ x: b.x + b.width / 2, y: b.y + b.height / 2, place: 'centre', kind: 'shape' }, 2);
+    return { key: { x: b.x + b.width / 2, y: b.y + b.height / 2, place: 'centre', kind: 'shape' }, features: 2, span: n };
   }
 
   const ys = smooth(trace.ys, Math.max(1, Math.round(n * 0.01)));
+  const wrap = (key: KeyPoint, features: number) => ({ key: { ...key, trace: { x0, ys }, features: found }, features, span: n });
   const at = (i: number) => ({ x: x0 + i, y: ys[i] });
   const dist = (i: number) => Math.hypot(x0 + i - ref.x, ys[i] - ref.y);
   // Where the curve runs off the top or bottom of the plot, its trace lies flat along the edge: a straight line
@@ -586,6 +592,7 @@ function analyseCurve(mask: Float32Array, width: number, height: number, axes: G
   const bends = extremes(angle.slice(a0, a1 + 1), 0.25)
     .map((b) => ({ ...b, i: b.i + a0 }))
     .filter((b) => inside(b.i));
+  found = [...turns, ...bends].map((t) => x0 + t.i).sort((a, b) => a - b);
 
   if (turns.length === 1) {
     const t = turns[0];
@@ -665,9 +672,10 @@ export const COLUMNS_PER_WAVE = 4;
 export function wavesThatFit(key: KeyPoint | null, box: Rect, cols: number): { box: Rect; shown: number; total: number } | null {
   const turns = key?.turns;
   if (!key || !turns || turns.length < 3) return null;
-  // Two turns to a wave (a peak and a trough); whole waves only.
+  // Two turns to a wave (a peak and a trough); whole waves only. Three turns are a shape, not waves (the W of
+  // x⁴ − 4x²), and fit on 6 columns.
   const maxTurns = 2 * Math.max(1, Math.floor(cols / COLUMNS_PER_WAVE));
-  if (turns.length <= maxTurns) return null;
+  if (turns.length <= Math.max(maxTurns, SHAPE_TURNS)) return null;
   const gaps = turns.slice(1).map((t, i) => t - turns[i]);
   const half = median(gaps) / 2;
   // The run of maxTurns turns whose middle is nearest the key point.
@@ -684,10 +692,67 @@ export function wavesThatFit(key: KeyPoint | null, box: Rect, cols: number): { b
   const x0 = Math.max(box.x, turns[start] - half);
   const x1 = Math.min(box.x + box.width, turns[start + maxTurns - 1] + half);
   return {
-    box: { x: x0, y: box.y, width: x1 - x0, height: box.height },
+    box: { x: x0, width: x1 - x0, ...heightAcross(key.trace, x0, x1, box) },
     shown: maxTurns / 2,
     total: Math.round(turns.length / 2),
   };
+}
+
+/**
+ * The curve's height between columns x0 and x1 (its traced middle line, plus 2 px for the stroke), within `box`.
+ * The whole curve's height when there's no trace. Fitting it keeps a part of the curve from being squashed by
+ * the rest: the middle waves of x sin x are a quarter as tall as its outer ones.
+ */
+function heightAcross(trace: KeyPoint['trace'], x0: number, x1: number, box: Rect): { y: number; height: number } {
+  let top = Infinity;
+  let bottom = -Infinity;
+  if (trace)
+    for (let c = Math.max(0, Math.floor(x0 - trace.x0)); c <= Math.min(trace.ys.length - 1, Math.ceil(x1 - trace.x0)); c++) {
+      top = Math.min(top, trace.ys[c]);
+      bottom = Math.max(bottom, trace.ys[c]);
+    }
+  if (!Number.isFinite(top)) return { y: box.y, height: box.height };
+  const y0 = Math.max(box.y, top - 2);
+  const y1 = Math.min(box.y + box.height, bottom + 2);
+  return { y: y0, height: Math.max(1, y1 - y0) };
+}
+
+/** Up to this many turns, a curve is one shape (a W, an M), shown whole; more are waves (see wavesThatFit). */
+export const SHAPE_TURNS = 3;
+
+/**
+ * Margin each side of the outermost features, in feature gaps (the median distance between neighbouring features):
+ * enough to show which way the curve leaves them (x³ − 3x carries on up and down), not so much that its arms,
+ * shooting off far beyond the features' height, squash them flat.
+ */
+export const FEATURE_MARGIN = 1;
+/** Neighbouring features further apart than this (in median gaps) don't belong to the same part of the curve. */
+export const FEATURE_GROUP = 1.5;
+
+/**
+ * The part of the curve with the most to feel: all its features (turns and bends, see KeyPoint), with a margin,
+ * at the curve's own height there. The whole curve often hides them: x³ − 3x turns at y = ±2 but its arms reach
+ * y = ±10 across the plot, so on 5 rows the turns fall in one row; a bell curve is a narrow bump in a wide flat
+ * line. Null when the whole curve is as good: fewer than two features (a parabola's vertex, x³'s bend, a line), or
+ * the features already span most of it.
+ *
+ * `box` is the whole curve's box. The window keeps within it, across and up and down.
+ */
+export function featureWindow(key: KeyPoint | null, box: Rect, margin = FEATURE_MARGIN): Rect | null {
+  const all = key?.features;
+  if (!key || !all || all.length < 2) return null;
+  const gap = median(all.slice(1).map((v, i) => v - all[i]));
+  // The features that belong together: from the one nearest the key point, out to neighbours no further than
+  // FEATURE_GROUP gaps away. A faint ripple far out (the tail of sin x / x, found on one side only) is left out.
+  let a = all.reduce((best, v, i) => (Math.abs(v - key.x) < Math.abs(all[best] - key.x) ? i : best), 0);
+  let b = a;
+  while (a > 0 && all[a] - all[a - 1] <= gap * FEATURE_GROUP) a--;
+  while (b < all.length - 1 && all[b + 1] - all[b] <= gap * FEATURE_GROUP) b++;
+  if (b === a) return null;
+  const x0 = Math.max(box.x, all[a] - gap * margin);
+  const x1 = Math.min(box.x + box.width, all[b] + gap * margin);
+  if (x1 - x0 >= box.width * 0.85) return null;
+  return { x: x0, width: x1 - x0, ...heightAcross(key.trace, x0, x1, box) };
 }
 
 // ---------- Window ----------

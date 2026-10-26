@@ -8,6 +8,7 @@ import { settingStyles } from './SettingRows';
 import { space } from './theme';
 
 const GRAPH_RANGES: { value: GraphRange; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
   { value: '2', label: '±2' },
   { value: '5', label: '±5' },
   { value: '10', label: '±10' },
@@ -39,20 +40,39 @@ export function GraphRangeControl({
   live?: boolean;
 }) {
   const step = panStep(range);
+  /** ", x from −2 to 2" when the scale is known. */
+  const span = (r: { x: number; width: number }) =>
+    scale && axes.originX !== null
+      ? `, x from ${graphNumber((r.x - axes.originX) / scale.pxPerUnitX, scale.unitsPerMajorX)} to ${graphNumber(
+          (r.x + r.width - axes.originX) / scale.pxPerUnitX,
+          scale.unitsPerMajorX,
+        )}`
+      : '';
   const move = (dx: number, dy: number) => onPan({ x: pan.x + dx * step, y: pan.y + dy * step });
   const moved = pan.x !== 0 || pan.y !== 0;
-  const { window: win, scale, axes, waves } = graph;
-  // Whole curve with more waves than the pins can show: say how many are shown, and how to see the rest.
+  const { window: win, scale, axes, waves, features } = graph;
+  /** Whole and Auto show the curve as it is (or part of it), not a window in units. */
+  const wholeCurve = range === 'whole' || range === 'auto';
+  // More waves than the pins can show: say how many are shown, and how to see the rest.
   const wavesNote =
-    range === 'whole' && waves
+    wholeCurve && waves
       ? `The curve has ${waves.total} waves, more than the pins can show clearly: the middle ${waves.shown === 1 ? 'one is' : `${waves.shown} are`} shown. Pick ±2, ±5 or ±10 to look along it.`
       : null;
-  const summary = wavesNote ?? (!readingNumbers && range !== 'whole' ? describeGraph(graph) : null);
+  // Auto showing part of the curve: why, and how to see all of it.
+  const featuresNote =
+    range === 'auto' && features
+      ? `Shown where the curve turns and bends${span(features)}: the whole curve would squash them flat. Pick Whole to feel all of it.`
+      : range === 'auto' && !waves
+        ? 'Shown whole: nothing the whole curve would hide.'
+        : null;
+  const summary = wavesNote ?? featuresNote ?? (!readingNumbers && !wholeCurve ? describeGraph(graph) : null);
   const shown =
-    range === 'whole'
+    wholeCurve
       ? waves
         ? `${waves.shown} of ${waves.total} waves`
-        : 'Whole curve'
+        : features
+          ? 'Turns and bends'
+          : 'Whole curve'
       : readingNumbers
         ? 'Reading numbers…'
         : win && scale && axes.originX !== null
@@ -78,9 +98,9 @@ export function GraphRangeControl({
         options={GRAPH_RANGES}
         value={range}
         onChange={onChange}
-        accessibilityLabel="Graph range: units shown each side of the curve's vertex or middle"
+        accessibilityLabel="Graph range: Auto, units shown each side of the curve's vertex or middle, or the whole curve"
       />
-      {range !== 'whole' && scale && win ? (
+      {!wholeCurve && scale && win ? (
         <View style={styles.pad} accessibilityLabel="Move the graph window">
           <Button title="" icon="left" variant="secondary" compact style={styles.arrow} onPress={() => move(-1, 0)} accessibilityLabel={`Move left ${step}`} />
           <Button title="" icon="up" variant="secondary" compact style={styles.arrow} onPress={() => move(0, 1)} accessibilityLabel={`Move up ${step}`} />
@@ -98,7 +118,7 @@ export function GraphRangeControl({
           />
         </View>
       ) : null}
-      {range !== 'whole' && scale ? (
+      {!wholeCurve && scale ? (
         <>
           {graph.fit === 'grown' ? (
             <Label variant="footnote" secondary>

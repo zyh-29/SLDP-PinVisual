@@ -42,7 +42,8 @@ export interface PickedImage {
 }
 
 /** Graph Range: units each side of the curve's key point, or the whole curve. */
-export type GraphRange = '2' | '5' | '10' | 'whole';
+/** Units each side of the curve's key point, the whole curve, or Auto (the whole curve or its turns and bends). */
+export type GraphRange = 'auto' | '2' | '5' | '10' | 'whole';
 
 export interface ConversionSettings {
   removeBackground: boolean;
@@ -136,7 +137,7 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   );
   const graphView = useMemo<GraphView>(
     () => ({
-      range: graphRange === 'whole' ? 'whole' : Number(graphRange),
+      range: graphRange === 'whole' || graphRange === 'auto' ? graphRange : Number(graphRange),
       scale: graphScale ?? picked?.equation?.scale ?? null,
       rows: GRID.rows,
       cols: GRID.cols,
@@ -160,9 +161,11 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   // curve shows; if they can't be read, one major grid square counts as one unit.
   const graph = !manualCrop ? smart?.graph : undefined;
   const scaleKey = graph ? `${Math.round(graph.axes.majorX ?? 0)}x${Math.round(graph.axes.majorY ?? 0)}` : null;
-  const readingNumbers = !!graph && graphRange !== 'whole' && !graph.scale;
+  // Whole and Auto are measured on the curve itself: no numbers to read.
+  const wholeCurve = graphRange === 'whole' || graphRange === 'auto';
+  const readingNumbers = !!graph && !wholeCurve && !graph.scale;
   // A scale carried through a zoom (followZoom) is checked against the numbers once the zoom has settled.
-  const checkingScale = !!graph?.scale?.followed && graphRange !== 'whole';
+  const checkingScale = !!graph?.scale?.followed && !wholeCurve;
   useEffect(() => {
     if ((!readingNumbers && !checkingScale) || !graph || !scaleKey || !picked || scaleRequest.current === scaleKey) return;
     const { axes } = graph;
@@ -329,7 +332,7 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     graph: !!graph,
     windowed: !!graph?.window,
     readingNumbers,
-    wholeCurve: graphRange === 'whole',
+    wholeCurve,
   });
   if (hold.held !== undefined) setHeldGraph(hold.held);
   const shown = hold.shown;

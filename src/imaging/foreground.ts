@@ -955,15 +955,9 @@ function removeTexturedSurround(mask: Uint8Array, rgb: ArrayLike<number>, width:
     if (y > 0) push(x, y - 1);
     if (y < h - 1) push(x, y + 1);
   }
-  let inMask = 0;
   let taken = 0;
   for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      const p = (y0 + y) * width + x0 + x;
-      if (!mask[p]) continue;
-      inMask++;
-      if (seen[y * w + x]) taken++;
-    }
+    for (let x = 0; x < w; x++) if (mask[(y0 + y) * width + x0 + x] && seen[y * w + x]) taken++;
   // Texture over nearly the whole region: the picture is a photo (shared full screen), not a desktop around one.
   if (!taken || tail > w * h * SURROUND_MOST) return null;
   const removed = new Uint8Array(width * height);
