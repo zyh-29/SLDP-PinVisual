@@ -8,10 +8,11 @@ import { Icon, type IconName } from './Icon';
 import { SIDEBAR_WIDTH, useResponsive } from './layout';
 import { radius, space, type, useTheme } from './theme';
 
-const TABS: { name: string; href: '/' | '/image' | '/saved' | '/device'; label: string; icon: IconName }[] = [
+const TABS: { name: string; href: '/' | '/image' | '/saved' | '/pin-test' | '/device'; label: string; icon: IconName }[] = [
   { name: '(display)', href: '/', label: 'Display', icon: 'grid' },
   { name: 'image', href: '/image', label: 'Image', icon: 'photo' },
   { name: 'saved', href: '/saved', label: 'Saved', icon: 'bookmarks' },
+  { name: 'pin-test', href: '/pin-test', label: 'Pin Test', icon: 'pin' },
   { name: 'device', href: '/device', label: 'Device', icon: 'bluetooth' },
 ];
 

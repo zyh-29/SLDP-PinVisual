@@ -267,7 +267,12 @@ The simulator can't check these:
 5. Send: the firmware receives the right bytes (see the test vectors in
    `docs/PROTOCOL.md`) and the app shows "Board received pattern".
 6. Pin order: raise only the top-left pin and check it on the display, then
-   the bottom-right one.
+   the bottom-right one. For a single servo, the **Pin Test** tab shows one
+   pin (the top-left one, whose servo is plugged into the ESP32's D18; see
+   `firmware/README.md`, "Testing with one servo"). Tap it to raise or lower
+   it on the board. It sends the usual pattern command with
+   only that pin raised, so every other pin goes down. The Display preview
+   isn't changed.
 7. Retries: with ACKs turned off in the firmware, the app should try three
    times and then offer Retry.
 8. Power off the ESP32 mid-send: the app should show "Connection lost".

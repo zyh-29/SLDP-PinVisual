@@ -84,27 +84,14 @@ export function PinGrid({ pattern, onToggle, cellSize, disabled }: Props) {
   );
 }
 
-const PinCell = memo(function PinCell({
-  row,
-  col,
-  raised,
-  size,
-  onToggle,
-  disabled,
-  colors,
-}: {
-  row: number;
-  col: number;
-  raised: boolean;
-  size: number;
-  onToggle?: (row: number, col: number) => void;
-  disabled?: boolean;
-  colors: ReturnType<typeof useTheme>;
-}) {
+/**
+ * One pin as the grid draws it, in a cell `size` across: raised is a solid dome with a highlight, lowered a hollow
+ * ring (the shape differs, not just the colour). Also used on its own (the Pin Test tab).
+ */
+export function PinDot({ raised, size, colors }: { raised: boolean; size: number; colors: ReturnType<typeof useTheme> }) {
   const d = Math.round(size * 0.74);
   const border = Math.max(1.5, size / 20);
-  // Raised = solid dome with a highlight; lowered = hollow ring. Shape differs, not just colour.
-  const pin = (
+  return (
     <View
       style={{
         width: d,
@@ -130,6 +117,26 @@ const PinCell = memo(function PinCell({
       ) : null}
     </View>
   );
+}
+
+const PinCell = memo(function PinCell({
+  row,
+  col,
+  raised,
+  size,
+  onToggle,
+  disabled,
+  colors,
+}: {
+  row: number;
+  col: number;
+  raised: boolean;
+  size: number;
+  onToggle?: (row: number, col: number) => void;
+  disabled?: boolean;
+  colors: ReturnType<typeof useTheme>;
+}) {
+  const pin = <PinDot raised={raised} size={size} colors={colors} />;
 
   if (!onToggle) {
     return <View style={[styles.cell, { width: size, height: size }]}>{pin}</View>;

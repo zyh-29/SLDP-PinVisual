@@ -19,6 +19,10 @@ export function AppTabs() {
         <NativeTabs.Trigger.Label>Saved</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf={{ default: 'square.stack', selected: 'square.stack.fill' }} md="bookmarks" />
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="pin-test">
+        <NativeTabs.Trigger.Label>Pin Test</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="smallcircle.filled.circle" md="radio_button_checked" />
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="device">
         <NativeTabs.Trigger.Label>Device</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="antenna.radiowaves.left.and.right" md="bluetooth" />

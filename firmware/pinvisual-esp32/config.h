@@ -32,6 +32,16 @@
 // The PCA9685's own clock, roughly 25-27 MHz depending on the chip. Measure it for exact pulses (see README).
 #define PV_OSCILLATOR_HZ 27000000
 
+// ---- Testing with one servo, no servo boards ----
+// One grid pin can drive a servo plugged straight into an ESP32 GPIO (signal wire to the GPIO, power from the 5 V
+// supply, GND shared), for testing before the PCA9685 boards are wired. The app's Pin Test tab moves pin 0.
+// PV_DIRECT_PIN: that grid pin (0 = top-left), or -1 for none. Must match DIRECT_SERVO in src/config/hardware.ts.
+#define PV_DIRECT_PIN 0
+#define PV_DIRECT_GPIO 18
+// 1 = PCA9685 servo boards are connected (every other pin moves through them). 0 = no boards yet: only the direct
+// pin moves, and patterns aren't refused because the boards don't answer. Set to 1 once the boards are wired.
+#define PV_SERVO_BOARDS 0
+
 // ---- Pin positions (pulse width, microseconds) ----
 // Where a servo holds a pin down and up. Typical SG90 range is 500-2500 us; find yours by testing
 // one pin from the serial monitor (see README, "Calibrating").

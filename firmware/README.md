@@ -14,7 +14,9 @@ PCA9685 servo boards.
 
 **Status:** the protocol code passes its tests, and gives the same answers as the
 app's own model of the board on 500 random sessions. It has not been flashed to
-a real ESP32 yet, so the Bluetooth and servo parts are untested on hardware.
+a real ESP32 yet, so the Bluetooth and servo parts are untested on hardware (they
+compile against stand-ins for the Arduino libraries, for both the 2.x and 3.x
+esp32 cores).
 
 ## What you need
 
@@ -62,6 +64,31 @@ GPIO22 (SCL) ─────── SCL ─────────────�
   the user's side.
 - **Other ESP32 boards:** change `PV_I2C_SDA` and `PV_I2C_SCL` in `config.h`
   (for example, many ESP32-S3 boards use 8 and 9).
+
+### Testing with one servo (no servo boards)
+
+One pin can drive a servo plugged straight into the ESP32. Out of the box that's
+pin 0 (top-left) on **D18** (GPIO 18), with no PCA9685 boards, and the app's
+**Pin Test** tab moves it:
+
+```
+Servo                 ESP32 / power
+orange/yellow (PWM) ─ D18 (GPIO 18)
+red (+) ───────────── 5 V supply + (or the ESP32's 5V/VIN pin for one small servo, e.g. an SG90)
+brown/black (−) ───── GND, shared by the ESP32 and the supply
+```
+
+- Never power a servo from the ESP32's **3V3** pin. One SG90 from the **5V/VIN**
+  pin works over USB, but if the ESP32 resets when it moves, use a separate 5 V
+  supply with GND shared.
+- In `config.h`: `PV_DIRECT_PIN 0` (which pin) and `PV_DIRECT_GPIO 18` (where it's
+  plugged in). Change both in the app too (`DIRECT_SERVO` in
+  `src/config/hardware.ts`); `npm test` checks they match.
+- `PV_SERVO_BOARDS 0` means no boards yet: only that one pin moves, and the board
+  doesn't refuse patterns because the boards don't answer. Once the PCA9685 boards
+  are wired, set it to `1`. Set `PV_DIRECT_PIN -1` to put pin 0 back on board 0x40,
+  channel 0.
+- The serial monitor's `s` shows the setup, and `t 0` moves the servo once.
 
 ## Flashing
 
@@ -124,7 +151,8 @@ With `PV_LOWER_ON_DISCONNECT 1` the pins also go down when the app leaves.
 | The app doesn't find the board | Not powered or still starting; check the serial monitor says "Advertising". On Android, allow "Nearby devices" (or location on Android 11 and older). |
 | "This device does not expose the PinVisual service" | The UUIDs in `config.h` and `src/config/hardware.ts` differ. `npm test` checks they match. |
 | Every send fails with a grid mismatch | `PV_ROWS`/`PV_COLS` differ from the app's `GRID`. |
-| Every send fails with "Hardware fault" | A PCA9685 isn't answering: wiring, VCC, or address pads. `s` shows it. |
+| Every send fails with "Hardware fault" | A PCA9685 isn't answering: wiring, VCC, or address pads. `s` shows it. Testing with one servo and no boards? Set `PV_SERVO_BOARDS 0`. |
+| The servo on D18 doesn't move | Signal wire on the wrong pin, or GND not shared with the servo's supply. `t 0` from the serial monitor should move it. |
 | The ESP32 resets when pins move | The servos are drawing power through the ESP32, or the supply is too weak. Power them from V+ only; lower `PV_MOVE_GROUP` or raise `PV_MOVE_PAUSE_MS`. |
 | Servos jitter or buzz at rest | The supply sags, or the GND isn't shared. Try a slightly different pulse width. |
 | Pins are mirrored or in the wrong place | Wiring order: use `t <pin>` to find which servo each pin moves. |

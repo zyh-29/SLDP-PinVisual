@@ -61,3 +61,14 @@ export const SERVO_LAYOUT = {
   channelsPerBoard: 16,
   firstI2cAddress: 0x40,
 } as const;
+
+/**
+ * A servo plugged straight into an ESP32 GPIO, for testing without the servo boards (the Pin Test tab moves this
+ * pin). Must match PV_DIRECT_PIN and PV_DIRECT_GPIO in firmware/pinvisual-esp32/config.h; a test checks.
+ */
+export const DIRECT_SERVO = {
+  /** Grid pin index (0 = top-left). */
+  pinIndex: 0,
+  /** ESP32 GPIO number; "D18" on DevKit boards. */
+  gpio: 18,
+} as const;
