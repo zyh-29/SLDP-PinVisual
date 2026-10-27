@@ -25,6 +25,7 @@ const ICONS = {
   lock: { ios: 'lock.fill', android: 'lock', web: 'lock' },
   unlock: { ios: 'lock.open.fill', android: 'lock_open', web: 'lock_open' },
   undo: { ios: 'arrow.uturn.backward', android: 'undo', web: 'undo' },
+  redo: { ios: 'arrow.uturn.forward', android: 'redo', web: 'redo' },
   edit: { ios: 'square.and.pencil', android: 'edit', web: 'edit' },
   chevron: { ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' },
   minus: { ios: 'minus', android: 'remove', web: 'remove' },

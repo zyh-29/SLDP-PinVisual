@@ -15,7 +15,7 @@ import { UndoControls } from '@/ui/UndoControls';
 import { MIN_TOUCH, radius, space, useTheme } from '@/ui/theme';
 
 export default function DisplayScreen() {
-  const { pattern, source, toggle, clear, undo, undoAll, undoCount } = usePattern();
+  const { pattern, source, toggle, clear, undo, undoAll, undoCount, redo, redoAll, redoCount } = usePattern();
   const { send, reset, connected, busy, state } = useBoardActions();
   const [saveOpen, setSaveOpen] = useState(false);
   const t = useTheme();
@@ -55,7 +55,14 @@ export default function DisplayScreen() {
           />
           <Button title="Save" icon="save" variant="secondary" compact style={{ flex: 1 }} onPress={() => setSaveOpen(true)} />
         </View>
-        <UndoControls count={undoCount} onUndo={undo} onUndoAll={undoAll} />
+        <UndoControls
+          undoCount={undoCount}
+          redoCount={redoCount}
+          onUndo={undo}
+          onUndoAll={undoAll}
+          onRedo={redo}
+          onRedoAll={redoAll}
+        />
       </Section>
         }
         right={
