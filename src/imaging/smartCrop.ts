@@ -19,7 +19,7 @@
  * Curves are found in curves.ts, plot areas in plotGrid.ts, graph windows in graph.ts.
  */
 import { CAMERA_CURVE_SATURATIONS, type CurveResult, dropFramedPieces, enclosesFill, findCurves, hasLongStroke } from './curves';
-import { findForeground } from './foreground';
+import { cutOff, findForeground } from './foreground';
 import { type GraphRange, rangeWidth } from './graphRange';
 import { area, clip, contains, distanceTo, expand, fullRect, inset, overlaps, type Point, type Rect, type Rgb, union } from './geometry';
 import {
@@ -220,12 +220,20 @@ interface Candidate {
   score: number;
 }
 
+/**
+ * A flat picture's candidate cut off by the picture's own edge: weighed down more than one only touching the
+ * region's edge. On a shared screen it is part of another window, often PinVisual's own preview; a subject is
+ * rarely shared half off the screen. Not for camera pictures, where a close-up runs off the frame.
+ */
+const CUT_OFF_WEIGHT = 0.15;
+
 function scoreCandidates(
   rgb: ArrayLike<number>,
   mask: Uint8Array,
   width: number,
   height: number,
   region: Rect,
+  camera = false,
 ): { labels: Int32Array; candidates: Candidate[] } {
   const { labels, components } = labelComponents(mask, width, height);
   const sums = components.map(() => ({ r: 0, g: 0, b: 0 }));
@@ -250,7 +258,12 @@ function scoreCandidates(
       c.box.x + c.box.width >= region.x + region.width - 1 ||
       c.box.y + c.box.height >= region.y + region.height - 1;
     const textLike = c.box.height <= region.height * 0.05 && c.box.width / Math.max(1, c.box.height) > 3;
-    const score = Math.sqrt(c.area) * (0.6 + saturationOf(colour) / 255) * centre * (touchesEdge ? 0.35 : 1) * (textLike ? 0.3 : 1);
+    const edge = touchesEdge ? (!camera && cutOff(c.box, width, height) ? CUT_OFF_WEIGHT : 0.35) : 1;
+    // Size: the pixels it covers. In a flat picture an empty outline counts partly by what it encloses (the
+    // geometric mean of the two), or a thin outlined triangle on a slide loses to any small filled button. Not all
+    // of it, and not for a frame with something inside (a selected thumbnail, a card): that's a frame, not a shape.
+    const size = camera ? c.area : outlineSize(labels, width, { label: i + 1, box: c.box, area: c.area });
+    const score = Math.sqrt(size) * (0.6 + saturationOf(colour) / 255) * centre * edge * (textLike ? 0.3 : 1);
     return { label: i + 1, box: c.box, area: c.area, colour, score };
   });
   return { labels, candidates };
@@ -283,13 +296,28 @@ function pickAt(candidates: Candidate[], labels: Int32Array, width: number, heig
   return candidates.reduce((a, b) => (distanceTo(b.box, p) < distanceTo(a.box, p) ? b : a));
 }
 
+/** Share of an outline's inside that other pieces may cover and it still counts as an empty outline. */
+const EMPTY_INSIDE = 0.03;
+
+/** A piece's size for scoring: its own pixels, or for an empty outline, partly the area it encloses. */
+function outlineSize(labels: Int32Array, width: number, c: Pick<Candidate, 'label' | 'box' | 'area'>): number {
+  const { solid, others } = enclosed(labels, width, c);
+  const inside = solid - c.area;
+  return inside > 0 && others <= inside * EMPTY_INSIDE ? Math.sqrt(c.area * solid) : c.area;
+}
+
 /** A piece's area with its holes filled: everything in its box not reachable from the box's edge around it. */
-function solidArea(labels: Int32Array, width: number, c: Candidate): number {
+function solidArea(labels: Int32Array, width: number, c: Pick<Candidate, 'label' | 'box' | 'area'>): number {
+  return enclosed(labels, width, c).solid;
+}
+
+/** The piece's area with its holes filled (`solid`), and how much of those holes other pieces cover (`others`). */
+function enclosed(labels: Int32Array, width: number, c: Pick<Candidate, 'label' | 'box' | 'area'>): { solid: number; others: number } {
   const x0 = Math.floor(c.box.x);
   const y0 = Math.floor(c.box.y);
   const w = Math.round(c.box.width);
   const h = Math.round(c.box.height);
-  if (w <= 2 || h <= 2) return c.area;
+  if (w <= 2 || h <= 2) return { solid: c.area, others: 0 };
   const outside = new Uint8Array(w * h);
   const queue = new Int32Array(w * h);
   let tail = 0;
@@ -317,7 +345,13 @@ function solidArea(labels: Int32Array, width: number, c: Candidate): number {
     if (y > 0) push(x, y - 1);
     if (y < h - 1) push(x, y + 1);
   }
-  return w * h - tail;
+  let others = 0;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const l = labels[(y0 + y) * width + x0 + x];
+      if (!outside[y * w + x] && l && l !== c.label) others++;
+    }
+  return { solid: w * h - tail, others };
 }
 
 /** Box-averaged copy, `k` times smaller in each direction. */
@@ -627,7 +661,7 @@ function analyse(
     region,
     camera: o.camera,
   });
-  const scored = scoreCandidates(rgb, fg.mask, width, height, r);
+  const scored = scoreCandidates(rgb, fg.mask, width, height, r, o.camera);
   const candidates = scored.candidates.sort((a, b) => b.score - a.score);
   if (!candidates.length) return { box: r, context: r, kind: 'none', target: r };
   // With a tapped point: the piece under the finger, else the most specific one containing it (a thumbnail in a

@@ -33,8 +33,16 @@ export { imageUrlFromDrop, useImageDrop } from './imageDrop.web';
 export type LiveSource = 'screen' | 'camera';
 export type CameraFacing = 'environment' | 'user';
 
+/** What a screen share shows: the entire screen, one window, or a browser tab. */
+export type SharedSurface = 'screen' | 'window' | 'tab';
+
 export interface LiveCapture {
   kind: LiveSource;
+  /**
+   * Screen sharing: what was picked, when the browser says (Safari doesn't). The entire screen usually shows
+   * PinVisual itself, which confuses the smart crop: the screen warns about it.
+   */
+  shared?: SharedSurface;
   /**
    * The one video element that both feeds processing and is shown behind the
    * crop box. Reusing it matters: a shared window only sends a new frame when
@@ -101,6 +109,26 @@ const MAX_BUSY = 0.45;
 /** Shortest time between processed frames. A camera changes on every frame (noise), so it is paced a bit slower. */
 const MIN_INTERVAL: Record<LiveSource, number> = { screen: 200, camera: 250 };
 
+/**
+ * What screen sharing asks the browser for. Sharing the entire screen usually shows PinVisual too, and the app
+ * then sees its own preview and pins (a loop) or a window covering half the graph. So: "Window" first in the picker
+ * (displaySurface), PinVisual's own tab left out (selfBrowserSurface), and the entire screen offered last
+ * (monitorTypeSurfaces). Chrome and Edge follow these hints; other browsers ignore them, hence the warning when
+ * the entire screen is shared anyway (LiveCapture.shared).
+ */
+const SHARE_OPTIONS = {
+  video: { frameRate: 30, displaySurface: 'window' },
+  audio: false,
+  selfBrowserSurface: 'exclude',
+  monitorTypeSurfaces: 'exclude',
+} as DisplayMediaStreamOptions;
+
+/** What was shared, as the browser reports it (Chrome, Edge, Firefox; Safari says nothing). */
+function sharedSurface(stream: MediaStream): SharedSurface | undefined {
+  const s = (stream.getVideoTracks()[0]?.getSettings() as { displaySurface?: string } | undefined)?.displaySurface;
+  return s === 'monitor' ? 'screen' : s === 'window' ? 'window' : s === 'browser' ? 'tab' : undefined;
+}
+
 type FrameCallbackVideo = HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
 
 /**
@@ -145,7 +173,7 @@ export async function startLiveCapture(o: {
     stream =
       kind === 'camera'
         ? await openCamera(facing)
-        : await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
+        : await navigator.mediaDevices.getDisplayMedia(SHARE_OPTIONS);
   } catch (e) {
     if (kind === 'camera') throw cameraError(e);
     if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return null;
@@ -330,6 +358,7 @@ export async function startLiveCapture(o: {
 
   const capture: LiveCapture = {
     kind,
+    shared: kind === 'screen' ? sharedSurface(stream) : undefined,
     video,
     stop,
     canFlip: cameras > 1,

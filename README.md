@@ -248,6 +248,13 @@ Share Screen lets you pick a screen, window or tab. The pins follow it live,
 up to five times a second. Nothing is sent to the board until you press
 **Use This Pattern** and then **Send**.
 
+Share the window with your graph or shape, not the entire screen. On the
+entire screen PinVisual sees itself (its own preview and pins) and other
+windows, and may pick those instead. Chrome and Edge list windows first and
+leave PinVisual's own tab out. If the entire screen is shared anyway, the
+Image tab says so. Things cut off by the edge of the screen are passed over,
+since they are usually part of another window.
+
 ## Testing on a real phone
 
 The simulator can't check these:

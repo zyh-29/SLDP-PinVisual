@@ -23,8 +23,11 @@ export function useImageDrop(_onImage: (source: ImageSource) => void, _onError?:
 export type LiveSource = 'screen' | 'camera';
 export type CameraFacing = 'environment' | 'user';
 
+export type SharedSurface = 'screen' | 'window' | 'tab';
+
 export interface LiveCapture {
   kind: LiveSource;
+  shared?: SharedSurface;
   video: unknown;
   stop: () => void;
   canFlip: boolean;

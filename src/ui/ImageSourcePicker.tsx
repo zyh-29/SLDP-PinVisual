@@ -6,7 +6,7 @@ import { Icon } from './Icon';
 import { space, useTheme } from './theme';
 
 export const CAMERA_HINT = 'Turns on the camera. Once it locks onto something the pins hold still on it; tap another thing to switch.';
-export const SCREEN_HINT = 'Share a screen or window. The pins follow it live; crop the part you want.';
+export const SCREEN_HINT = 'Share the window with your graph or shape (not the entire screen, where PinVisual sees itself). The pins follow it live; crop the part you want.';
 
 /** The Image tab before there is a picture: where it can come from. */
 export function ImageSourcePicker({

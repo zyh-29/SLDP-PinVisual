@@ -758,15 +758,17 @@ export function findForeground(rgb: ArrayLike<number>, width: number, height: nu
   const drifting = wallpaper && drift ? orMasks(wallpaper, drift) : (wallpaper ?? drift);
   const sureBackground = drifting && shadows ? orMasks(drifting, shadows) : (drifting ?? shadows);
 
-  // Clutter: tiny specks always go; otherwise drop pieces much smaller than the main one.
-  let { subject, removed } = keepMainPieces(mask, rgb, width, height, o.minPieceRatio);
+  // Clutter: tiny specks always go; otherwise drop pieces much smaller than the main one. On a screen, something cut
+  // off by the edge isn't the main one (see keepMainPieces).
+  const pieces = { minPieceRatio: o.minPieceRatio, ignoreCutOff: flatPicture };
+  let { subject, removed } = keepMainPieces(mask, rgb, width, height, pieces);
   // A filled subject (not a graph, not a line drawing): the GrabCut-style second opinion, then clutter again.
   let refined = false;
   if (o.refine && !o.subjectMask && !linesRemoved && !graphLikely && subject && filled(mask, width, height)) {
     const better = refineSubject(rgb, width, height, mask, region, o.subjectBox, sureBackground ?? undefined);
     if (better) {
       mask.set(better);
-      ({ subject, removed } = keepMainPieces(mask, rgb, width, height, o.minPieceRatio));
+      ({ subject, removed } = keepMainPieces(mask, rgb, width, height, pieces));
       refined = true;
     }
   }
@@ -1191,16 +1193,33 @@ function filled(mask: Uint8Array, width: number, height: number): boolean {
   return strokeWidth(closed, width, height) >= REFINE_MIN_STROKE;
 }
 
+/** The piece runs off the picture's edge: on a shared screen, part of another window (often PinVisual's own). */
+export const cutOff = (b: Rect, width: number, height: number) =>
+  b.x <= 1 || b.y <= 1 || b.x + b.width >= width - 1 || b.y + b.height >= height - 1;
+
 /**
  * Drops clutter from `mask` (in place): tiny specks, pieces much smaller than the main one, and grey pieces next
  * to a coloured subject. Returns the box around what is left and how many pieces were dropped.
+ *
+ * `ignoreCutOff` (screens and screenshots): a piece cut off by the picture's edge isn't the main one when there
+ * are whole pieces. Sharing the entire screen shows PinVisual's own big, bright preview at the side; measured
+ * against it, the slide's thin outline would be dropped as clutter. Cut-off pieces themselves are still kept.
  */
-function keepMainPieces(mask: Uint8Array, rgb: ArrayLike<number>, width: number, height: number, minPieceRatio: number) {
+function keepMainPieces(
+  mask: Uint8Array,
+  rgb: ArrayLike<number>,
+  width: number,
+  height: number,
+  o: { minPieceRatio: number; ignoreCutOff?: boolean },
+) {
+  const { minPieceRatio } = o;
   const { labels, components } = labelComponents(mask, width, height);
-  const largest = components.reduce((m, c) => Math.max(m, c.area), 0);
+  const whole = o.ignoreCutOff ? components.map((c) => !cutOff(c.box, width, height)) : components.map(() => true);
+  const judged = whole.some((w, i) => w && components[i].area >= 2) ? whole : components.map(() => true);
+  const largest = components.reduce((m, c, i) => (judged[i] ? Math.max(m, c.area) : m), 0);
   const minArea = Math.max(2, largest * minPieceRatio);
   const keep = components.map((c) => c.area >= minArea);
-  if (minPieceRatio > 0 && components.length > 1) dropNeutralClutter(rgb, labels, components, keep);
+  if (minPieceRatio > 0 && components.length > 1) dropNeutralClutter(rgb, labels, components, keep, judged);
   let sx0 = width,
     sy0 = height,
     sx1 = -1,
@@ -1230,7 +1249,7 @@ const saturation = (c: Rgb) => Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b)
  * When the main subject is coloured (e.g. a red curve), smaller grey or black
  * pieces are almost always labels, tick numbers or axes leftovers: drop them.
  */
-function dropNeutralClutter(rgb: ArrayLike<number>, labels: Int32Array, components: Component[], keep: boolean[]) {
+function dropNeutralClutter(rgb: ArrayLike<number>, labels: Int32Array, components: Component[], keep: boolean[], judged: boolean[]) {
   const sums = components.map(() => ({ r: 0, g: 0, b: 0 }));
   for (let p = 0; p < labels.length; p++) {
     const l = labels[p];
@@ -1241,9 +1260,10 @@ function dropNeutralClutter(rgb: ArrayLike<number>, labels: Int32Array, componen
     s.b += rgb[p * 3 + 2];
   }
   const mean = components.map((c, i) => ({ r: sums[i].r / c.area, g: sums[i].g / c.area, b: sums[i].b / c.area }));
-  let main = 0;
+  // The main piece: the largest of those judged by (see keepMainPieces).
+  let main = judged.indexOf(true);
   components.forEach((c, i) => {
-    if (c.area > components[main].area) main = i;
+    if (judged[i] && c.area > components[main].area) main = i;
   });
   if (saturation(mean[main]) < 60) return;
   components.forEach((c, i) => {

@@ -482,6 +482,12 @@ export default function ImageScreen() {
                       title="Too dark to see"
                       message="Turn on a light, or point the camera at something lit. The pins keep their last picture meanwhile."
                     />
+                  ) : live?.shared === 'screen' ? (
+                    <StatusBanner
+                      tone="neutral"
+                      title="Sharing the entire screen"
+                      message="PinVisual can see itself, and other windows, which confuses it. Stop Sharing, then share just the window with your graph or shape."
+                    />
                   ) : cameraTrouble === 2 ? (
                     <StatusBanner
                       tone="neutral"

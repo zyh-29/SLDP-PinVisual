@@ -137,6 +137,49 @@ describe('screen share: the desktop around the window is background', () => {
   });
 });
 
+describe('screen share: the entire screen, with PinVisual on it', () => {
+  // A slides window on the left: a thin black outlined triangle on a white slide, and a small blue Share button.
+  // PinVisual on the right: its big yellow preview of an earlier frame, cut off by the edge of the screen.
+  const TRIANGLE: Rect = { x: 150, y: 120, width: 160, height: 140 };
+  function screen() {
+    const rgb = new Uint8ClampedArray(W * H * 3);
+    const ax = TRIANGLE.x + TRIANGLE.width / 2;
+    const top = TRIANGLE.y;
+    const bottom = TRIANGLE.y + TRIANGLE.height;
+    // Distance from (x, y) to the segment a-b.
+    const seg = (x: number, y: number, a: [number, number], b: [number, number]) => {
+      const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy)));
+      return Math.hypot(x - a[0] - t * dx, y - a[1] - t * dy);
+    };
+    const p1: [number, number] = [ax, top];
+    const p2: [number, number] = [TRIANGLE.x + TRIANGLE.width, bottom];
+    const p3: [number, number] = [TRIANGLE.x, bottom];
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        let c: C = [241, 243, 244];
+        if (x >= 520) c = Math.hypot(x - 760, y - 450) < 170 ? [251, 188, 4] : [246, 246, 248];
+        else if (y >= 18 && y < 32 && x >= 440 && x < 490) c = [26, 115, 232];
+        else if (x >= 90 && x < 480 && y >= 60 && y < 330) {
+          const d = Math.min(seg(x, y, p1, p2), seg(x, y, p2, p3), seg(x, y, p3, p1));
+          c = d < 1.2 ? [34, 34, 34] : [255, 255, 255];
+        }
+        rgb.set(c, (y * W + x) * 3);
+      }
+    return rgb;
+  }
+
+  it('the outlined shape on the slide, not PinVisual’s own preview cut off by the screen’s edge', () => {
+    expect(near(smartSubject(screen(), W, H, opts).box, TRIANGLE, 6)).toBe(true);
+  });
+
+  it('measured against the cut-off preview, the thin outline isn’t dropped as clutter; the preview itself stays', () => {
+    const fg = findForeground(screen(), W, H, { ...opts });
+    expect(fg.mask[TRIANGLE.y * W + TRIANGLE.x + TRIANGLE.width / 2]).toBe(1);
+    expect(fg.mask[(H - 5) * W + W - 5]).toBe(1);
+  });
+});
+
 describe('photos shown on a screen (screenPhoto)', () => {
   const w = 160;
   const h = 120;
