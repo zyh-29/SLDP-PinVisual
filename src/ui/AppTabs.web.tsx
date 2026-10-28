@@ -1,6 +1,7 @@
 import { TabList, TabSlot, TabTrigger, type TabTriggerSlotProps, Tabs } from 'expo-router/ui';
 import type { ComponentProps, ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
+import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
 
 import { useDevice } from '@/state/DeviceProvider';
 import { connectionSummary } from './ConnectionPill';
@@ -87,17 +88,24 @@ function NavItem({ icon, compact, children, isFocused, ref, ...props }: NavItemP
     );
 }
 
+/** The PinVisual logo: a version with lighter colours on dark backgrounds, where the navy "Pin" would vanish. */
+const LOGO = { light: require('@/assets/images/logo.svg'), dark: require('@/assets/images/logo-dark.svg') };
+/** The logo's own proportions (assets/images/logo.svg is 1074 by 282). */
+const LOGO_WIDTH = 208;
+const LOGO_HEIGHT = Math.round((LOGO_WIDTH * 282) / 1074);
+
 function SidebarHeader() {
-  const t = useTheme();
+  const dark = useColorScheme() === 'dark';
   return (
     <View style={styles.brand}>
-      <View style={[styles.brandMark, { backgroundColor: t.text }]}>
-        <Icon name="grid" color={t.background} size={18} />
-      </View>
-      <View>
-        <Text style={[type.headline, { color: t.text }]}>PinVisual</Text>
-        <Text style={[type.footnote, { color: t.textSecondary }]}>Tactile display</Text>
-      </View>
+      <Image
+        source={dark ? LOGO.dark : LOGO.light}
+        style={{ width: LOGO_WIDTH, height: LOGO_HEIGHT }}
+        contentFit="contain"
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel="PinVisual: images into touch"
+      />
     </View>
   );
 }
@@ -141,8 +149,7 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingBottom: 6,
   },
-  brand: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.sm, paddingBottom: space.xl },
-  brandMark: { width: 36, height: 36, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  brand: { paddingHorizontal: space.sm, paddingTop: space.xs, paddingBottom: space.xl },
   navItem: {
     flexDirection: 'row',
     alignItems: 'center',
