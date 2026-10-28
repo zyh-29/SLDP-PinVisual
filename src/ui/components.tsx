@@ -17,6 +17,7 @@ import { ConnectionPill } from './ConnectionPill';
 import { Icon, type IconName } from './Icon';
 import { MAX_CONTENT_WIDTH, useResponsive } from './layout';
 import { MIN_TOUCH, radius, space, type, useTheme } from './theme';
+import { usePullToRefresh } from './usePullToRefresh';
 
 export function tapFeedback() {
   if (Platform.OS !== 'web') Haptics.selectionAsync().catch(() => {});
@@ -28,14 +29,16 @@ export function tapFeedback() {
  * Scrollable page. Content is centred and capped at MAX_CONTENT_WIDTH so it
  * reads well on laptops. On web there is no native navigation bar, so the
  * page draws its own large title (and the connection pill when there is no
- * sidebar showing it).
+ * sidebar showing it). On the website, pulling down at the top reloads the page (usePullToRefresh).
  */
 export function Screen({ children, title, ...rest }: ScrollViewProps & { children: ReactNode; title: string }) {
   const t = useTheme();
   const { gutter, sidebar } = useResponsive();
   const web = Platform.OS === 'web';
-  return (
+  const { attach, indicator } = usePullToRefresh();
+  const page = (
     <ScrollView
+      ref={attach}
       contentInsetAdjustmentBehavior="automatic"
       style={{ flex: 1, backgroundColor: t.background }}
       contentContainerStyle={[styles.screenContent, { paddingHorizontal: gutter, paddingTop: web ? gutter : space.lg }]}
@@ -53,6 +56,13 @@ export function Screen({ children, title, ...rest }: ScrollViewProps & { childre
         {children}
       </View>
     </ScrollView>
+  );
+  if (!web) return page;
+  return (
+    <View style={{ flex: 1 }}>
+      {page}
+      {indicator}
+    </View>
   );
 }
 
