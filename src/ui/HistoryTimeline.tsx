@@ -36,6 +36,18 @@ import {
 const STEP_ICON = Platform.OS === 'ios' ? 17 : 28;
 /** Side by side (transport, then the strip) from this width; stacked below it (phones). */
 const WIDE = 520;
+/**
+ * Web: while the playhead is dragged, the mouse sweeps over the page, and the browser would select the text it
+ * passes. Selection is turned off for the whole page until the drag ends (and anything already selected cleared).
+ */
+const pageSelection = (on: boolean) => {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+  const style = document.body.style as CSSStyleDeclaration & { webkitUserSelect?: string };
+  style.userSelect = on ? '' : 'none';
+  style.webkitUserSelect = on ? '' : 'none';
+  if (!on) window.getSelection()?.removeAllRanges();
+};
+
 const stopEdgeScroll = (l: { timer: ReturnType<typeof setInterval> | null }) => {
   if (l.timer) clearInterval(l.timer);
   l.timer = null;
@@ -110,7 +122,13 @@ export function HistoryTimeline({ steps, position, onJump }: { steps: Preview[];
   useEffect(() => {
     Object.assign(live.current, { position, last, onJump, announce, viewport });
   });
-  useEffect(() => () => stopEdgeScroll(live.current), []);
+  useEffect(
+    () => () => {
+      stopEdgeScroll(live.current);
+      pageSelection(true);
+    },
+    [],
+  );
   // The ref is read only inside the gesture callbacks, never while rendering.
   // eslint-disable-next-line react-hooks/refs
   const [pan] = useState(() => {
@@ -136,6 +154,7 @@ export function HistoryTimeline({ steps, position, onJump }: { steps: Preview[];
     };
     const end = () => {
       stopEdgeScroll(live.current);
+      pageSelection(true);
       setDragging(false);
     };
     return PanResponder.create({
@@ -143,6 +162,7 @@ export function HistoryTimeline({ steps, position, onJump }: { steps: Preview[];
       onMoveShouldSetPanResponder: () => true,
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => {
+        pageSelection(false);
         const l = live.current;
         // The finger starts on the playhead.
         fingerStart = headX(l.position) - l.scrollX;
@@ -365,7 +385,7 @@ function MiniPins({ pattern, colors: t }: { pattern: Pattern; colors: Palette })
 }
 
 const styles = StyleSheet.create({
-  panel: { borderRadius: radius.md, paddingVertical: space.sm, gap: space.xs },
+  panel: { borderRadius: radius.md, paddingVertical: space.sm, gap: space.xs, userSelect: 'none' },
   wideRow: { flexDirection: 'row', alignItems: 'center' },
   narrowRow: { flexDirection: 'row', justifyContent: 'center' },
   divider: { width: StyleSheet.hairlineWidth, height: TILE_H },
