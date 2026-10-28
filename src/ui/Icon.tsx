@@ -51,6 +51,8 @@ const ICONS = {
   pause: { ios: 'pause.fill', android: 'pause', web: 'pause' },
   previous: { ios: 'backward.end.fill', android: 'skip_previous', web: 'skip_previous' },
   next: { ios: 'forward.end.fill', android: 'skip_next', web: 'skip_next' },
+  stepBack: { ios: 'arrowtriangle.left.fill', android: 'arrow_left', web: 'arrow_left' },
+  stepForward: { ios: 'arrowtriangle.right.fill', android: 'arrow_right', web: 'arrow_right' },
   sequence: { ios: 'play.rectangle.on.rectangle', android: 'playlist_play', web: 'playlist_play' },
 } as const satisfies Record<string, SymbolName>;
 

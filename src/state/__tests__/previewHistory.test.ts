@@ -1,5 +1,16 @@
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
-import { change, MAX_UNDO, MAX_UNDO_STEPS, parseUndoSteps, redo, redoAll, startHistory, undo, undoAll } from '../previewHistory';
+import {
+  change,
+  describeStep,
+  jumpTo,
+  MAX_UNDO,
+  redo,
+  redoAll,
+  startHistory,
+  timeline,
+  undo,
+  undoAll,
+} from '../previewHistory';
 
 const empty = createEmptyPattern(5, 6);
 const one = togglePin(empty, 0, 0);
@@ -130,14 +141,41 @@ describe('preview redo', () => {
   });
 });
 
-describe('typing how many steps to undo', () => {
-  it('a whole number from 1; empty means 1', () => {
-    expect(parseUndoSteps('')).toBe(1);
-    expect(parseUndoSteps(' 3 ')).toBe(3);
-    expect(parseUndoSteps('999')).toBe(MAX_UNDO_STEPS);
+describe('the history timeline', () => {
+  const build = () => {
+    let h = startHistory({ pattern: empty, source: null });
+    h = change(h, { pattern: one, source: null });
+    h = change(h, { pattern: two, source: null });
+    return change(h, { pattern: two, source: 'Circle' });
+  };
+
+  it('lists every step oldest first, with the current one marked, and keeps undone steps', () => {
+    const h = undo(build(), 2);
+    const { steps, current } = timeline(h);
+    expect(steps.map((s) => s.pattern)).toEqual([empty, one, two, two]);
+    expect(current).toBe(1);
+    expect(steps[current]).toBe(h.now);
   });
 
-  it('anything else is not a number of steps', () => {
-    for (const t of ['0', '-2', '2.5', 'abc', '3x']) expect(parseUndoSteps(t)).toBeNull();
+  it('jumps back or forward to any step, and to the same step does nothing', () => {
+    const h = build();
+    const back = jumpTo(h, 0);
+    expect(back.now.pattern).toEqual(empty);
+    expect(back.future).toHaveLength(3);
+    expect(jumpTo(back, 3)).toEqual(h);
+    expect(jumpTo(back, 2).now.pattern).toEqual(two);
+    expect(jumpTo(h, 3)).toBe(h);
+  });
+
+  it('describes each step from the one before it', () => {
+    const { steps } = timeline(build());
+    expect(describeStep(undefined, steps[0])).toEqual({ kind: 'start', text: 'Start' });
+    expect(describeStep(undefined, steps[0], true).text).toBe('Oldest kept');
+    expect(describeStep(steps[0], steps[1])).toEqual({ kind: 'raise', text: 'Raised row 1, column 1' });
+    expect(describeStep(steps[1], steps[0])).toEqual({ kind: 'lower', text: 'Lowered row 1, column 1' });
+    expect(describeStep(steps[2], steps[3])).toEqual({ kind: 'source', text: 'Circle' });
+    expect(describeStep(steps[2], { pattern: empty, source: null })).toEqual({ kind: 'clear', text: 'Cleared' });
+    const many = togglePin(togglePin(two, 4, 5), 3, 3);
+    expect(describeStep(steps[2], { pattern: many, source: null })).toEqual({ kind: 'edit', text: '2 pins changed' });
   });
 });

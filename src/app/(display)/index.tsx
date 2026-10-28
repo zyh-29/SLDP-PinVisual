@@ -11,14 +11,16 @@ import { Button, Columns, Label, Screen, Section, StatusBanner } from '@/ui/comp
 import { Icon } from '@/ui/Icon';
 import { PinGrid } from '@/ui/PinGrid';
 import { SavePatternSheet } from '@/ui/SavePatternSheet';
-import { UndoControls } from '@/ui/UndoControls';
+import { HistoryTimeline } from '@/ui/HistoryTimeline';
 import { MIN_TOUCH, radius, space, useTheme } from '@/ui/theme';
+import { useUndoShortcuts } from '@/ui/useUndoShortcuts';
 
 export default function DisplayScreen() {
-  const { pattern, source, toggle, clear, undo, undoAll, undoCount, redo, redoAll, redoCount } = usePattern();
+  const { pattern, source, toggle, clear, undo, redo, steps, position, jumpTo } = usePattern();
   const { send, reset, connected, busy, state } = useBoardActions();
   const [saveOpen, setSaveOpen] = useState(false);
   const t = useTheme();
+  useUndoShortcuts(undo, redo);
 
   const raised = countRaised(pattern);
   const total = GRID.rows * GRID.cols;
@@ -55,14 +57,7 @@ export default function DisplayScreen() {
           />
           <Button title="Save" icon="save" variant="secondary" compact style={{ flex: 1 }} onPress={() => setSaveOpen(true)} />
         </View>
-        <UndoControls
-          undoCount={undoCount}
-          redoCount={redoCount}
-          onUndo={undo}
-          onUndoAll={undoAll}
-          onRedo={redo}
-          onRedoAll={redoAll}
-        />
+        <HistoryTimeline steps={steps} position={position} onJump={jumpTo} />
       </Section>
         }
         right={

@@ -59,14 +59,33 @@ export const undoAll = (h: PreviewHistory): PreviewHistory => undo(h, h.past.len
 /** Forward through everything undone, back to the newest preview. */
 export const redoAll = (h: PreviewHistory): PreviewHistory => redo(h, h.future.length);
 
-/** Most steps that can be typed (for Undo or Redo): more than the history can hold makes no difference. */
-export const MAX_UNDO_STEPS = MAX_UNDO;
+/** Every preview in order (oldest first) and which one is showing: what the timeline draws. */
+export function timeline(h: PreviewHistory): { steps: Preview[]; current: number } {
+  return { steps: [...h.past, h.now, ...h.future], current: h.past.length };
+}
 
-/** Steps typed by the user, for Undo or Redo: a whole number from 1; empty means 1. Null when it isn't one. */
-export function parseUndoSteps(text: string): number | null {
-  const s = text.trim();
-  if (!s) return 1;
-  if (!/^\d+$/.test(s)) return null;
-  const n = Number(s);
-  return n >= 1 ? Math.min(n, MAX_UNDO_STEPS) : null;
+/** Straight to step `index` of the timeline (undoing or redoing as many changes as it takes). */
+export function jumpTo(h: PreviewHistory, index: number): PreviewHistory {
+  const at = h.past.length;
+  return index < at ? undo(h, at - index) : redo(h, index - at);
+}
+
+export type StepKind = 'start' | 'source' | 'clear' | 'raise' | 'lower' | 'edit';
+
+/**
+ * What a step did, from the preview before it: for the timeline's caption and screen readers. `prev` is undefined
+ * for the first step (`oldest` when older steps were dropped, past MAX_UNDO).
+ */
+export function describeStep(prev: Preview | undefined, cur: Preview, oldest = false): { kind: StepKind; text: string } {
+  if (!prev) return { kind: 'start', text: oldest ? 'Oldest kept' : 'Start' };
+  if (cur.source && cur.source !== prev.source) return { kind: 'source', text: cur.source };
+  const changed: number[] = [];
+  cur.pattern.cells.forEach((v, i) => v !== prev.pattern.cells[i] && changed.push(i));
+  if (changed.length === 1) {
+    const i = changed[0];
+    const where = `row ${Math.floor(i / cur.pattern.cols) + 1}, column ${(i % cur.pattern.cols) + 1}`;
+    return cur.pattern.cells[i] ? { kind: 'raise', text: `Raised ${where}` } : { kind: 'lower', text: `Lowered ${where}` };
+  }
+  if (cur.pattern.cells.every((v) => v === 0)) return { kind: 'clear', text: 'Cleared' };
+  return { kind: 'edit', text: `${changed.length} pins changed` };
 }

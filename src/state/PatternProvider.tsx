@@ -4,10 +4,13 @@ import { GRID } from '@/config/hardware';
 import { createEmptyPattern, type Pattern, togglePin } from '@/domain/pattern';
 import {
   change,
+  jumpTo as jumpToStep,
+  type Preview,
   type PreviewHistory,
   redo as redoSteps,
   redoAll as redoEverything,
   startHistory,
+  timeline,
   undo as undoSteps,
   undoAll as undoEverything,
 } from './previewHistory';
@@ -39,6 +42,12 @@ interface PatternContextValue {
   redoAll: () => void;
   /** How many undone changes can be redone. */
   redoCount: number;
+  /** Every step in the history, oldest first, undone ones included: the timeline. */
+  steps: Preview[];
+  /** Which of `steps` is showing. */
+  position: number;
+  /** Straight to step `index` of `steps`. */
+  jumpTo: (index: number) => void;
 }
 
 const PatternContext = createContext<PatternContextValue | null>(null);
@@ -64,11 +73,13 @@ export function PatternProvider({ children }: { children: ReactNode }) {
   const undoAll = useCallback(() => setHistory(undoEverything), []);
   const redo = useCallback((steps = 1) => setHistory((h) => redoSteps(h, steps)), []);
   const redoAll = useCallback(() => setHistory(redoEverything), []);
+  const jumpTo = useCallback((index: number) => setHistory((h) => jumpToStep(h, index)), []);
 
   const { now, past, future } = history;
   const undoCount = past.length;
   const canUndo = undoCount > 0;
   const redoCount = future.length;
+  const { steps, current: position } = useMemo(() => timeline(history), [history]);
   const value = useMemo(
     () => ({
       pattern: now.pattern,
@@ -83,8 +94,11 @@ export function PatternProvider({ children }: { children: ReactNode }) {
       redo,
       redoAll,
       redoCount,
+      steps,
+      position,
+      jumpTo,
     }),
-    [now, setPattern, toggle, clear, undo, undoAll, undoCount, canUndo, redo, redoAll, redoCount],
+    [now, setPattern, toggle, clear, undo, undoAll, undoCount, canUndo, redo, redoAll, redoCount, steps, position, jumpTo],
   );
   return <PatternContext.Provider value={value}>{children}</PatternContext.Provider>;
 }
