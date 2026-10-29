@@ -24,6 +24,7 @@
  */
 import type { RasterImage } from './convert';
 import { bounds, fullRect, type Rect, type Rgb } from './geometry';
+import { evenLight } from './lighting';
 import { type Component, dilate, labelComponents } from './masks';
 import { refineSubject } from './refineMask';
 import { median } from './stats';
@@ -718,8 +719,12 @@ function backgroundDistances(rgb: ArrayLike<number>, width: number, height: numb
   return out;
 }
 
-/** `rgb` comes from `toRgb` (3 bytes per pixel). */
-export function findForeground(rgb: ArrayLike<number>, width: number, height: number, o: ForegroundOptions): Foreground {
+/**
+ * `picture` comes from `toRgb` (3 bytes per pixel). A camera picture has its light evened out first (lighting.ts):
+ * vignetting, a lamp's pool of light or a window's falloff would otherwise make plain paper look like subject.
+ */
+export function findForeground(picture: ArrayLike<number>, width: number, height: number, o: ForegroundOptions): Foreground {
+  const rgb = o.camera ? evenLight(picture, width, height) : picture;
   const region = o.region ?? fullRect(width, height);
   const { x0, y0, x1, y1 } = bounds(region, width, height);
 

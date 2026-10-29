@@ -18,6 +18,7 @@
  *
  * Curves are found in curves.ts, plot areas in plotGrid.ts, graph windows in graph.ts.
  */
+import { evenLight } from './lighting';
 import { CAMERA_CURVE_SATURATIONS, type CurveResult, dropFramedPieces, enclosesFill, findCurves, hasLongStroke } from './curves';
 import { cutOff, findForeground } from './foreground';
 import { type GraphRange, rangeWidth } from './graphRange';
@@ -418,7 +419,7 @@ const detectCache = new WeakMap<object, Map<string, Detected>>();
  * decided on a smaller copy (fast enough for live screen sharing).
  */
 export function smartSubject(
-  rgb: ArrayLike<number>,
+  picture: ArrayLike<number>,
   width: number,
   height: number,
   o: SmartCropOptions,
@@ -428,6 +429,8 @@ export function smartSubject(
   /** For graphs: show this portion instead of the whole curve. */
   view?: GraphView,
 ): SmartCropResult {
+  // A live camera frame or photo (not a flattened page): uneven light evened out first (lighting.ts).
+  const rgb = o.camera && !o.flatSurface ? evenLight(picture, width, height) : picture;
   const found = detect(rgb, width, height, o, region, focus);
   return view ? frameGraph(found, rgb, width, height, view) : found.result;
 }

@@ -53,6 +53,7 @@ src/
   device/       Bluetooth drivers (BleDriver.ts for phones, BleDriver.web.ts for browsers),
                 DeviceController, LiveSender, and a simulated board used only by tests
   imaging/      Everything that turns a picture into pins:
+                  lighting                          evening out a camera picture's light
                   foreground, refineMask, maxflow   background removal
                   smartCrop, curves, plotGrid       choosing what becomes pins
                   graph, graphScale, graphSummary   graphs: range, units, description
@@ -139,6 +140,22 @@ shared screen (desktop browsers) or the live camera (web).
 
 The picture is scaled down to 800 px, then:
 
+0. **Light** (camera pictures). A phone camera never sees paper evenly lit:
+   the corners are darker, a lamp makes a bright pool, a window lights one
+   side. `lighting.ts` measures the light across the picture and divides it
+   out, the way astronomy software removes a sky background:
+   - The picture is cut into 32 px cells. Each cell's paper colour is the
+     average of its brighter pixels, so ink crossing it doesn't count.
+   - A smooth surface is fitted through the cells. Cells that don't fit,
+     such as the subject itself, are given less and less weight (a robust,
+     reweighted fit), so the surface follows the paper alone.
+   - Each pixel is divided by the surface, per colour, which also removes a
+     warm lamp's tint.
+
+   It's skipped when the light is already even, and when neighbouring cells
+   jump sharply. Light changes gradually; a jump means a thing (a card on a
+   desk, a checked cloth, a dark object and its shadow), which the next steps
+   handle. It takes about 7 ms per frame.
 1. **Background.** The background colour is taken from a thin ring around the
    edge of the crop.
 2. **Subject.** Pixels that differ enough from the background are the subject.
@@ -229,6 +246,10 @@ follow it.
   picture.
 - **Screens and paper.** Pointed at a laptop screen or a sheet of paper, the
   camera finds its four corners and straightens it (*Live · Flat*).
+- **Uneven light.** Vignetting, a desk lamp or a window no longer makes the
+  paper itself look like the subject (step 0 above). In tests with 6 drawings
+  under 7 kinds of light, wrong pins fell from 173 to 18 of 1,260; vignetting
+  and lamp light went from 4–30 wrong pins per picture to none.
 - **Steadier pins.** Frames are lightly blurred to remove sensor noise, and
   each pin is averaged over a few frames so it doesn't flicker.
 - **Speed.** Frames are 640 px and the app adapts how often it processes them
