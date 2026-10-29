@@ -108,7 +108,11 @@ const PAGE_SIZE = 800;
 const MAX_BUSY = 0.45;
 /** Shortest time between processed frames. A camera changes on every frame (noise), so it is paced a bit slower. */
 const MIN_INTERVAL: Record<LiveSource, number> = { screen: 200, camera: 250 };
-/** Live camera, nothing in view changing (see viewStill): frames are still analysed at least this often, ms. */
+/**
+ * Live camera, nothing in view changing (see viewStill): rest once REST_AFTER analysed frames in a row saw the same
+ * view (locking on, capturing and steadying the pins need those first), then analyse at least every REST_MAX ms.
+ */
+const REST_AFTER = 8;
 const REST_MAX = 1000;
 
 /**
@@ -199,6 +203,8 @@ export async function startLiveCapture(o: {
   /** The view when a frame was last analysed, and when (for resting while it stays the same). */
   let lastSketch: Float32Array | null = null;
   let lastAnalysed = -Infinity;
+  /** Analysed frames in a row that saw the same view. */
+  let stillFrames = 0;
   /** Reused frame to frame (fewer large short-lived buffers means fewer garbage-collection pauses on phones). */
   type Buffer = Uint8ClampedArray<ArrayBuffer>;
   let rgbBuffer: Buffer = new Uint8ClampedArray(0);
@@ -279,7 +285,9 @@ export async function startLiveCapture(o: {
         // cooler, so it doesn't slow itself down after a few minutes.
         const sketch = viewSketch(data, width, height, 4);
         const now = performance.now();
-        if (delivered && lastSketch && viewStill(lastSketch, sketch) && now - lastAnalysed < REST_MAX) return;
+        const still = delivered && !!lastSketch && viewStill(lastSketch, sketch);
+        if (still && stillFrames >= REST_AFTER && now - lastAnalysed < REST_MAX) return;
+        stillFrames = still ? stillFrames + 1 : 0;
         lastSketch = sketch;
         lastAnalysed = now;
         // Too dark, or the exposure still settling after the light changed: nothing worth the (costly) analysis.
@@ -403,6 +411,7 @@ export async function startLiveCapture(o: {
       video.srcObject = stream;
       lastSignature = -1;
       lastSketch = null;
+      stillFrames = 0;
       gate.reset();
       light.reset();
       surfaces.reset();
