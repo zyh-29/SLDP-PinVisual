@@ -138,6 +138,7 @@ export default function SavedScreen() {
       message: `"${saved.name}" will be removed from this ${DEVICE_WORD}.`,
       confirmLabel: 'Delete',
       destructive: true,
+      icon: 'trash',
     });
     if (!ok) return;
     await patternStore.remove(saved.id);
@@ -151,6 +152,7 @@ export default function SavedScreen() {
       message: `"${seq.name}" will be removed from this ${DEVICE_WORD}. Its patterns stay saved.`,
       confirmLabel: 'Delete',
       destructive: true,
+      icon: 'trash',
     });
     if (!ok) return;
     await sequenceStore.remove(seq.id);
@@ -309,7 +311,7 @@ export default function SavedScreen() {
             </View>
             <Label variant="title3">No saved patterns</Label>
             <Label variant="subhead" secondary style={{ textAlign: 'center' }}>
-              Save a pattern from the Image tab. It is stored on this {DEVICE_WORD} only. Have an export? Import it.
+              Save one from the Display or Image tab. Patterns stay on this {DEVICE_WORD} only. Have an export file? Import it.
             </Label>
           </View>
           {transferTools}

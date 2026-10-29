@@ -62,7 +62,9 @@ export default function DeviceScreen() {
                 ? `${c.deviceName} · MTU ${c.mtu} · ${c.maxWriteSize}-byte writes`
                 : c.status === 'connecting'
                   ? c.deviceName
-                  : 'Scan to find your board'}
+                  : picker
+                    ? 'Choose your board below'
+                    : 'Scan below to find your board'}
             </Label>
           </View>
         </View>

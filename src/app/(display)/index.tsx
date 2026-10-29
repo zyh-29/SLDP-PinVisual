@@ -16,7 +16,7 @@ import { MIN_TOUCH, radius, space, useTheme } from '@/ui/theme';
 import { useUndoShortcuts } from '@/ui/useUndoShortcuts';
 
 export default function DisplayScreen() {
-  const { pattern, source, toggle, clear, undo, redo, steps, position, jumpTo } = usePattern();
+  const { pattern, source, toggle, clear, undo, redo, steps, position, jumpTo, clearHistory } = usePattern();
   const { send, reset, connected, busy, state } = useBoardActions();
   const [saveOpen, setSaveOpen] = useState(false);
   const t = useTheme();
@@ -57,7 +57,7 @@ export default function DisplayScreen() {
           />
           <Button title="Save" icon="save" variant="secondary" compact style={{ flex: 1 }} onPress={() => setSaveOpen(true)} />
         </View>
-        <HistoryTimeline steps={steps} position={position} onJump={jumpTo} />
+        <HistoryTimeline steps={steps} position={position} onJump={jumpTo} onClear={clearHistory} />
       </Section>
         }
         right={

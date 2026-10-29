@@ -59,6 +59,12 @@ export const undoAll = (h: PreviewHistory): PreviewHistory => undo(h, h.past.len
 /** Forward through everything undone, back to the newest preview. */
 export const redoAll = (h: PreviewHistory): PreviewHistory => redo(h, h.future.length);
 
+/**
+ * Forget every other step, undone ones too: the preview showing stays, as the only step. Can't itself be undone.
+ */
+export const clearHistory = (h: PreviewHistory): PreviewHistory =>
+  h.past.length || h.future.length ? startHistory(h.now) : h;
+
 /** Every preview in order (oldest first) and which one is showing: what the timeline draws. */
 export function timeline(h: PreviewHistory): { steps: Preview[]; current: number } {
   return { steps: [...h.past, h.now, ...h.future], current: h.past.length };

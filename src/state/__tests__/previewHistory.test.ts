@@ -1,6 +1,7 @@
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
 import {
   change,
+  clearHistory,
   describeStep,
   jumpTo,
   MAX_UNDO,
@@ -165,6 +166,16 @@ describe('the history timeline', () => {
     expect(jumpTo(back, 3)).toEqual(h);
     expect(jumpTo(back, 2).now.pattern).toEqual(two);
     expect(jumpTo(h, 3)).toBe(h);
+  });
+
+  it('clearing the history keeps the preview showing as the only step, and forgets undone steps too', () => {
+    const h = undo(build(), 1);
+    const cleared = clearHistory(h);
+    expect(cleared.now).toBe(h.now);
+    expect(timeline(cleared)).toEqual({ steps: [h.now], current: 0 });
+    expect(undo(cleared)).toBe(cleared);
+    expect(redo(cleared)).toBe(cleared);
+    expect(clearHistory(cleared)).toBe(cleared);
   });
 
   it('describes each step from the one before it', () => {

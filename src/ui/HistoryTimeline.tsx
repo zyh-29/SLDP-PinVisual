@@ -15,6 +15,7 @@ import {
 import type { Pattern } from '@/domain/pattern';
 import { describeStep, MAX_UNDO, type Preview, type StepKind } from '@/state/previewHistory';
 import { Label, tapFeedback } from './components';
+import { confirmAsync } from './dialogs';
 import { Icon, type IconName } from './Icon';
 import { MIN_TOUCH, radius, space, type Palette, useTheme } from './theme';
 import {
@@ -70,7 +71,18 @@ const KIND_ICON: Record<StepKind, IconName> = {
  * undone steps faded beyond it. Tap a step, or drag the playhead, to go there; the buttons go to the start, back
  * one, forward one and to the latest. Never moves the physical pins.
  */
-export function HistoryTimeline({ steps, position, onJump }: { steps: Preview[]; position: number; onJump: (index: number) => void }) {
+export function HistoryTimeline({
+  steps,
+  position,
+  onJump,
+  onClear,
+}: {
+  steps: Preview[];
+  position: number;
+  onJump: (index: number) => void;
+  /** Forget every other step (after asking); the preview showing stays. */
+  onClear: () => void;
+}) {
   const t = useTheme();
   const [width, setWidth] = useState(0);
   const [viewport, setViewport] = useState(0);
@@ -183,12 +195,35 @@ export function HistoryTimeline({ steps, position, onJump }: { steps: Preview[];
     });
   });
 
+  const clear = async () => {
+    const ok = await confirmAsync({
+      title: 'Clear history?',
+      message: `Removes all ${steps.length - 1} other step${steps.length === 2 ? '' : 's'}, undone ones too. The preview stays as it is. This can't be undone.`,
+      confirmLabel: 'Clear History',
+      icon: 'trash',
+      destructive: true,
+    });
+    if (!ok) return;
+    onClear();
+    AccessibilityInfo.announceForAccessibility('History cleared');
+  };
+
   const transport = (
     <View style={styles.transport}>
       <Transport icon="previous" label="Back to start" disabled={position === 0} onPress={() => jump(0)} colors={t} />
       <Transport icon="stepBack" label="Undo" disabled={position === 0} onPress={() => jump(position - 1)} colors={t} />
       <Transport icon="stepForward" label="Redo" disabled={position === last} onPress={() => jump(position + 1)} colors={t} />
       <Transport icon="next" label="Forward to latest" disabled={position === last} onPress={() => jump(last)} colors={t} />
+      <View style={[styles.transportDivider, { backgroundColor: t.separator }]} />
+      <Transport
+        icon="trash"
+        label="Clear history"
+        hint="Removes every step except the one showing. The preview stays as it is."
+        destructive
+        disabled={last === 0}
+        onPress={clear}
+        colors={t}
+      />
     </View>
   );
 
@@ -290,12 +325,16 @@ function Key({ text, colors: t }: { text: string; colors: Palette }) {
 function Transport({
   icon,
   label,
+  hint = 'Changes the preview only. Does not move the physical pins.',
+  destructive,
   disabled,
   onPress,
   colors: t,
 }: {
   icon: IconName;
   label: string;
+  hint?: string;
+  destructive?: boolean;
   disabled: boolean;
   onPress: () => void;
   colors: Palette;
@@ -304,15 +343,18 @@ function Transport({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityHint="Changes the preview only. Does not move the physical pins."
+      accessibilityHint={hint}
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
         styles.transportButton,
-        { backgroundColor: pressed ? t.cardPressed : hovered && !disabled ? t.fill : 'transparent', opacity: disabled ? 0.35 : 1 },
+        {
+          backgroundColor: pressed ? t.cardPressed : hovered && !disabled ? (destructive ? t.destructiveSoft : t.fill) : 'transparent',
+          opacity: disabled ? 0.35 : 1,
+        },
       ]}>
-      <Icon name={icon} color={disabled ? t.textSecondary : t.tint} size={icon === 'stepBack' || icon === 'stepForward' ? STEP_ICON : 20} />
+      <Icon name={icon} color={disabled ? t.textSecondary : destructive ? t.destructive : t.tint} size={icon === 'stepBack' || icon === 'stepForward' ? STEP_ICON : 20} />
     </Pressable>
   );
 }
@@ -389,7 +431,8 @@ const styles = StyleSheet.create({
   wideRow: { flexDirection: 'row', alignItems: 'center' },
   narrowRow: { flexDirection: 'row', justifyContent: 'center' },
   divider: { width: StyleSheet.hairlineWidth, height: TILE_H },
-  transport: { flexDirection: 'row', paddingHorizontal: space.xs },
+  transport: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.xs },
+  transportDivider: { width: StyleSheet.hairlineWidth, height: 22, marginHorizontal: space.xs },
   transportButton: { width: MIN_TOUCH, height: MIN_TOUCH, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
   stripView: { flex: 1, flexGrow: 1 },
   strip: { flexGrow: 1, flexDirection: 'row', gap: GAP, paddingHorizontal: PAD_X, paddingTop: PAD_TOP, paddingBottom: PAD_BOTTOM + TRACK },

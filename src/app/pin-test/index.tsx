@@ -1,12 +1,12 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { pinInfo, pinRaisedIn, singlePin, TEST_PIN } from '@/domain/pinTest';
 import { useBoardActions } from '@/state/useBoardActions';
 import { CommandStatus } from '@/ui/CommandStatus';
 import { Button, Columns, Label, Screen, Section, tapFeedback } from '@/ui/components';
-import { Icon } from '@/ui/Icon';
+import { Icon, type IconName } from '@/ui/Icon';
 import { PinDot } from '@/ui/PinGrid';
 import { MIN_TOUCH, radius, space, useTheme } from '@/ui/theme';
 
@@ -42,31 +42,43 @@ export default function PinTestScreen() {
     setUp(next);
     if (connected && !busy) send(next);
   };
-  const status = sending
-    ? 'Sending…'
+  /** Where the pin's command stands, with an icon and colour to match. */
+  const status: { text: string; icon: IconName | null; color: string } = sending
+    ? { text: 'Sending…', icon: null, color: t.textSecondary }
     : !connected
-      ? 'not sent: no board connected'
+      ? { text: 'Not sent · no board connected', icon: 'disconnected', color: t.textSecondary }
       : !state.lastAcknowledgedPattern
-        ? 'not sent yet'
+        ? { text: 'Not sent yet', icon: 'info', color: t.textSecondary }
         : boardUp === up
-          ? 'board confirmed'
-          : `board has it ${boardUp ? 'up' : 'down'}`;
+          ? { text: 'Board confirmed', icon: 'success', color: t.success }
+          : { text: `Board has it ${boardUp ? 'up' : 'down'}`, icon: 'error', color: t.warning };
+  const wiring =
+    gpio !== null
+      ? `Servo on ESP32 pin D${gpio} (GPIO ${gpio})`
+      : `Servo board ${servo.board + 1} (I²C 0x${servo.i2cAddress.toString(16).toUpperCase()}), channel ${servo.channel}`;
 
   return (
     <Screen title="Pin Test">
       <Columns
         left={
           <Section padded>
-            <Label variant="headline">Pin</Label>
-            <Label variant="footnote" secondary>
-              {up ? 'Up' : 'Down'} · {status}
-            </Label>
-            <Label variant="footnote" secondary>
-              {where} ·{' '}
-              {gpio !== null
-                ? `servo on ESP32 pin D${gpio} (GPIO ${gpio})`
-                : `servo board ${servo.board + 1} (I²C 0x${servo.i2cAddress.toString(16).toUpperCase()}), channel ${servo.channel}`}
-            </Label>
+            <View style={styles.header}>
+              <View style={{ flex: 1 }}>
+                <Label variant="headline">{where}</Label>
+                <Label variant="footnote" secondary>
+                  {wiring}
+                </Label>
+              </View>
+              <View
+                accessible
+                accessibilityLabel={`Pin ${up ? 'up' : 'down'}`}
+                style={[styles.pill, { backgroundColor: up ? t.tintSoft : t.fill }]}>
+                <Icon name={up ? 'up' : 'down'} color={up ? t.tint : t.textSecondary} size={13} />
+                <Label variant="footnote" style={{ color: up ? t.tint : t.textSecondary, fontWeight: '600' }}>
+                  {up ? 'Up' : 'Down'}
+                </Label>
+              </View>
+            </View>
             <Pressable
               accessibilityRole="switch"
               accessibilityLabel="Test pin"
@@ -92,6 +104,12 @@ export default function PinTestScreen() {
               accessibilityHint={up ? 'Lowers the pin on the board.' : 'Raises the pin on the board. Every other pin goes down.'}
               onPress={toggle}
             />
+            <View style={styles.status} accessible accessibilityLiveRegion="polite" accessibilityLabel={status.text}>
+              {status.icon ? <Icon name={status.icon} color={status.color} size={14} /> : <ActivityIndicator size="small" color={status.color} />}
+              <Label variant="footnote" style={{ color: status.color }}>
+                {status.text}
+              </Label>
+            </View>
           </Section>
         }
         right={
@@ -130,6 +148,9 @@ export default function PinTestScreen() {
 }
 
 const styles = StyleSheet.create({
+  header: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  pill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.sm + 2, paddingVertical: 4, borderRadius: radius.pill },
+  status: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: space.sm, minHeight: 20 },
   well: { borderRadius: radius.md, paddingVertical: space.lg, alignItems: 'center', marginVertical: space.md },
   cell: { width: PIN_CELL, height: PIN_CELL, alignItems: 'center', justifyContent: 'center' },
   notice: { flexDirection: 'row', alignItems: 'center', gap: space.sm + 2, minHeight: MIN_TOUCH + 4, paddingHorizontal: space.lg, borderRadius: radius.md },

@@ -4,6 +4,7 @@ import { GRID } from '@/config/hardware';
 import { createEmptyPattern, type Pattern, togglePin } from '@/domain/pattern';
 import {
   change,
+  clearHistory as forgetHistory,
   jumpTo as jumpToStep,
   type Preview,
   type PreviewHistory,
@@ -48,6 +49,8 @@ interface PatternContextValue {
   position: number;
   /** Straight to step `index` of `steps`. */
   jumpTo: (index: number) => void;
+  /** Forget every other step; the preview showing stays. */
+  clearHistory: () => void;
 }
 
 const PatternContext = createContext<PatternContextValue | null>(null);
@@ -74,6 +77,7 @@ export function PatternProvider({ children }: { children: ReactNode }) {
   const redo = useCallback((steps = 1) => setHistory((h) => redoSteps(h, steps)), []);
   const redoAll = useCallback(() => setHistory(redoEverything), []);
   const jumpTo = useCallback((index: number) => setHistory((h) => jumpToStep(h, index)), []);
+  const clearHistory = useCallback(() => setHistory(forgetHistory), []);
 
   const { now, past, future } = history;
   const undoCount = past.length;
@@ -97,8 +101,9 @@ export function PatternProvider({ children }: { children: ReactNode }) {
       steps,
       position,
       jumpTo,
+      clearHistory,
     }),
-    [now, setPattern, toggle, clear, undo, undoAll, undoCount, canUndo, redo, redoAll, redoCount, steps, position, jumpTo],
+    [now, setPattern, toggle, clear, undo, undoAll, undoCount, canUndo, redo, redoAll, redoCount, steps, position, jumpTo, clearHistory],
   );
   return <PatternContext.Provider value={value}>{children}</PatternContext.Provider>;
 }
