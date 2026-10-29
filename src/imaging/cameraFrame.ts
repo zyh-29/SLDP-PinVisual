@@ -217,3 +217,38 @@ export function steadyPins(prev: SteadyPins | null, next: Pattern, weight = 0.35
   // Keep the same pattern object while nothing visible changed, so screens downstream don't redraw.
   return { avg, pattern: changed ? { rows: next.rows, cols: next.cols, cells } : prev.pattern };
 }
+
+/** A frame's coarse brightness (32 x 24 blocks), to tell whether the camera still looks at the same view. */
+export function viewSketch(rgb: ArrayLike<number>, width: number, height: number): Float32Array {
+  const cols = 32;
+  const rows = 24;
+  const sum = new Float32Array(cols * rows);
+  const count = new Float32Array(cols * rows);
+  for (let y = 0; y < height; y += 2) {
+    const by = Math.min(rows - 1, Math.floor((y * rows) / height));
+    for (let x = 0; x < width; x += 2) {
+      const i = (y * width + x) * 3;
+      const b = by * cols + Math.min(cols - 1, Math.floor((x * cols) / width));
+      sum[b] += 0.299 * rgb[i] + 0.587 * rgb[i + 1] + 0.114 * rgb[i + 2];
+      count[b]++;
+    }
+  }
+  for (let b = 0; b < sum.length; b++) sum[b] /= Math.max(1, count[b]);
+  return sum;
+}
+
+/**
+ * The view has changed since `kept` (the camera turned to something else): the blocks' brightness differs by more
+ * than VIEW_MOVED on average, after allowing for the camera's own exposure change (the mean difference is taken
+ * out first). A hand's tremble moves a few blocks a little; pointing elsewhere changes most of them.
+ */
+export const VIEW_MOVED = 14;
+export function viewMoved(kept: Float32Array, now: Float32Array): boolean {
+  if (kept.length !== now.length) return true;
+  let shift = 0;
+  for (let i = 0; i < kept.length; i++) shift += now[i] - kept[i];
+  shift /= kept.length;
+  let diff = 0;
+  for (let i = 0; i < kept.length; i++) diff += Math.abs(now[i] - kept[i] - shift);
+  return diff / kept.length > VIEW_MOVED;
+}

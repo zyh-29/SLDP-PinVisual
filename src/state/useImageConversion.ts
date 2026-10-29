@@ -21,6 +21,7 @@ import type { LiveCapture } from '@/imaging/imageInput';
 import { cellSizePx, inkFromGray, inkFromMask, patternFromSamples, renderCrop, sampleCrop, thickenThinLines, traceLinePins } from '@/imaging/pinSampling';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { cropPixels, pasteMask, sameBox, uncutPhoto } from '@/imaging/screenPhoto';
+import { findSky, isLandscape, landMask, skylineBand } from '@/imaging/scene';
 import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
 import { detectShape, fillHoles, renderShape } from '@/imaging/shapes';
 import { type Focus, type GraphView, keepPieceAt, PHOTO_GRAIN, pictureKind, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
@@ -100,20 +101,45 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   // Smart Cut-Out (AI subject segmentation, on-device) only for photos with a busy background. Screenshots,
   // graphs and drawings (no photographic grain) never get it automatically: the AI keeps one solid object and
   // would throw away thin curves.
-  // Not while live (Smart Cut-Out is off then): no point paying for it on every frame.
-  const kind = useMemo(() => (picked && !live ? pictureKind(picked.rgb, w, h) : null), [picked, live, w, h]);
+  // Not on every live frame (no point paying for it each time), but on the frame the camera keeps once it has
+  // settled on something (Capture): from then on it's a still picture, so a car or a mountain is judged properly.
+  const still = !live || frozen;
+  const kind = useMemo(() => (picked && still ? pictureKind(picked.rgb, w, h) : null), [picked, still, w, h]);
   const photoLike = !!kind?.photo;
+  // Anything the camera took is a real-world photo, whatever its grain (a phone's processing, or a browser's video
+  // pipeline, can smooth a frame until it looks like a drawing to pictureKind).
+  const realPhoto = photoLike || ((!!picked?.fromCamera || live?.kind === 'camera') && still && !picked?.surface);
   /** How busy the background along the picture's edge is (see estimateBackground). */
-  const edgeNoise = useMemo(() => (picked && photoLike ? estimateBackground(picked.rgb, w, h).noise : null), [picked, photoLike, w, h]);
+  const edgeNoise = useMemo(() => (picked && realPhoto ? estimateBackground(picked.rgb, w, h).noise : null), [picked, realPhoto, w, h]);
   const busyPhoto = edgeNoise !== null && edgeNoise > BUSY_BACKGROUND;
-  const cutoutOn = removeBackground && smartCutoutAvailable && !live && (cutoutOverride ?? busyPhoto);
+  // Live camera: is it looking at a busy real-world scene (a street, a landscape), where there may be no one item to
+  // lock onto? Then the Image tab keeps a frame once the view holds still, and judges it as a photo (see busyScene).
+  const liveScene = useMemo(
+    () => (picked && live?.kind === 'camera' && !frozen && !picked.surface ? estimateBackground(picked.rgb, w, h).noise > BUSY_BACKGROUND : false),
+    [picked, live, frozen, w, h],
+  );
+  const cutoutOn = removeBackground && smartCutoutAvailable && still && (cutoutOverride ?? busyPhoto);
   const cuttingOut = cutoutOn && cutout?.for !== picked;
   const cutoutMask = cutoutOn && cutout?.for === picked ? (cutout.mask ?? undefined) : undefined;
   // A tap with Smart Cut-Out on: of the subjects it found (two people, a cat and a dog), keep the tapped one.
-  const subjectMask = useMemo(
+  const cutSubject = useMemo(
     () => (cutoutMask && focus ? keepPieceAt(cutoutMask, w, h, focus) : cutoutMask),
     [cutoutMask, focus, w, h],
   );
+  // Landscapes (mountains, hills, a skyline): no one object to cut out, so the land against the sky is shown, cropped
+  // around the ridge (scene.ts). Decided once the cut-out has had its say: a car under the sky is an object, the land
+  // itself is a landscape. A tap on something picks that instead.
+  // Only for busy photos: a landscape's edge is never plain (a photo of a page, with the desk below it, is not sky
+  // and land).
+  const sky = useMemo(
+    () => (picked && busyPhoto && removeBackground && !manualCrop ? findSky(picked.rgb, w, h) : null),
+    [picked, busyPhoto, removeBackground, manualCrop, w, h],
+  );
+  // A tap picks what was tapped; the camera's lock (a focus that's not a tap) doesn't.
+  const landscape = !!sky && !cuttingOut && !focus?.tap && isLandscape(sky, cutoutMask ?? null);
+  const land = useMemo(() => (landscape && sky ? landMask(sky) : null), [landscape, sky]);
+  const band = useMemo(() => (landscape && sky ? skylineBand(sky) : null), [landscape, sky]);
+  const subjectMask = land ?? cutSubject;
   useEffect(() => {
     if (!cutoutOn || !picked || cutout?.for === picked) return;
     let cancelled = false;
@@ -271,17 +297,19 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     };
   }, [photoKey]);
 
-  const autoBox = smart ? smart.box : (fg?.subject ?? fullImage);
+  const autoBox = band ?? (smart ? smart.box : (fg?.subject ?? fullImage));
   /** The crop box shown to the user (a graph window can reach past the picture when zoomed in; see graphWindow). */
   const crop = manualCrop ?? clip(autoBox, fullImage);
   /** What the pins use: the chosen subject's tight box (inside the user's box, if any), so empty margins don't waste pins. */
   // A photo cut out on a screen: just the subject, not the photo's whole rectangle.
   const sampleBox = (screenPhotoMask ? fg?.subject : null) ?? chosen?.box ?? (manualCrop ? (fg?.subject ?? manualCrop) : autoBox);
   // Graphs have arbitrary x and y scales, so they stretch to use every pin.
-  const stretch = removeBackground && (!!fg?.linesRemoved || (chosen ?? smart)?.kind === 'curves');
+  // Landscapes too: a ridge's shape matters, not the photo's proportions.
+  const stretch = removeBackground && (!!fg?.linesRemoved || (chosen ?? smart)?.kind === 'curves' || landscape);
 
   // Shapes (not graphs): close drawn outlines, then look for a clean triangle, square, circle...
-  const shapesApply = removeBackground && !stretch;
+  // Not for an object cut out of a photo: a car is not a hexagon, however close its outline comes.
+  const shapesApply = removeBackground && !stretch && !cutSubject;
   const filledMask = useMemo(() => (fg && shapesApply ? fillHoles(fg.mask, w, h, sampleBox) : null), [fg, shapesApply, w, h, sampleBox]);
   const shape = useMemo(() => (filledMask ? detectShape(filledMask, w, h, sampleBox) : null), [filledMask, w, h, sampleBox]);
   const pinMask = useMemo(
@@ -370,6 +398,10 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     cutoutOn: cutoutOn || !!screenPhotoMask,
     cuttingOut: cuttingOut || photoUncut,
     cutoutError: cutoutOn ? cutout?.error : undefined,
+    /** Live camera: this frame is a busy real-world scene (a street, a landscape), not a page or a screen. */
+    busyScene: liveScene,
+    /** A landscape: the pins show the skyline (the land against the sky). */
+    landscape,
     /** The subject is known exactly (cut-out or curve pixels), so Tolerance doesn't apply. */
     subjectKnown: !!knownSubject,
     graph,

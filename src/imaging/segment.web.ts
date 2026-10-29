@@ -25,6 +25,8 @@ export interface SegmentInput {
 }
 
 const SIZE = 320; // the model's input size
+/** Share of the picture the model must be sure is subject (probability 0.5 or more) to have found one. */
+const MIN_SURE = 0.003;
 const MEAN = [0.485, 0.456, 0.406];
 const STD = [0.229, 0.224, 0.225];
 
@@ -94,6 +96,14 @@ export async function segmentSubject(input: SegmentInput): Promise<Float32Array 
   }
   const feeds = { [session.inputNames[0]]: new ort.Tensor('float32', input3, [1, 3, SIZE, SIZE]) };
   const output = (await session.run(feeds))[session.outputNames[0]].data as Float32Array;
+
+  // Nothing it's sure of: no subject. The model's own output is a probability; when no pixel of a real subject was
+  // seen it still has a strongest spot (a patch of meadow, the haze around a mountain), which the stretch to 0..1
+  // below would make look certain. Measured on photos: real subjects (cars, even a small one far off) have at least
+  // 1.6% of the picture at 0.5 or more; landscapes have none (strongest 0.07-0.48), or a speck (a hiker, 0.2%).
+  let sure = 0;
+  for (let i = 0; i < SIZE * SIZE; i++) if (output[i] >= 0.5) sure++;
+  if (sure < SIZE * SIZE * MIN_SURE) return null;
 
   // Normalise to 0..1, like rembg does.
   let min = Infinity;

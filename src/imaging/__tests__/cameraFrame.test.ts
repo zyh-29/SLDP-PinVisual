@@ -1,5 +1,5 @@
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
-import { denoiseFrame, FocusGate, frameLight, LightGate, sharpness, steadyPins } from '../cameraFrame';
+import { denoiseFrame, FocusGate, frameLight, LightGate, sharpness, steadyPins, viewMoved, viewSketch } from '../cameraFrame';
 import { toRgb } from '../foreground';
 import { smartSubject, isPhotoLike } from '../smartCrop';
 
@@ -250,5 +250,35 @@ describe('steady pins (no flicker on a live camera)', () => {
     expect(b.pattern).toBe(a.pattern);
     const other = steadyPins(b, createEmptyPattern(4, 4));
     expect(other.pattern.rows).toBe(4);
+  });
+});
+
+describe('a kept scene notices when the camera turns elsewhere', () => {
+  const W = 320;
+  const H = 240;
+  /** A scene: a dark ridge across a lighter sky, shifted by `dx`, brighter by `gain`, with a little noise. */
+  const view = (dx: number, gain = 1, seed = 1, horizon = 140) => {
+    const n = noise(seed);
+    const rgb = new Uint8ClampedArray(W * H * 3);
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const land = y > horizon + 30 * Math.sin((x + dx) / 30);
+        const v = (land ? 70 : 200) * gain + n(4);
+        for (let k = 0; k < 3; k++) rgb[(y * W + x) * 3 + k] = v;
+      }
+    return rgb;
+  };
+  const sketch = (rgb: Uint8ClampedArray) => viewSketch(rgb, W, H);
+
+  it('a hand holding still (noise, a pixel or two of tremble) is the same view', () => {
+    expect(viewMoved(sketch(view(0)), sketch(view(2, 1, 2)))).toBe(false);
+  });
+
+  it('the camera brightening or dimming the whole picture is the same view', () => {
+    expect(viewMoved(sketch(view(0)), sketch(view(0, 1.12, 3)))).toBe(false);
+  });
+
+  it('pointing somewhere else is a new view', () => {
+    expect(viewMoved(sketch(view(0)), sketch(view(0, 1, 4, 60)))).toBe(true);
   });
 });

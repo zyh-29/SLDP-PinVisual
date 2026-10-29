@@ -198,6 +198,9 @@ function smallLum(rgb: ArrayLike<number>, width: number, height: number, k: numb
   return { lum, w, h };
 }
 
+/** A surface hanging from the top of the view that ends above this share of its height is sky (see findSurface). */
+const SKY_BOTTOM = 0.4;
+
 /**
  * The main flat surface in a camera picture, or null. `minShare`: the smallest share of the picture it may
  * cover; anything covering more than 92% is the picture itself (the surface fills the view: nothing to flatten).
@@ -255,6 +258,10 @@ export function findSurface(rgb: ArrayLike<number>, width: number, height: numbe
         const edges =
           +(comp.box.x <= 1) + +(comp.box.y <= 1) + +(comp.box.x + comp.box.width >= w - 1) + +(comp.box.y + comp.box.height >= h - 1);
         if (edges >= 3) return;
+        // Sky, not a page: a bright, smooth patch hanging from the top of the view and staying in its upper part
+        // (an overcast sky between trees and buildings above a car). A page or screen the camera is pointed at
+        // reaches lower than that.
+        if (comp.box.y <= 1 && comp.box.y + comp.box.height < h * SKY_BOTTOM) return;
         const hull = convexHull(pts);
         const quad = largestQuad(hull);
         if (!quad) return;

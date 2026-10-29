@@ -96,6 +96,22 @@ describe('finding a flat surface (a page, a screen) in a camera picture', () => 
     expect(findSurface(rgb, W, H)).toBeNull();
   });
 
+  it('an overcast sky above a car is not a page: a bright, smooth patch hanging from the top of the view', () => {
+    // As a photo of a car park sees it: sky in the top right between trees, two lamp posts against it, and the dark,
+    // textured trees and cars below.
+    const skyQuad: Quad = [
+      { x: 128, y: 0 },
+      { x: 319, y: 0 },
+      { x: 318, y: 62 },
+      { x: 166, y: 50 },
+    ];
+    const posts = (u: number, v: number): C | null => ((Math.abs(u - 0.3) < 0.012 || Math.abs(u - 0.7) < 0.012) && v > 0.45 ? [40, 42, 45] : null);
+    const dark = (x: number, y: number): C => [55 + ((x * 7 + y * 3) % 40), 60 + ((x * 3 + y * 11) % 30), 58 + ((x + y) % 35)];
+    expect(findSurface(sheet(skyQuad, posts, dark), W, H)).toBeNull();
+    // A real page lower in the view is still found.
+    expect(findSurface(sheet(tilted, triangle), W, H)).not.toBeNull();
+  });
+
   it('a screen filling the whole view has nothing to flatten', () => {
     const rgb = picture((x, y) => (x % 20 === 0 || y % 20 === 0 ? [215, 215, 215] : Math.abs(y - 90 - 0.01 * (x - 160) ** 2) < 2 ? [45, 112, 179] : [250, 250, 250]));
     expect(findSurface(rgb, W, H)).toBeNull();

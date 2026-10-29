@@ -6,6 +6,7 @@ import { AccessibilityInfo, Platform, StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
 import { cellsToString, type Pattern, togglePin } from '@/domain/pattern';
+import { viewMoved, viewSketch } from '@/imaging/cameraFrame';
 import { toRgb } from '@/imaging/foreground';
 import { fullRect, type Point, type Rect } from '@/imaging/geometry';
 import {
@@ -65,7 +66,16 @@ interface LockCapture {
   box: Rect | null;
   width: number | null;
   crop: Rect;
+  /** Kept from a busy scene, with no item locked (see SCENE_FRAMES): the view it showed, to notice when it changes. */
+  sketch?: Float32Array;
 }
+
+/**
+ * Live camera on a busy real-world scene (a street, a landscape), locked onto no item for this many frames (about
+ * a second and a half): a frame is kept anyway, and judged as a photo (the car cut out, the skyline found). A page
+ * or a screen is locked within two or three frames, so it never gets here.
+ */
+const SCENE_FRAMES = 8;
 
 /** A rectangle of the analysed picture in the camera view's coordinates (they differ on a flattened page). */
 const toView = (r: Rect, surface: SurfaceView | undefined) =>
@@ -112,6 +122,10 @@ export default function ImageScreen() {
   const [watch, setWatch] = useState<{ for: PickedImage | null; w: CaptureWatch<LockCapture> | null }>({ for: null, w: null });
   /** A hand-drawn crop box is fixed in the camera view: it follows the live picture, not a kept frame. */
   const kept = live?.kind === 'camera' && !manualCrop ? capture : null;
+  /** Live frames in a row on a busy scene with no item locked (see SCENE_FRAMES), counted once per frame. */
+  const [scene, setScene] = useState<{ for: PickedImage | null; frames: number }>({ for: null, frames: 0 });
+  /** The last live frame checked against a kept scene's view. */
+  const [viewChecked, setViewChecked] = useState<PickedImage | null>(null);
   /** The picture the pins are made from: the kept frame, else the newest one. */
   const analysed = kept?.frame ?? picked;
   /** For callbacks made once per live session (onEnd, leaving the tab). */
@@ -120,6 +134,7 @@ export default function ImageScreen() {
   const dropCapture = () => {
     setCapture(null);
     setWatch({ for: null, w: null });
+    setScene({ for: null, frames: 0 });
   };
   /** When the frame being analysed arrived: its cost (arrival to on screen) paces the live capture. */
   const frameStart = useRef(0);
@@ -147,29 +162,53 @@ export default function ImageScreen() {
   const surface = live?.kind === 'camera' ? picked?.surface : undefined;
   // A kept frame's item is no news to the lock: it only follows the item on the live picture from then on.
   useLockTarget(lock, analysed, kept ? null : c.target);
-  // Keep a frame once the lock has settled (React's "adjust state while rendering" pattern: once per new frame).
-  if (live?.kind === 'camera' && !kept && picked && watch.for !== picked && (lock.locked || watch.w)) {
+  // A busy scene with nothing locked: count the frames (once per new frame).
+  if (live?.kind === 'camera' && !kept && picked && scene.for !== picked)
+    setScene({ for: picked, frames: c.busyScene && !lock.locked && !manualCrop ? scene.frames + 1 : 0 });
+  const sceneMode = live?.kind === 'camera' && !kept && !manualCrop && !lock.locked && c.busyScene && scene.frames >= SCENE_FRAMES;
+  // Keep a frame once the lock has settled, or the scene has (React's "adjust state while rendering" pattern: once
+  // per new frame).
+  if (live?.kind === 'camera' && !kept && picked && watch.for !== picked && (lock.locked || sceneMode || watch.w)) {
     const r = watchCapture(watch.w, {
-      ready: lock.locked && !manualCrop && !c.readingNumbers && !c.cuttingOut,
+      ready: (lock.locked || sceneMode) && !manualCrop && !c.readingNumbers && !c.cuttingOut,
       sharp: cameraTrouble === 0 && !cameraDark,
       steady: c.result,
       raw: c.framePins,
-      item: { frame: picked, focus, box: lock.box, width: lock.width, crop: c.crop },
+      item: {
+        frame: picked,
+        focus,
+        box: lock.box,
+        width: lock.width,
+        crop: c.crop,
+        sketch: sceneMode ? viewSketch(picked.rgb, picked.raster.width, picked.raster.height) : undefined,
+      },
     });
     setWatch({ for: picked, w: r.watch });
     if (r.capture) setCapture(r.capture);
   }
+  // A kept scene has no item to follow: once the camera turns to something else, it lets go and looks again.
+  if (kept?.sketch && picked && picked !== kept.frame && viewChecked !== picked) {
+    setViewChecked(picked);
+    if (viewMoved(kept.sketch, viewSketch(picked.rgb, picked.raster.width, picked.raster.height))) dropCapture();
+  }
   useEffect(() => {
-    if (capture) AccessibilityInfo.announceForAccessibility('Captured. The pins hold still on this item until you tap another one.');
+    if (capture)
+      AccessibilityInfo.announceForAccessibility(
+        capture.sketch
+          ? 'Captured. The pins hold still until the camera turns to something else.'
+          : 'Captured. The pins hold still on this item until you tap another one.',
+      );
   }, [capture]);
   /**
    * The crop box on the live view. With a kept frame: where its crop is now, carried along with the locked item as
    * the camera moves (or where it was, once the item is out of sight).
    */
+  // The kept frame's own crop as it is now (c is worked out on that frame): once its cut-out or skyline arrives, the
+  // box shows what the pins really use, not where it was when the frame was kept.
   const viewCrop = kept
     ? kept.box && lock.box
-      ? toView(carryRect(kept.crop, kept.box, lock.box), surface)
-      : toView(kept.crop, kept.frame.surface)
+      ? toView(carryRect(c.crop, kept.box, lock.box), surface)
+      : toView(c.crop, kept.frame.surface)
     : toView(c.crop, surface);
   // A live frame is on screen: tell the capture how long it took, so slow phones get more time between frames.
   useEffect(() => {
@@ -634,6 +673,12 @@ export default function ImageScreen() {
                     <StatusBanner tone="warning" title="Smart Cut-Out unavailable" message={c.cutoutError} />
                   ) : removeBackground && !fg.subject ? (
                     <StatusBanner tone="warning" title="No subject found" message={c.cutoutOn ? undefined : 'Try a lower Tolerance.'} />
+                  ) : c.landscape ? (
+                    <StatusBanner
+                      tone="neutral"
+                      title="Landscape"
+                      message="The pins show the skyline: the land raised, the sky lowered. Tap something in the picture to show just that."
+                    />
                   ) : null}
                 </Section>
               </>

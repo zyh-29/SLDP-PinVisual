@@ -56,6 +56,7 @@ src/
                   lighting                          evening out a camera picture's light
                   foreground, refineMask, maxflow   background removal
                   smartCrop, curves, plotGrid       choosing what becomes pins
+                  scene                             landscapes: the sky and the skyline
                   graph, graphScale, graphSummary   graphs: range, units, description
                   equation                          typed equations
                   features, featureTracker,         camera lock
@@ -201,6 +202,35 @@ subject. It switches on by itself and can be turned off.
 
 The phone versions need a development build. In Expo Go the switch is hidden.
 
+On the web, the model only counts as having found a subject when it is sure
+of at least 0.3% of the picture. On a landscape it is never sure of anything
+(its strongest point is a guess), and that guess used to become the "subject":
+a patch of meadow, a bend in a river. Cars, even a small one far off, cover
+1.6% or more.
+
+A shape cut out of a photo is never snapped to a triangle or hexagon: a car is
+not a hexagon, however close its outline comes.
+
+### Landscapes
+
+A photo of mountains or hills has no single object to cut out. The pins show
+the **skyline** instead: the land raised, the sky lowered, cropped around the
+ridge so the peaks fill the grid (`scene.ts`).
+
+- **Sky:** the smooth area joined to the top of the picture, right across it.
+  Clouds stop it, but they are islands: land never floats above sky, so the
+  skyline is just below each column's lowest sky.
+- **Landscape or object?** A car under the sky has a skyline too (trees,
+  buildings). It's a landscape only when the cut-out found nothing, or what it
+  found follows the skyline (its top edge is the ridge). A car's roof sits well
+  below the trees behind it, so the car is shown.
+- **Tap** something in the picture to show just that instead.
+
+Tested on 11 photos (6 cars, 5 mountains): every car was cut out and every
+mountain photo shown as a skyline. Limits: clouds lying right on the peaks with
+no sky under them count as land, and a mountain fading into haze counts as
+sky (the dark foreground is then shown).
+
 ### Graphs
 
 Squeezing a whole curve onto 30 pins can lose its shape. Graph Range starts on
@@ -257,6 +287,14 @@ follow it.
 - **Focus and light.** Blurry frames are skipped while the lens refocuses, and
   very dark frames aren't processed. Tapping the picture also focuses there
   (Chrome on Android).
+- **Cars, mountains and other scenes.** Once the camera has settled (locked
+  on an item, or about 1.5 s on a busy scene with nothing to lock onto), the
+  frame it keeps is judged as a photo: Smart Cut-Out and the landscape check
+  run on it, so a car is cut out and a mountain shows its skyline. A kept
+  scene lets go when the camera turns to something else. Frames from the
+  camera always count as photos, however smooth the phone makes them.
+- **Not a page:** a bright, smooth patch hanging from the top of the view (an
+  overcast sky above a car) is not taken for a sheet of paper to straighten.
 - **Capture button.** Takes a full-resolution photo and carries on with it as
   a still picture.
 
