@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Animated, Easing, Modal, Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { Animated, Easing, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { ConfirmOptions } from './dialogs';
 import { Icon } from './Icon';
-import { radius, space, type, useTheme } from './theme';
+import { radius, space, type, useScheme, useTheme } from './theme';
 
 export type { ConfirmOptions } from './dialogs';
 
@@ -59,7 +59,7 @@ export function DialogHost() {
 function Alert({ request }: { request: Pending }) {
   const t = useTheme();
   const { title, message, confirmLabel, destructive, icon } = request;
-  const dark = useColorScheme() === 'dark';
+  const dark = useScheme() === 'dark';
   const [appear] = useState(() => new Animated.Value(0));
 
   useEffect(() => {

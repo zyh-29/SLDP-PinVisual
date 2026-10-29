@@ -1,5 +1,7 @@
 import { Platform, useColorScheme } from 'react-native';
 
+import { useAppearance } from '@/state/appearance';
+
 /**
  * Apple-style design tokens. Colours follow iOS system colours, darkened or
  * lightened where needed so text meets WCAG AA (4.5:1) on its background.
@@ -12,6 +14,7 @@ const light = {
   textSecondary: '#5C5C61', // 6.3:1 on white
   separator: '#C6C6C8',
   fill: '#E9E9EE', // tertiary fill / segmented track
+  segmentSelected: '#FFFFFF', // the chosen option in a segmented control
   tint: '#0062CC', // accessible system blue, 5.9:1 on white
   tintSoft: 'rgba(0, 98, 204, 0.11)',
   onTint: '#FFFFFF',
@@ -36,6 +39,7 @@ const dark: typeof light = {
   textSecondary: '#AEAEB2',
   separator: '#38383A',
   fill: '#2C2C2E',
+  segmentSelected: '#636366', // iOS dark: the chosen segment is lighter than its track
   tint: '#4BA3FF',
   tintSoft: 'rgba(75, 163, 255, 0.18)',
   onTint: '#000000',
@@ -54,8 +58,16 @@ const dark: typeof light = {
 
 export type Palette = typeof light;
 
+/** Light or dark: the user's choice (Device tab, or the website's sidebar), or the device's when it's Automatic. */
+export function useScheme(): 'light' | 'dark' {
+  const [pref] = useAppearance();
+  const system = useColorScheme();
+  if (pref !== 'auto') return pref;
+  return system === 'dark' ? 'dark' : 'light';
+}
+
 export function useTheme(): Palette {
-  return useColorScheme() === 'dark' ? dark : light;
+  return useScheme() === 'dark' ? dark : light;
 }
 
 /** iOS text styles (Dynamic Type defaults). */

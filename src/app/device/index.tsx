@@ -4,10 +4,12 @@ import { ActivityIndicator, Platform, StyleSheet, Switch, View } from 'react-nat
 import { BLE, GRID, PROTOCOL } from '@/config/hardware';
 import { useDevice } from '@/state/DeviceProvider';
 import { useBoardActions } from '@/state/useBoardActions';
+import { AppearancePicker } from '@/ui/AppearancePicker';
 import { CommandStatus } from '@/ui/CommandStatus';
 import { Button, Columns, Label, Row, Screen, Section, Separator, StatusBanner } from '@/ui/components';
 import { connectionSummary } from '@/ui/ConnectionPill';
 import { Icon } from '@/ui/Icon';
+import { useResponsive } from '@/ui/layout';
 import { space, useTheme } from '@/ui/theme';
 
 export default function DeviceScreen() {
@@ -15,6 +17,7 @@ export default function DeviceScreen() {
   const { state, controller } = useDevice();
   const { send, reset, connected, busy } = useBoardActions();
   const [showAll, setShowAll] = useState(false);
+  const { sidebar } = useResponsive();
 
   const c = state.connection;
   const summary = connectionSummary(c);
@@ -167,6 +170,13 @@ export default function DeviceScreen() {
         <Separator inset={space.lg} />
         <Row title="Service UUID" detail={`${BLE.serviceUUID}${BLE.uuidsArePlaceholders ? ' (placeholder)' : ''}`} />
       </Section>
+
+      {/* The website's sidebar has its own; phones and narrow browsers get it here. */}
+      {!sidebar ? (
+        <Section title="Appearance" footer="Automatic matches your device's light or dark setting.">
+          <AppearancePicker />
+        </Section>
+      ) : null}
           </>
         }
       />

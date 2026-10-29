@@ -255,7 +255,7 @@ export function SegmentedControl<T extends string>({
                 onChange(o.value);
               }
             }}
-            style={[styles.segItem, selected && [styles.segSelected, { backgroundColor: t.card }], disabled && { opacity: 0.5 }]}>
+            style={[styles.segItem, selected && [styles.segSelected, { backgroundColor: t.segmentSelected }], disabled && { opacity: 0.5 }]}>
             <Text style={[type.subhead, { color: t.text, fontWeight: selected ? '600' : '500' }]} numberOfLines={1}>
               {o.label}
             </Text>

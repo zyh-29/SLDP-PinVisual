@@ -1,13 +1,14 @@
 import { TabList, TabSlot, TabTrigger, type TabTriggerSlotProps, Tabs } from 'expo-router/ui';
 import type { ComponentProps, ReactNode } from 'react';
 import { Image } from 'expo-image';
-import { Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useDevice } from '@/state/DeviceProvider';
+import { AppearancePicker } from './AppearancePicker';
 import { connectionSummary } from './ConnectionPill';
 import { Icon, type IconName } from './Icon';
 import { SIDEBAR_WIDTH, useResponsive } from './layout';
-import { radius, space, type, useTheme } from './theme';
+import { radius, space, type, useScheme, useTheme } from './theme';
 
 const TABS: { name: string; href: '/' | '/image' | '/saved' | '/pin-test' | '/device'; label: string; icon: IconName }[] = [
   { name: '(display)', href: '/', label: 'Display', icon: 'grid' },
@@ -40,7 +41,17 @@ export function AppTabs() {
           </NavItem>
         </TabTrigger>
       ))}
-      {sidebar ? <SidebarStatus /> : null}
+      {sidebar ? (
+        <View style={styles.sidebarFooter}>
+          <View style={{ gap: space.xs + 2 }}>
+            <Text accessibilityRole="header" style={[type.caption, styles.footerTitle, { color: t.textSecondary }]}>
+              APPEARANCE
+            </Text>
+            <AppearancePicker compact />
+          </View>
+          <SidebarStatus />
+        </View>
+      ) : null}
     </TabList>
   );
 
@@ -95,7 +106,7 @@ const LOGO_WIDTH = 208;
 const LOGO_HEIGHT = Math.round((LOGO_WIDTH * 282) / 1074);
 
 function SidebarHeader() {
-  const dark = useColorScheme() === 'dark';
+  const dark = useScheme() === 'dark';
   return (
     <View style={styles.brand}>
       <Image
@@ -159,8 +170,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   tabItem: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2, minHeight: 56, paddingTop: 6 },
+  sidebarFooter: { marginTop: 'auto', gap: space.lg },
+  footerTitle: { paddingHorizontal: space.sm, fontWeight: '500', letterSpacing: 0.3 },
   status: {
-    marginTop: 'auto',
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
