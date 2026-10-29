@@ -209,7 +209,11 @@ a patch of meadow, a bend in a river. Cars, even a small one far off, cover
 1.6% or more.
 
 A shape cut out of a photo is never snapped to a triangle or hexagon: a car is
-not a hexagon, however close its outline comes.
+not a hexagon, however close its outline comes. It is stretched to fill the
+pins instead, up to 2.2 times taller (or wider) than it really is: a car seen
+from the side is three or four times wider than tall, and kept to those
+proportions it was a single row of pins. Filling the rows shows the cabin on
+top, the body, and the wheels at the bottom corners.
 
 ### Landscapes
 
@@ -293,6 +297,11 @@ follow it.
   run on it, so a car is cut out and a mountain shows its skyline. A kept
   scene lets go when the camera turns to something else. Frames from the
   camera always count as photos, however smooth the phone makes them.
+- **Pictures of things.** Pointed at a printed photo or a photo on a screen,
+  the camera finds the print or screen, straightens it (*Live · Flat*) and
+  cuts the object out of the photo inside: a printed car comes out as a car.
+  Not yet for landscapes in a print or on a screen: a smooth printed sky
+  doesn't count as a photo, and a screen's bezel hides where the ground ends.
 - **Not a page:** a bright, smooth patch hanging from the top of the view (an
   overcast sky above a car) is not taken for a sheet of paper to straighten.
 - **Capture button.** Takes a full-resolution photo and carries on with it as

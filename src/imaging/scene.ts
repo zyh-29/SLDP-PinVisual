@@ -188,6 +188,29 @@ export function findSky(rgb: ArrayLike<number>, width: number, height: number): 
   return { width, height, skyline, share };
 }
 
+/**
+ * findSky a little inside the picture's edges (`inset`: share of each side), for a flattened print or screen: its
+ * own frame (a print's white border, a screen's black bezel) runs along the top and would hide the sky from the top
+ * edge. The skyline is given for the whole picture.
+ */
+export function findSkyInside(rgb: ArrayLike<number>, width: number, height: number, inset: number): Sky | null {
+  const x0 = Math.round(width * inset);
+  const y0 = Math.round(height * inset);
+  const w = width - 2 * x0;
+  const h = height - 2 * y0;
+  if (w < 16 || h < 16) return null;
+  const inner = new Uint8ClampedArray(w * h * 3);
+  for (let y = 0; y < h; y++) {
+    const from = ((y + y0) * width + x0) * 3;
+    for (let k = 0; k < w * 3; k++) inner[y * w * 3 + k] = rgb[from + k];
+  }
+  const sky = findSky(inner, w, h);
+  if (!sky) return null;
+  const skyline = new Int32Array(width);
+  for (let x = 0; x < width; x++) skyline[x] = sky.skyline[Math.min(w - 1, Math.max(0, x - x0))] + y0;
+  return { width, height, skyline, share: sky.share };
+}
+
 /** The land: everything below the skyline (1 = land), as a subject mask (0..1 per pixel). */
 export function landMask(sky: Sky): Float32Array {
   const { width, height, skyline } = sky;
@@ -219,6 +242,8 @@ const FOLLOWS = 0.04;
 const FOLLOWS_SHARE = 0.6;
 /** ...and the cut-out spans at least this share of the width (a landscape runs edge to edge). */
 const WIDE = 0.6;
+/** A cut-out reaching the picture's bottom along this share of its width is the ground, not an object on it. */
+const GROUND = 0.8;
 
 /**
  * Whether the photo is a landscape (show the skyline) rather than an object in front of the sky (show the object).
@@ -227,6 +252,16 @@ const WIDE = 0.6;
 export function isLandscape(sky: Sky, subject: Float32Array | null): boolean {
   if (!subject) return true;
   const { width, height, skyline } = sky;
+  // A cut-out that takes in most of the sky is the whole picture (a photo framed by a screen's bezel stands out as
+  // one object), not something in front of the sky: it says nothing about what to show.
+  let skyPixels = 0;
+  let skyTaken = 0;
+  for (let x = 0; x < width; x += 2)
+    for (let y = 0; y < skyline[x]; y += 2) {
+      skyPixels++;
+      if (subject[y * width + x] >= 0.5) skyTaken++;
+    }
+  if (skyPixels && skyTaken > skyPixels * 0.5) return true;
   let covered = 0;
   let follows = 0;
   for (let x = 0; x < width; x++) {
@@ -238,5 +273,11 @@ export function isLandscape(sky: Sky, subject: Float32Array | null): boolean {
   }
   // Too little found to call it an object: the land is the subject.
   if (covered < width * 0.05) return true;
+  // The ground itself (a meadow, a lake shore): it runs out of the bottom of the picture nearly all the way across.
+  // An object stands on the ground; even a car filling the view touches the bottom only at its wheels.
+  let onBottom = 0;
+  const bottom = Math.max(0, height - 1 - Math.round(height * 0.02));
+  for (let x = 0; x < width; x++) if (subject[bottom * width + x] >= 0.5) onBottom++;
+  if (onBottom >= width * GROUND) return true;
   return covered >= width * WIDE && follows >= covered * FOLLOWS_SHARE;
 }

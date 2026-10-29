@@ -93,6 +93,33 @@ export function sampleCrop(
   return { ink: inkOut, covered: covOut };
 }
 
+/**
+ * How much an object cut out of a photo may be stretched (taller or wider) to fill the pins. A car seen from the
+ * side is three or four times wider than tall; kept to its proportions on 6 x 5 pins it is a strip one or two rows
+ * high (a flat line, nothing like a car). Stretched to fill the rows it shows what makes it a car: the cabin on
+ * top, the body, the wheels at the bottom corners. Up to this factor, so a long limousine doesn't turn into a box.
+ */
+export const OBJECT_MAX_STRETCH = 2.2;
+
+/**
+ * The box to sample, stretched (with `sampleCrop(..., stretch = true)`) to fill the grid: `box` itself when that
+ * stretches it by at most `maxStretch`, else `box` grown on its short side (centred) so the stretch is exactly
+ * `maxStretch` and the rest of the grid stays empty.
+ */
+export function fillGrid(box: Rect, rows: number, cols: number, pinPitchRatio = 1, maxStretch = OBJECT_MAX_STRETCH): Rect {
+  const grid = (cols * pinPitchRatio) / rows;
+  const aspect = box.width / box.height;
+  if (aspect > grid * maxStretch) {
+    const height = box.width / (grid * maxStretch);
+    return { x: box.x, y: box.y + (box.height - height) / 2, width: box.width, height };
+  }
+  if (aspect < grid / maxStretch) {
+    const width = (box.height * grid) / maxStretch;
+    return { x: box.x + (box.width - width) / 2, y: box.y, width, height: box.height };
+  }
+  return box;
+}
+
 /** Size of one pin's cell in source pixels for this crop (width, height). */
 export function cellSizePx(crop: Rect, rows: number, cols: number, pinPitchRatio = 1, stretch = false): { w: number; h: number } {
   const gridW = cols * pinPitchRatio;

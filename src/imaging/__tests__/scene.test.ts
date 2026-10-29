@@ -112,6 +112,19 @@ describe('landscape or an object in front of the sky', () => {
     expect(isLandscape(sky, mask((x, y) => x > 180 && x < 460 && y > 270 && y < 360))).toBe(false);
   });
 
+  it('a cut-out of the whole picture, sky and all (a photo framed by a screen): still a landscape', () => {
+    expect(isLandscape(sky, mask((x, y) => x > 4 && x < W - 4 && y > 4 && y < H - 4))).toBe(true);
+  });
+
+  it('a cut-out of the ground (a meadow running out of the bottom, all the way across): still a landscape', () => {
+    expect(isLandscape(sky, mask((x, y) => y > 240))).toBe(true);
+  });
+
+  it('a car filling the view, its wheels at the bottom edge: an object', () => {
+    const wheel = (x: number, y: number, cx: number) => Math.hypot(x - cx, y - 370) < 30;
+    expect(isLandscape(sky, mask((x, y) => (x > 40 && x < 600 && y > 230 && y < 360) || wheel(x, y, 150) || wheel(x, y, 490)))).toBe(false);
+  });
+
   it('a speck (a hiker on the ridge): not enough to be the subject', () => {
     expect(isLandscape(sky, mask((x, y) => x > 300 && x < 310 && y > 250 && y < 280))).toBe(true);
   });

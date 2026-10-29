@@ -18,10 +18,10 @@ import { clip, fullRect, type Rect } from '@/imaging/geometry';
 import { type GraphScale, labelBands, scaleFromGrid, scaleFromLabels } from '@/imaging/graph';
 import type { GraphRange } from '@/imaging/graphRange';
 import type { LiveCapture } from '@/imaging/imageInput';
-import { cellSizePx, inkFromGray, inkFromMask, patternFromSamples, renderCrop, sampleCrop, thickenThinLines, traceLinePins } from '@/imaging/pinSampling';
+import { cellSizePx, fillGrid, inkFromGray, inkFromMask, patternFromSamples, renderCrop, sampleCrop, thickenThinLines, traceLinePins } from '@/imaging/pinSampling';
 import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { cropPixels, pasteMask, sameBox, uncutPhoto } from '@/imaging/screenPhoto';
-import { findSky, isLandscape, landMask, skylineBand } from '@/imaging/scene';
+import { findSky, findSkyInside, isLandscape, landMask, skylineBand } from '@/imaging/scene';
 import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
 import { detectShape, fillHoles, renderShape } from '@/imaging/shapes';
 import { type Focus, type GraphView, keepPieceAt, PHOTO_GRAIN, pictureKind, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
@@ -132,7 +132,13 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   // Only for busy photos: a landscape's edge is never plain (a photo of a page, with the desk below it, is not sky
   // and land).
   const sky = useMemo(
-    () => (picked && busyPhoto && removeBackground && !manualCrop ? findSky(picked.rgb, w, h) : null),
+    () =>
+      picked && busyPhoto && removeBackground && !manualCrop
+        ? // A print or a screen the camera straightened: look inside its own border or bezel.
+          picked.surface
+          ? findSkyInside(picked.rgb, w, h, 0.05)
+          : findSky(picked.rgb, w, h)
+        : null,
     [picked, busyPhoto, removeBackground, manualCrop, w, h],
   );
   // A tap picks what was tapped; the camera's lock (a focus that's not a tap) doesn't.
@@ -302,10 +308,17 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   const crop = manualCrop ?? clip(autoBox, fullImage);
   /** What the pins use: the chosen subject's tight box (inside the user's box, if any), so empty margins don't waste pins. */
   // A photo cut out on a screen: just the subject, not the photo's whole rectangle.
-  const sampleBox = (screenPhotoMask ? fg?.subject : null) ?? chosen?.box ?? (manualCrop ? (fg?.subject ?? manualCrop) : autoBox);
+  const subjectBox = (screenPhotoMask ? fg?.subject : null) ?? chosen?.box ?? (manualCrop ? (fg?.subject ?? manualCrop) : autoBox);
+  // An object cut out of a photo (a car, a person): stretched to fill the pins, up to a limit (see fillGrid). Its
+  // outline, not its exact proportions, is what makes it recognisable on a few dozen pins.
+  const photoObject = removeBackground && !!cutSubject && !landscape && !manualCrop;
+  const sampleBox = useMemo(
+    () => (photoObject ? fillGrid(subjectBox, GRID.rows, GRID.cols, GRID.pinPitchRatio) : subjectBox),
+    [photoObject, subjectBox],
+  );
   // Graphs have arbitrary x and y scales, so they stretch to use every pin.
   // Landscapes too: a ridge's shape matters, not the photo's proportions.
-  const stretch = removeBackground && (!!fg?.linesRemoved || (chosen ?? smart)?.kind === 'curves' || landscape);
+  const stretch = removeBackground && (!!fg?.linesRemoved || (chosen ?? smart)?.kind === 'curves' || landscape || photoObject);
 
   // Shapes (not graphs): close drawn outlines, then look for a clean triangle, square, circle...
   // Not for an object cut out of a photo: a car is not a hexagon, however close its outline comes.
