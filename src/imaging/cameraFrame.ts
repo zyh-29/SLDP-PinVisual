@@ -218,8 +218,11 @@ export function steadyPins(prev: SteadyPins | null, next: Pattern, weight = 0.35
   return { avg, pattern: changed ? { rows: next.rows, cols: next.cols, cells } : prev.pattern };
 }
 
-/** A frame's coarse brightness (32 x 24 blocks), to tell whether the camera still looks at the same view. */
-export function viewSketch(rgb: ArrayLike<number>, width: number, height: number): Float32Array {
+/**
+ * A frame's coarse brightness (32 x 24 blocks), to tell whether the camera still looks at the same view. `channels`
+ * is 3 for RGB, 4 for the browser's RGBA.
+ */
+export function viewSketch(rgb: ArrayLike<number>, width: number, height: number, channels = 3): Float32Array {
   const cols = 32;
   const rows = 24;
   const sum = new Float32Array(cols * rows);
@@ -227,7 +230,7 @@ export function viewSketch(rgb: ArrayLike<number>, width: number, height: number
   for (let y = 0; y < height; y += 2) {
     const by = Math.min(rows - 1, Math.floor((y * rows) / height));
     for (let x = 0; x < width; x += 2) {
-      const i = (y * width + x) * 3;
+      const i = (y * width + x) * channels;
       const b = by * cols + Math.min(cols - 1, Math.floor((x * cols) / width));
       sum[b] += 0.299 * rgb[i] + 0.587 * rgb[i + 1] + 0.114 * rgb[i + 2];
       count[b]++;
@@ -235,6 +238,20 @@ export function viewSketch(rgb: ArrayLike<number>, width: number, height: number
   }
   for (let b = 0; b < sum.length; b++) sum[b] /= Math.max(1, count[b]);
   return sum;
+}
+
+/**
+ * Nothing in view has changed since `last`: no block is brighter or darker by more than STILL_VIEW levels. Each
+ * block averages about 75 pixels, so the sensor's noise (already smoothed by the phone) moves it by a level or so, while a pen stroke or a
+ * hand coming into one block moves it by tens. The largest block counts, not the average: one small change in a
+ * corner is still a change. The live camera skips analysing such frames (the result would be the same) to keep
+ * the phone cool.
+ */
+export const STILL_VIEW = 6;
+export function viewStill(last: Float32Array, now: Float32Array): boolean {
+  if (last.length !== now.length) return false;
+  for (let i = 0; i < last.length; i++) if (Math.abs(now[i] - last[i]) > STILL_VIEW) return false;
+  return true;
 }
 
 /**

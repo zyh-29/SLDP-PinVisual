@@ -1,6 +1,7 @@
 /**
  * Browser version of previewPng.ts: the browser's own PNG encoder (native code, via a canvas) instead of encoding
- * in JavaScript. The "What the pins see" preview is redrawn on every live frame, so this matters on slow phones.
+ * in JavaScript, which matters on slow phones. (The live "What the pins see" preview skips PNGs altogether: see
+ * PixelImage.web.tsx.)
  */
 let canvas: HTMLCanvasElement | null = null;
 

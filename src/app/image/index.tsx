@@ -1,4 +1,3 @@
-import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -38,6 +37,7 @@ import { CropEditor } from '@/ui/CropEditor';
 import { CAMERA_HINT, ImageSourcePicker, SCREEN_HINT } from '@/ui/ImageSourcePicker';
 import { DropOverlay, LiveBadge } from '@/ui/ImageOverlays';
 import { ImageResult } from '@/ui/ImageResult';
+import { PixelImage } from '@/ui/PixelImage';
 import { LiveVideo } from '@/ui/LiveVideo';
 import { SavePatternSheet } from '@/ui/SavePatternSheet';
 import { radius, space, useTheme } from '@/ui/theme';
@@ -85,6 +85,15 @@ export default function ImageScreen() {
   const t = useTheme();
   const { setPattern } = usePattern();
   const [picked, setPicked] = useState<PickedImage | null>(null);
+  // A captured or dropped photo (a blob: address) stays in the browser's memory until released: release each one
+  // once another picture has replaced it.
+  const pictureUri = picked?.uri;
+  const shownUri = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const before = shownUri.current;
+    shownUri.current = pictureUri;
+    if (Platform.OS === 'web' && before && before !== pictureUri && before.startsWith('blob:')) URL.revokeObjectURL(before);
+  }, [pictureUri]);
   const prefs = useConversionSettings();
   const { removeBackground, removeClutter, toleranceOverride, sensitivity, snap, cutoutOverride, linesOverride, graphRange, graphPan, thinLines } =
     prefs.settings;
@@ -658,11 +667,10 @@ export default function ImageScreen() {
 
                 <Section title="What the pins see">
                   <View style={[styles.frame, { aspectRatio: gridAspect, borderColor: t.separator }]}>
-                    {c.cleanedUri ? (
-                      <Image
-                        source={{ uri: c.cleanedUri }}
-                        contentFit={c.stretch ? 'fill' : 'contain'}
-                        style={StyleSheet.absoluteFill}
+                    {c.cleaned ? (
+                      <PixelImage
+                        pixels={c.cleaned}
+                        fit={c.stretch ? 'fill' : 'contain'}
                         accessibilityLabel={removeBackground ? 'Cropped image with the background removed' : 'Cropped image'}
                       />
                     ) : null}

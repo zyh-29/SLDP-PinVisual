@@ -1,5 +1,5 @@
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
-import { denoiseFrame, FocusGate, frameLight, LightGate, sharpness, steadyPins, viewMoved, viewSketch } from '../cameraFrame';
+import { denoiseFrame, FocusGate, frameLight, LightGate, sharpness, steadyPins, viewMoved, viewSketch, viewStill } from '../cameraFrame';
 import { toRgb } from '../foreground';
 import { smartSubject, isPhotoLike } from '../smartCrop';
 
@@ -280,5 +280,39 @@ describe('a kept scene notices when the camera turns elsewhere', () => {
 
   it('pointing somewhere else is a new view', () => {
     expect(viewMoved(sketch(view(0)), sketch(view(0, 1, 4, 60)))).toBe(true);
+  });
+});
+
+describe('resting while nothing in view changes', () => {
+  const W = 640;
+  const H = 360;
+  const page = (seed: number, stroke = false) => {
+    const n = noise(seed);
+    const rgba = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        // A drawing on paper; `stroke` adds a short pen line (3 px wide, 30 px long) in one corner.
+        const ink = Math.hypot(x - W / 2, y - H / 2) < 80 || (stroke && y >= 40 && y < 43 && x >= 40 && x < 70);
+        const v = (ink ? 40 : 235) + n(4);
+        const i = (y * W + x) * 4;
+        rgba[i] = rgba[i + 1] = rgba[i + 2] = v;
+        rgba[i + 3] = 255;
+      }
+    return viewSketch(rgba, W, H, 4);
+  };
+
+  it('the same view with fresh sensor noise is still', () => {
+    expect(viewStill(page(1), page(2))).toBe(true);
+  });
+
+  it('a small new pen stroke in a corner is a change', () => {
+    expect(viewStill(page(1), page(2, true))).toBe(false);
+  });
+
+  it('reads RGBA the same as RGB', () => {
+    const rgb = new Uint8ClampedArray(W * H * 3).map((_, i) => (i * 7) % 251);
+    const rgba = new Uint8ClampedArray(W * H * 4);
+    for (let p = 0; p < W * H; p++) for (let k = 0; k < 3; k++) rgba[p * 4 + k] = rgb[p * 3 + k];
+    expect(Array.from(viewSketch(rgba, W, H, 4))).toEqual(Array.from(viewSketch(rgb, W, H)));
   });
 });

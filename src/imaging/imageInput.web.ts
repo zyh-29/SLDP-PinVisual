@@ -3,7 +3,7 @@
  * (getDisplayMedia) and the live camera (getUserMedia; the camera itself in cameraDevice.web.ts). The phone app
  * versions are in imageInput.ts.
  */
-import { denoiseFrame, FocusGate, frameLight, LightGate, sharpness } from './cameraFrame';
+import { denoiseFrame, FocusGate, frameLight, LightGate, sharpness, viewSketch, viewStill } from './cameraFrame';
 import type { RasterImage } from './convert';
 import { flatten, type Quad, SurfaceWatch, type SurfaceView } from './surface';
 import { cameraError, focusCameraAt, openCamera, tuneCamera } from './cameraDevice.web';
@@ -108,6 +108,8 @@ const PAGE_SIZE = 800;
 const MAX_BUSY = 0.45;
 /** Shortest time between processed frames. A camera changes on every frame (noise), so it is paced a bit slower. */
 const MIN_INTERVAL: Record<LiveSource, number> = { screen: 200, camera: 250 };
+/** Live camera, nothing in view changing (see viewStill): frames are still analysed at least this often, ms. */
+const REST_MAX = 1000;
 
 /**
  * What screen sharing asks the browser for. Sharing the entire screen usually shows PinVisual too, and the app
@@ -194,6 +196,14 @@ export async function startLiveCapture(o: {
   let minInterval = baseInterval;
   const workingSize = WORKING_SIZE[kind];
   let cost = 0;
+  /** The view when a frame was last analysed, and when (for resting while it stays the same). */
+  let lastSketch: Float32Array | null = null;
+  let lastAnalysed = -Infinity;
+  /** Reused frame to frame (fewer large short-lived buffers means fewer garbage-collection pauses on phones). */
+  type Buffer = Uint8ClampedArray<ArrayBuffer>;
+  let rgbBuffer: Buffer = new Uint8ClampedArray(0);
+  let hiRgbBuffer: Buffer = new Uint8ClampedArray(0);
+  const reuse = (b: Buffer, n: number): Buffer => (b.length === n ? b : new Uint8ClampedArray(n));
   /** The capture's own share of the last frame (drawing it, cleaning it, the app's frame callback), ms. */
   let prep = 0;
   const video: FrameCallbackVideo = document.createElement('video');
@@ -264,6 +274,14 @@ export async function startLiveCapture(o: {
     if (signature !== lastSignature) {
       lastSignature = signature;
       if (kind === 'camera') {
+        // Nothing in view changed since the last analysed frame (the phone rests on a stand, the page lies still):
+        // the result would be the same, so skip the work, checking again at least every REST_MAX. Keeps the phone
+        // cooler, so it doesn't slow itself down after a few minutes.
+        const sketch = viewSketch(data, width, height, 4);
+        const now = performance.now();
+        if (delivered && lastSketch && viewStill(lastSketch, sketch) && now - lastAnalysed < REST_MAX) return;
+        lastSketch = sketch;
+        lastAnalysed = now;
         // Too dark, or the exposure still settling after the light changed: nothing worth the (costly) analysis.
         // Phones amplify a dark picture into noise, and the first frames after the light comes back are blown out.
         // (The very first frame is always shown, so the camera view appears even when it starts in the dark.)
@@ -292,7 +310,8 @@ export async function startLiveCapture(o: {
    * laptop screen keeps the detail the 640 px frame loses. Null when there's none.
    */
   const flattenSurface = (data: Uint8ClampedArray, width: number, height: number, vw: number, vh: number) => {
-    const rgb = new Uint8ClampedArray(width * height * 3);
+    // Only read while searching (SurfaceWatch doesn't keep it), so it can be reused.
+    const rgb = (rgbBuffer = reuse(rgbBuffer, width * height * 3));
     for (let p = 0; p < width * height; p++) {
       rgb[p * 3] = data[p * 4];
       rgb[p * 3 + 1] = data[p * 4 + 1];
@@ -320,7 +339,8 @@ export async function startLiveCapture(o: {
     hiCtx.drawImage(video, bx, by, bw, bh, 0, 0, hw, hh);
     const hi = hiCtx.getImageData(0, 0, hw, hh).data;
     denoiseFrame(hi, hw, hh);
-    const hiRgb = new Uint8ClampedArray(hw * hh * 3);
+    // Read by flatten only (its page is a new picture), so it can be reused.
+    const hiRgb = (hiRgbBuffer = reuse(hiRgbBuffer, hw * hh * 3));
     for (let p = 0; p < hw * hh; p++) {
       hiRgb[p * 3] = hi[p * 4];
       hiRgb[p * 3 + 1] = hi[p * 4 + 1];
@@ -382,6 +402,7 @@ export async function startLiveCapture(o: {
       stream.getVideoTracks()[0]?.addEventListener('ended', ended);
       video.srcObject = stream;
       lastSignature = -1;
+      lastSketch = null;
       gate.reset();
       light.reset();
       surfaces.reset();
@@ -391,10 +412,11 @@ export async function startLiveCapture(o: {
     reportCost: (ms) => {
       if (stopped || !(ms > 0)) return;
       const total = ms + prep;
-      // A costlier frame counts at once (the light came back and there's suddenly a screen to straighten and
-      // a graph to read: waiting for an average to catch up would leave frames back to back and the video stuck);
-      // cheaper ones bring it down gradually.
-      cost = total > cost ? total : 0.7 * cost + 0.3 * total;
+      // A costlier frame moves the estimate halfway up at once (the light came back and there's suddenly a screen to
+      // straighten and a graph to read: two such frames and the pace has nearly caught up), cheaper ones bring it
+      // down gradually. Not all the way at once: a single slow frame (a garbage-collection pause, the phone busy
+      // with something else) would otherwise slow the pins for the next several frames.
+      cost = total > cost ? 0.5 * cost + 0.5 * total : 0.7 * cost + 0.3 * total;
       // Started every cost / 0.45 ms, the main thread is busy at most 45% of the time.
       minInterval = Math.max(baseInterval, Math.min(1500, cost / MAX_BUSY));
     },

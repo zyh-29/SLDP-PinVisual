@@ -19,7 +19,6 @@ import { type GraphScale, labelBands, scaleFromGrid, scaleFromLabels } from '@/i
 import type { GraphRange } from '@/imaging/graphRange';
 import type { LiveCapture } from '@/imaging/imageInput';
 import { cellSizePx, fillGrid, inkFromGray, inkFromMask, patternFromSamples, renderCrop, sampleCrop, thickenThinLines, traceLinePins } from '@/imaging/pinSampling';
-import { rgbToPngDataUri } from '@/imaging/previewPng';
 import { cropPixels, pasteMask, sameBox, uncutPhoto } from '@/imaging/screenPhoto';
 import { findSky, findSkyInside, isLandscape, landMask, skylineBand } from '@/imaging/scene';
 import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
@@ -386,8 +385,8 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     } else if (steady.state) result = steady.state.pattern;
   } else if (!steadyOn && steady.state) setSteady({ from: null, state: null });
 
-  const cleanedUri = useMemo(
-    () => (picked && fg ? rgbToPngDataUri(renderCrop(picked.rgb, w, h, removeBackground ? pinMask : null, sampleBox)) : null),
+  const cleaned = useMemo(
+    () => (picked && fg ? renderCrop(picked.rgb, w, h, removeBackground ? pinMask : null, sampleBox) : null),
     [picked, fg, pinMask, w, h, removeBackground, sampleBox],
   );
 
@@ -434,8 +433,8 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     result,
     /** This frame's own pins, before averaging with earlier frames (live camera). */
     framePins: shown,
-    /** "What the pins see": the crop, background removed. */
-    cleanedUri,
+    /** "What the pins see": the crop, background removed (RGB pixels). */
+    cleaned,
     resetGraph,
   };
 }

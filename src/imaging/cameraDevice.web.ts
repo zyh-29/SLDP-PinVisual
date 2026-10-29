@@ -47,8 +47,10 @@ const remember = (id: string | undefined) => {
   }
 };
 
-// 1280 x 720 is plenty (frames are shrunk to 640, captures to 800) and every phone camera offers it.
-const SIZE: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } };
+// 1280 x 720 is plenty (frames are shrunk to 640, captures to 800, a screen or page in view is read at up to 1600)
+// and every phone camera offers it. 24 frames a second: the analysis takes 4 a second at most, and fewer frames to
+// capture and show keeps the phone cooler (it slows itself down once warm).
+const SIZE: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24 } };
 const getCamera = (video: MediaTrackConstraints) => navigator.mediaDevices.getUserMedia({ video: { ...SIZE, ...video }, audio: false });
 export const stopStream = (s: MediaStream) => s.getTracks().forEach((t) => t.stop());
 
