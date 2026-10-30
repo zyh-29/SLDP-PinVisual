@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
-import { cellsToString, type Pattern, togglePin } from '@/domain/pattern';
+import { cellsToString, countRaised, describePattern, type Pattern, togglePin } from '@/domain/pattern';
 import { viewMoved, viewSketch } from '@/imaging/cameraFrame';
 import { toRgb } from '@/imaging/foreground';
 import { fullRect, type Point, type Rect } from '@/imaging/geometry';
@@ -42,6 +42,8 @@ import { LiveVideo } from '@/ui/LiveVideo';
 import { SavePatternSheet } from '@/ui/SavePatternSheet';
 import { radius, space, useTheme } from '@/ui/theme';
 import { announce } from '@/voice/announce';
+import { useImageVoice, useVoice } from '@/voice/VoiceProvider';
+import { VoiceBar } from '@/ui/VoicePanel';
 
 
 /**
@@ -269,7 +271,7 @@ export default function ImageScreen() {
     source: ImageSource,
     /** A capture from the live camera: keeps what the user tapped or cropped (given at `fromWidth`), rescaled. */
     keep?: { focus: Focus | null; crop: Rect | null; fromWidth: number },
-  ) => {
+  ): Promise<string | null> => {
     setError(null);
     setLoading(true);
     try {
@@ -286,8 +288,11 @@ export default function ImageScreen() {
       announce(
         keep ? 'Photo captured. The camera is off.' : 'Image converted to pin preview, cropped to the main subject',
       );
+      return null;
     } catch (e) {
-      setError(`Could not read that image: ${e instanceof Error ? e.message : String(e)}`);
+      const message = `Could not read that image: ${e instanceof Error ? e.message : String(e)}`;
+      setError(message);
+      return message;
     } finally {
       setLoading(false);
     }
@@ -295,7 +300,8 @@ export default function ImageScreen() {
 
   /** A typed equation: drawn as a plot with a known scale, then treated like any other picture. */
   const [equationError, setEquationError] = useState<string | null>(null);
-  const drawEquation = (text: string) => {
+  /** Null when drawn, else why not. `quiet`: voice says what was drawn itself, in words. */
+  const drawEquation = (text: string, quiet = false): string | null => {
     try {
       const { raster, scale } = renderEquation(parseEquation(text));
       const rgb = toRgb(raster);
@@ -306,9 +312,12 @@ export default function ImageScreen() {
       const uri = rgbToPngDataUri(renderCrop(rgb, raster.width, raster.height, null, fullRect(raster.width, raster.height)));
       setPicked({ uri, raster, rgb, equation: { text, scale } });
       resetForNewImage();
-      announce(`Drew ${text}`);
+      if (!quiet) announce(`Drew ${text}`);
+      return null;
     } catch (e) {
-      setEquationError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setEquationError(message);
+      return message;
     }
   };
 
@@ -334,7 +343,8 @@ export default function ImageScreen() {
   }, []);
 
   /** Starts screen sharing or the live camera; both feed the same pipeline, frame by frame. */
-  const startLive = async (source: LiveSource) => {
+  /** Null when started (or the screen picker was closed), else why not. */
+  const startLive = async (source: LiveSource): Promise<string | null> => {
     setError(null);
     try {
       const session = await startLiveCapture({
@@ -370,7 +380,7 @@ export default function ImageScreen() {
         onFocus: (blurryFor) => setFocusTrouble(blurryFor >= 8 ? 2 : blurryFor >= 2 ? 1 : 0),
         onDark: setTooDark,
       });
-      if (!session) return;
+      if (!session) return null;
       live?.stop();
       resetForNewImage();
       setLive(session);
@@ -379,8 +389,11 @@ export default function ImageScreen() {
           ? 'Camera on. Once it locks onto something, the pins hold still on it. Tap the picture to switch to another thing.'
           : 'Sharing screen. The pin preview updates live.',
       );
+      return null;
     } catch (e) {
-      setError(`${source === 'camera' ? 'Camera' : 'Screen sharing'} failed: ${e instanceof Error ? e.message : String(e)}`);
+      const message = `${source === 'camera' ? 'Camera' : 'Screen sharing'} failed: ${e instanceof Error ? e.message : String(e)}`;
+      setError(message);
+      return message;
     }
   };
 
@@ -394,13 +407,15 @@ export default function ImageScreen() {
    * Takes a photo from the live camera and continues with it as a still picture (like a chosen photo, so Smart
    * Cut-Out can help with busy backgrounds). What was tapped or cropped carries over.
    */
-  const capturePhoto = async () => {
-    if (live?.kind !== 'camera') return;
+  const capturePhoto = async (): Promise<string | null> => {
+    if (live?.kind !== 'camera') return 'The camera is off.';
     try {
       const uri = await live.snapshot();
-      await load({ uri }, { focus, crop: manualCrop, fromWidth: w });
+      return await load({ uri }, { focus, crop: manualCrop, fromWidth: w });
     } catch (e) {
-      setError(`Capture failed: ${e instanceof Error ? e.message : String(e)}`);
+      const message = `Capture failed: ${e instanceof Error ? e.message : String(e)}`;
+      setError(message);
+      return message;
     }
   };
 
@@ -455,7 +470,8 @@ export default function ImageScreen() {
     void board.sendPattern(shown);
   };
 
-  const use = () => {
+  /** Makes the result the preview and opens the Display tab. */
+  const takeResult = () => {
     if (!shown) return;
     setPattern(shown, 'From image');
     router.navigate('/');
@@ -463,13 +479,97 @@ export default function ImageScreen() {
 
   const gridAspect = (GRID.cols * GRID.pinPitchRatio) / GRID.rows;
 
+  // Voice commands for this tab (see VoiceProvider): each answers with what happened.
+  const voice = useVoice();
+  const noPicture = "There's no picture yet. Say start camera, choose photo, or graph, then an equation.";
+  useImageVoice({
+    drawEquation: (text) => drawEquation(text, true),
+    run: async (action) => {
+      switch (action) {
+        case 'camera':
+          if (!supportsCamera) return 'This device has no camera the app can use.';
+          if (live?.kind === 'camera') return 'The camera is already on.';
+          return (await startLive('camera')) ?? 'Camera on. Point it at something. It captures by itself once it locks on, or say capture.';
+        case 'capture':
+          if (live?.kind !== 'camera') return 'The camera is off. Say start camera first.';
+          return (await capturePhoto()) ?? 'Captured. Say what do the pins see, or use this pattern.';
+        case 'stopCamera':
+          if (live?.kind !== 'camera') return 'The camera is already off.';
+          stopLive();
+          return 'Camera off. The last picture stays.';
+        case 'flipCamera':
+          if (live?.kind !== 'camera') return 'The camera is off. Say start camera first.';
+          if (!live.canFlip) return 'This device has only one camera.';
+          await flipCamera();
+          return '';
+        case 'photo':
+          void pick();
+          // A browser opens its file picker only straight after a tap or key press, which speaking isn't.
+          return Platform.OS === 'web' ? 'Opening your photos. If nothing opens, press Choose Photo.' : 'Opening your photos.';
+        case 'shareScreen':
+          if (!supportsScreenCapture) return 'Screen sharing works in a desktop browser only.';
+          void startLive('screen');
+          return 'Choose the screen or window to share. If nothing opens, press Share Screen.';
+        case 'stopSharing':
+          if (live?.kind !== 'screen') return 'Nothing is being shared.';
+          stopLive();
+          return 'Stopped sharing. The last picture stays.';
+        case 'clearImage':
+          if (!picked) return 'There is no image to clear.';
+          clearImage();
+          return '';
+        case 'usePattern':
+          if (!shown) return noPicture;
+          takeResult();
+          return `Using these pins. ${countRaised(shown)} of ${shown.rows * shown.cols} raised. The Display tab shows them.`;
+        case 'describeResult':
+          return shown ? describePattern(shown) : noPicture;
+      }
+    },
+    setSetting: (setting, on) => {
+      const [key, label] = (
+        {
+          removeBackground: ['removeBackground', 'Remove Background'],
+          smartCutout: ['cutoutOverride', 'Smart Cut-Out'],
+          axes: ['linesOverride', 'Remove Axes and Grid'],
+          labels: ['removeClutter', 'Ignore Labels and Text'],
+          oneLine: ['thinLines', 'One-Pin Lines'],
+          snap: ['snap', 'Snap to Shape'],
+        } as const
+      )[setting];
+      prefs.set(key, on);
+      return `${label} ${on ? 'on' : 'off'}.`;
+    },
+    adjust: (setting, up) => {
+      if (setting === 'tolerance') {
+        const now = toleranceOverride ?? fg?.tolerance ?? 40;
+        const next = Math.max(8, Math.min(160, now + (up ? 10 : -10)));
+        prefs.set('toleranceOverride', next);
+        return `Tolerance ${next}. Higher treats more colours as background.`;
+      }
+      const next = Math.max(5, Math.min(95, sensitivity + (up ? 10 : -10)));
+      prefs.set('sensitivity', next);
+      return `Sensitivity ${next}. Higher raises more pins.`;
+    },
+    loadPicture: (uri) => load({ uri }),
+    result: () => shown ?? null,
+    send: sendResult,
+  });
+
   return (
     <View style={{ flex: 1 }}>
       <Screen
         title="Image"
         // Native: hold the scroll view still while the crop box is dragged. Web: never toggle it, because hiding the
         // page scrollbar changes the content width and makes the whole picture jump; the crop area blocks touch scrolling itself.
-        scrollEnabled={Platform.OS === 'web' || !dragging}>
+        scrollEnabled={Platform.OS === 'web' || !dragging}
+        // iPhone: VoiceOver's two-finger double-tap starts or stops listening.
+        onMagicTap={voice.openAndListen}>
+        {voice.prefs.voiceControl ? (
+          <Section title="Voice">
+            <VoiceBar pictureUri={picked?.uri} />
+          </Section>
+        ) : null}
         {!picked || !fg ? (
           <ImageSourcePicker
             loading={loading}
@@ -712,7 +812,7 @@ export default function ImageScreen() {
                     onToggleLock={toggleLock}
                     onTogglePin={togglePinAt}
                     onReset={resetPins}
-                    onUse={use}
+                    onUse={takeResult}
                     onSave={() => setSaveOpen(true)}
                     board={{ connected: board.connected, command: board.state.command, onSend: sendResult, onClear: () => void board.lowerPins(false) }}
                     liveSend={live ? { on: liveSendOn, onChange: setLiveSendOn, connected: liveSend.connected, error: liveSend.error } : undefined}

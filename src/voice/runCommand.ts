@@ -1,6 +1,7 @@
 import { countRaised, describePattern, getPin, type Pattern, type PinValue } from '@/domain/pattern';
-import { type Command, HELP_TEXT } from './commands';
+import { type Command, HELP_TEXT, type ImageAction, type ImageSetting, type Tab } from './commands';
 import { characterPattern, shapePattern } from './glyphs';
+import { readSpokenEquation } from './spokenMath';
 
 /** What a command needs to know about the app. */
 export interface VoiceContext {
@@ -9,13 +10,35 @@ export interface VoiceContext {
   busy: boolean;
   canUndo: boolean;
   canRedo: boolean;
-  /** A command waiting for "yes": sending, or lowering the real pins. */
+  /**
+   * The pins "send" and "what's on the board" are about: the Image tab's result while it's open and has one,
+   * otherwise the preview (`pattern`, which edits always change).
+   */
+  active?: Pattern;
+  /** A command waiting for "yes": sending, lowering the real pins, or a suggestion to confirm. */
   pending: Pending;
   saved: readonly { name: string; pattern: Pattern | null }[];
   lastReply: string;
 }
 
-export type Pending = 'send' | 'reset' | null;
+export type Pending = 'send' | 'reset' | { suggestion: string } | null;
+
+/** Something the hook does after answering (some need the Image tab, or the internet, and answer later). */
+export type Effect =
+  | 'send'
+  | 'reset'
+  | 'undo'
+  | 'redo'
+  | 'stop'
+  | { type: 'graph'; text: string; words: string }
+  | { type: 'image'; action: ImageAction }
+  | { type: 'setting'; setting: ImageSetting; on: boolean }
+  | { type: 'adjust'; setting: 'tolerance' | 'sensitivity'; up: boolean }
+  | { type: 'navigate'; tab: Tab }
+  | { type: 'search'; query: string; pictures: boolean }
+  | { type: 'next'; back: boolean }
+  | { type: 'voiceOff' }
+  | { type: 'run'; text: string };
 
 /** What to do about a command: what to say, and what to change. */
 export interface Outcome {
@@ -24,7 +47,7 @@ export interface Outcome {
   show?: { pattern: Pattern; source: string };
   /** Waiting for "yes" after this (null: nothing waiting). */
   pending: Pending;
-  effect?: 'send' | 'reset' | 'undo' | 'redo' | 'stop';
+  effect?: Effect;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -59,6 +82,8 @@ function changed(ctx: VoiceContext, what: string, pattern: Pattern, source: stri
 
 export function runCommand(cmd: Command, ctx: VoiceContext): Outcome {
   const p = ctx.pattern;
+  const active = ctx.active ?? p;
+  const suggestion = ctx.pending && typeof ctx.pending === 'object' ? ctx.pending.suggestion : null;
   switch (cmd.kind) {
     case 'help':
       return { reply: HELP_TEXT, pending: ctx.pending };
@@ -68,11 +93,15 @@ export function runCommand(cmd: Command, ctx: VoiceContext): Outcome {
       return { reply: '', pending: null, effect: 'stop' };
 
     case 'yes':
+      if (suggestion) return { reply: '', pending: null, effect: { type: 'run', text: suggestion } };
       if (ctx.pending === 'send') return confirmSend(ctx);
       if (ctx.pending === 'reset') return confirmReset(ctx);
       return { reply: 'There is nothing to confirm.', pending: null };
     case 'no':
-      return { reply: ctx.pending ? 'Cancelled. Nothing was sent.' : 'OK.', pending: null };
+      return {
+        reply: suggestion ? 'OK, ignored.' : ctx.pending === 'send' ? 'Cancelled. Nothing was sent.' : ctx.pending ? 'Cancelled.' : 'OK.',
+        pending: null,
+      };
 
     case 'send':
       // "send" said again while asked: that's a yes.
@@ -80,7 +109,7 @@ export function runCommand(cmd: Command, ctx: VoiceContext): Outcome {
       if (!ctx.connected) return { reply: 'No board is connected. Connect one in the Device tab first.', pending: null };
       if (ctx.busy) return { reply: 'The board is busy. Try again in a moment.', pending: null };
       return {
-        reply: `Send this pattern to the board? ${raisedSummary(p)} Say yes to send, or no.`,
+        reply: `Send ${ctx.active ? 'these pins' : 'this pattern'} to the board? ${raisedSummary(active)} Say yes to send, or no.`,
         pending: 'send',
       };
     case 'reset':
@@ -90,10 +119,10 @@ export function runCommand(cmd: Command, ctx: VoiceContext): Outcome {
       return { reply: 'Lower all the pins on the board? Say yes to lower them, or no.', pending: 'reset' };
 
     case 'describe':
-      return { reply: describePattern(p), pending: ctx.pending };
+      return { reply: describePattern(active), pending: ctx.pending };
     case 'describeRow':
-      if (cmd.row < 1 || cmd.row > p.rows) return { reply: outOfRange(p), pending: ctx.pending };
-      return { reply: describeRow(p, cmd.row - 1), pending: ctx.pending };
+      if (cmd.row < 1 || cmd.row > active.rows) return { reply: outOfRange(active), pending: ctx.pending };
+      return { reply: describeRow(active, cmd.row - 1), pending: ctx.pending };
 
     case 'clear':
       return changed(ctx, 'Preview cleared.', withCells(p, () => 0), 'Voice');
@@ -145,6 +174,29 @@ export function runCommand(cmd: Command, ctx: VoiceContext): Outcome {
           : 'There are no saved patterns yet.',
         pending: null,
       };
+
+    case 'graph':
+      try {
+        const eq = readSpokenEquation(cmd.said);
+        return { reply: `Drawing ${eq.words}.`, pending: null, effect: { type: 'graph', text: eq.text, words: eq.words } };
+      } catch (e) {
+        const why = e instanceof Error ? e.message : String(e);
+        return { reply: `I couldn't read that equation. ${why} For example, say graph y equals x squared.`, pending: null };
+      }
+    case 'image':
+      return { reply: '', pending: null, effect: { type: 'image', action: cmd.action } };
+    case 'setting':
+      return { reply: '', pending: null, effect: { type: 'setting', setting: cmd.setting, on: cmd.on } };
+    case 'adjust':
+      return { reply: '', pending: null, effect: { type: 'adjust', setting: cmd.setting, up: cmd.up } };
+    case 'navigate':
+      return { reply: '', pending: null, effect: { type: 'navigate', tab: cmd.tab } };
+    case 'search':
+      return { reply: '', pending: null, effect: { type: 'search', query: cmd.query, pictures: cmd.pictures } };
+    case 'next':
+      return { reply: '', pending: null, effect: { type: 'next', back: cmd.back } };
+    case 'voiceOff':
+      return { reply: 'Voice control off. Press Voice Control on the Display tab to turn it back on.', pending: null, effect: { type: 'voiceOff' } };
 
     case 'unknown':
       return {

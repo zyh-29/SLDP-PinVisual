@@ -10,6 +10,8 @@ const WORKING_SIZE = 800;
 function loadHtmlImage(uri: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new window.Image();
+    // A picture from another site (picture search) can only be read back if it is fetched with CORS.
+    if (/^https?:/.test(uri) && !uri.startsWith(window.location.origin)) img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('The browser could not decode this image.'));
     img.src = uri;

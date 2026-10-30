@@ -37,7 +37,10 @@ Built with Expo (SDK 58), React Native and TypeScript.
 | Bluetooth on phones | Written, never run. Needs a development build, a phone and firmware |
 | Web layout (laptop, tablet, phone) | Works |
 | Web Bluetooth (Chrome, Edge) | Written, never run against a board |
-| Voice commands (spoken or typed) on the Display tab | Works in Chrome with a stand-in recogniser and by typing. Not yet tried with a real microphone, VoiceOver or TalkBack. Phones need a development build |
+| Voice commands (spoken or typed): Display and Image tabs | Works in Chrome with a stand-in recogniser and by typing. Not yet tried with a real microphone, VoiceOver or TalkBack. Phones need a development build |
+| Graphs by voice ("graph y equals x squared") | Works (typed and with a stand-in recogniser) |
+| Picture search (Openverse, Wikimedia Commons) | Wikimedia works from Chrome; Openverse timed out from the test network, so it's untested live |
+| On-device AI suggestions | Tested in Chrome with a stand-in model only. Phones: not yet (needs a native module for Apple's model) |
 | Speak Results (the device's voice reads results) | Written; not yet heard on a phone |
 | Showing letters and digits on the pins (A to Z, 0 to 9) | Works (by voice or typed command) |
 | Letter recognition (reading letters from a picture) | Not started |
@@ -374,9 +377,15 @@ The simulator can't check these:
 
 ## Voice commands
 
-The Display tab has a **Speak** button and a box to type the same commands.
-Everything works both ways: typing is there for noisy rooms, for speech the
-recogniser doesn't follow, and for browsers without speech recognition.
+Press **Voice Control** on the Display tab (it stays on until turned off, and
+can also be switched in the Device tab). The panel has a **Speak** button and
+a box to type the same commands; a smaller bar appears on the Image tab too.
+On iPhone, VoiceOver's two-finger double-tap on either tab opens it and starts
+listening. Typing is there for noisy rooms, for speech the recogniser doesn't
+follow, and for browsers without speech recognition.
+
+Each command goes to the tab it belongs to: pin pictures to Display; graphs,
+the camera and pictures to Image.
 
 - **What you can say:** "show a circle" (also square, triangle, diamond,
   cross, plus, heart, smile, checkerboard, a line, arrow up/down/left/right),
@@ -384,6 +393,35 @@ recogniser doesn't follow, and for browsers without speech recognition.
   "fill", "invert", "undo", "redo", "what's on the board", "read row 2",
   "open saved Morning", "send", "reset", "repeat", "stop", "help". Number
   words, homophones ("row to") and spoken letter names ("bee") are understood.
+- **Graphs:** "graph y equals x squared minus three", "plot sine of x",
+  "y equals two x plus one". Spoken maths is turned into an equation
+  (`src/voice/spokenMath.ts`) and read back in words before it's drawn. The
+  rules a listener needs:
+  - a function or root applies to the next term only: "sine of x plus one" is
+    sin(x) + 1;
+  - "the quantity" groups the rest: "sine of the quantity x plus one" is
+    sin(x + 1) ("end quantity" closes it early);
+  - "over" divides by the next term: "one over two x" is 1/(2x), "one over x
+    plus one" is 1/x + 1.
+  Typed maths ("y = x^2 - 3") works too.
+- **The Image tab:** "start camera", "capture", "stop camera", "flip camera",
+  "choose photo", "share screen", "stop sharing", "clear image", "use this
+  pattern", "what do the pins see", "remove background on/off", "smart
+  cut-out on", "one pin lines off", "tolerance up", "sensitivity down". In a
+  browser, "choose photo" and "share screen" may need the button: browsers
+  open those pickers only straight after a tap or key press.
+- **Search:** "search for house" lists matching saved patterns. "Find
+  pictures of a cat" searches Openverse and Wikimedia Commons (only with
+  **Online Picture Search** on in the Device tab), loads the first openly
+  licensed picture on the Image tab and says its credit; "next" and
+  "previous" go through the results.
+- **Going places:** "go to image", "go to display", "open device".
+- **On-device AI help:** where the browser has a built-in model (Chrome on a
+  computer with Gemini Nano downloaded), a sentence that isn't a listed
+  command is rewritten as one, then confirmed: "Did you mean: show a heart?
+  Say yes or no." Nothing is done until "yes", and nothing leaves the
+  computer. Elsewhere only listed commands work. (iPhone: Apple's on-device
+  model needs a native module, not written yet.)
 - **Nothing moves without a yes.** "Send" and "reset" ask first ("Say yes to
   send, or no") and offer Yes / Cancel buttons. Any other command cancels the
   question.

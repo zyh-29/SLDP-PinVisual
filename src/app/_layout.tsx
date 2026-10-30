@@ -6,6 +6,7 @@ import { PatternProvider } from '@/state/PatternProvider';
 // Resolves to AppTabs.web.tsx in the browser.
 import { AppTabs } from '@/ui/AppTabs';
 import { DialogHost } from '@/ui/dialogs';
+import { VoiceProvider } from '@/voice/VoiceProvider';
 import { useScheme } from '@/ui/theme';
 // Website only: page-wide styles (no selecting text with the mouse).
 import '@/ui/webPage';
@@ -17,7 +18,9 @@ export default function RootLayout() {
       <DeviceProvider>
         <PatternProvider>
           <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
-          <AppTabs />
+          <VoiceProvider>
+            <AppTabs />
+          </VoiceProvider>
           <DialogHost />
         </PatternProvider>
       </DeviceProvider>

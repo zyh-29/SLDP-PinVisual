@@ -8,6 +8,24 @@ import { SHAPE_NAMES, type ShapeName } from './glyphs';
  */
 export type PinAction = 'raise' | 'lower' | 'toggle';
 
+/** Image tab actions. */
+export type ImageAction =
+  | 'camera'
+  | 'capture'
+  | 'stopCamera'
+  | 'flipCamera'
+  | 'photo'
+  | 'shareScreen'
+  | 'stopSharing'
+  | 'clearImage'
+  | 'usePattern'
+  | 'describeResult';
+
+/** Image tab settings that are on or off. */
+export type ImageSetting = 'removeBackground' | 'smartCutout' | 'axes' | 'labels' | 'oneLine' | 'snap';
+
+export type Tab = 'display' | 'image' | 'saved' | 'pinTest' | 'device';
+
 export type Command =
   | { kind: 'help' }
   | { kind: 'repeat' }
@@ -29,6 +47,14 @@ export type Command =
   | { kind: 'savedUnknown'; heard: string }
   | { kind: 'send' }
   | { kind: 'reset' }
+  | { kind: 'graph'; said: string }
+  | { kind: 'image'; action: ImageAction }
+  | { kind: 'setting'; setting: ImageSetting; on: boolean }
+  | { kind: 'adjust'; setting: 'tolerance' | 'sensitivity'; up: boolean }
+  | { kind: 'navigate'; tab: Tab }
+  | { kind: 'search'; query: string; pictures: boolean }
+  | { kind: 'next'; back: boolean }
+  | { kind: 'voiceOff' }
   | { kind: 'unknown'; heard: string };
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -192,6 +218,46 @@ export function matchName(heard: string, names: readonly string[]): string | nul
   return best?.n ?? null;
 }
 
+function imageAction(s: string): ImageAction | null {
+  if (/^(start|open|turn on|use)\s+(the\s+)?(live\s+)?camera$|^camera on$|^live camera$/.test(s)) return 'camera';
+  if (/^(capture|take (a |the )?(picture|photo|shot)|snap( it)?|take it|shoot)$/.test(s)) return 'capture';
+  if (/^(stop|close|turn off|end)\s+(the\s+)?camera$|^camera off$/.test(s)) return 'stopCamera';
+  if (/^(flip|switch|turn|change)\s+(the\s+)?camera(\s+around)?$|^(front|back|selfie) camera$/.test(s)) return 'flipCamera';
+  if (/^(choose|pick|open|select|upload)\s+(a\s+)?(photo|picture|image)$|^(photo library|my photos)$/.test(s)) return 'photo';
+  if (/^(share|start sharing)\s+(my\s+|the\s+)?screen$|^screen share$/.test(s)) return 'shareScreen';
+  if (/^(stop sharing|stop screen share|stop sharing (my |the )?screen|end screen share)$/.test(s)) return 'stopSharing';
+  if (/^(clear|remove|close)\s+(the\s+)?(image|picture|photo)$/.test(s)) return 'clearImage';
+  if (/^(use (this|these|the|that) (pattern|pins|result)|use (it|this|that)|use pattern|use these pins)$/.test(s)) return 'usePattern';
+  if (/^(what do the pins (see|show)|describe (the )?(result|picture|image|photo)|what is in the picture|whats in the picture|read (the )?result)$/.test(s))
+    return 'describeResult';
+  return null;
+}
+
+const SETTING_WORDS: [RegExp, ImageSetting][] = [
+  [/remove background|background removal|background/, 'removeBackground'],
+  [/smart cut ?out|cut ?out/, 'smartCutout'],
+  [/remove axes( and grid)?|axes( and grid)?|gridlines|grid lines/, 'axes'],
+  [/ignore labels( and text)?|labels|text/, 'labels'],
+  [/one pin lines?|thin lines|one pin wide/, 'oneLine'],
+  [/snap(ping)?( to shape)?/, 'snap'],
+];
+
+function settingChange(s: string): Command | null {
+  const on = /^(turn on|switch on|enable|use)\s+(.+)$|^(.+?)\s+on$/.exec(s);
+  const off = /^(turn off|switch off|disable|no)\s+(.+)$|^(.+?)\s+off$/.exec(s);
+  const m = on ?? off;
+  if (m) {
+    const what = (m[2] ?? m[3]).replace(/^the\s+/, '');
+    for (const [re, setting] of SETTING_WORDS) if (new RegExp(`^(${re.source})$`).test(what)) return { kind: 'setting', setting, on: !!on };
+  }
+  const adjust = /^(?:(raise|increase|more|higher|up|turn up|lower|decrease|less|reduce|down|turn down)\s+(?:the\s+)?(tolerance|sensitivity)|(tolerance|sensitivity)\s+(up|down|higher|lower))$/.exec(s);
+  if (adjust) {
+    const word = adjust[1] ?? adjust[4];
+    return { kind: 'adjust', setting: (adjust[2] ?? adjust[3]) as 'tolerance' | 'sensitivity', up: /raise|increase|more|higher|up/.test(word) };
+  }
+  return null;
+}
+
 /** Reads a sentence as a command. `savedNames` are the saved patterns, which can be opened by name. */
 export function parseCommand(text: string, savedNames: readonly string[] = []): Command {
   const s = normalise(text);
@@ -209,6 +275,39 @@ export function parseCommand(text: string, savedNames: readonly string[] = []): 
     return { kind: 'reset' };
   if (/^(send|send it|send (the |this )?(pattern|preview|picture|shape)|send (it )?to (the )?(board|display|pins)|put it on the (board|display)|show (it )?on the (board|display))$/.test(s))
     return { kind: 'send' };
+
+  // Voice control itself
+  if (/^(voice control off|turn off voice control|hide voice control|close voice control|stop voice control)$/.test(s)) return { kind: 'voiceOff' };
+
+  // Going to a tab: "go to the image tab", "open saved", "show device"
+  const nav = /^(?:go to|open|show|switch to|take me to)\s+(?:the\s+)?(display|preview|image|images|picture|pictures|camera tab|saved|saved patterns|pin test|device|devices|settings|board settings)(?:\s+(?:tab|page|screen))?$/.exec(s);
+  if (nav) {
+    const w = nav[1];
+    const tab: Tab = /display|preview/.test(w) ? 'display' : /image|picture|camera/.test(w) ? 'image' : /saved/.test(w) ? 'saved' : /pin test/.test(w) ? 'pinTest' : 'device';
+    return { kind: 'navigate', tab };
+  }
+
+  // The Image tab
+  const image = imageAction(s);
+  if (image) return { kind: 'image', action: image };
+  const setting = settingChange(s);
+  if (setting) return setting;
+
+  // Searching: "search for cats", "find house", "show me pictures of a car"
+  const pictures = /^(?:search|find|look|get|show(?: me)?)\s+(?:for\s+)?(?:an?\s+|some\s+)?(?:pictures?|photos?|images?)\s+(?:of|for)\s+(?:an?\s+|the\s+|some\s+)?(.+)$/.exec(s);
+  if (pictures) return { kind: 'search', query: pictures[1], pictures: true };
+  const search = /^(?:search|find|look)\s+(?:for\s+)?(?:an?\s+|the\s+)?(.+)$/.exec(s);
+  if (search) return { kind: 'search', query: search[1].replace(/\s+(pattern|patterns|picture|pictures)$/, ''), pictures: false };
+  if (/^(next|next one|next picture|another|another one|another picture|skip|show another)$/.test(s)) return { kind: 'next', back: false };
+  if (/^(previous|previous one|previous picture|back one|last one|go back one)$/.test(s)) return { kind: 'next', back: true };
+
+  // Graphs: "graph y equals x squared", "plot sine of x", "y equals 2 x plus 1", "draw the graph of x cubed"
+  const graph = /^(?:graph|plot|(?:draw|show|make)(?: me)? (?:the |a )?graph(?: of)?)\s+(.+)$/.exec(s);
+  if (graph) return { kind: 'graph', said: graph[1] };
+  if (/^(y|f of x|y of x)\s+(equals|is|=)\s+/.test(s) || /^y\s*=/.test(text.trim().toLowerCase())) return { kind: 'graph', said: text };
+  const drawMaths = /^(?:draw|show)\s+(.+)$/.exec(s);
+  if (drawMaths && /\bx\b/.test(drawMaths[1]) && /\b(squared|cubed|sine|cosine|tangent|root|over|plus|minus|times|power|equals|log)\b/.test(drawMaths[1]))
+    return { kind: 'graph', said: drawMaths[1] };
 
   // Reading the preview
   const readRow = /^(read|describe|whats in|what is in|what about|check) row (\w+)$/.exec(s);
@@ -298,11 +397,16 @@ export const HELP_TEXT =
   'You can say: show a circle, or another shape such as square, triangle, heart or arrow up. ' +
   'Letter B, or number 3. Raise row 2 column 3, or lower row 2. Clear, fill, invert, undo or redo. ' +
   'What is on the board, or read row 2. Open saved, then a pattern name. ' +
-  'Send, to put it on the board, or reset, to lower the real pins. Repeat, to hear the last answer again, or stop.';
+  'Send, to put it on the board, or reset, to lower the real pins. ' +
+  'Graph y equals x squared, or plot sine of x. Start camera, capture, stop camera, choose photo, or use this pattern. ' +
+  'Remove background on or off, tolerance up or down. Search for a name, or find pictures of something, then next. ' +
+  'Go to image, or go to display. Repeat, to hear the last answer again, or stop.';
 
 /** Words the recogniser should expect (better accuracy for short commands). */
 export const HINT_WORDS = [
   'show', 'circle', 'square', 'triangle', 'diamond', 'heart', 'cross', 'plus', 'arrow', 'smile', 'checkerboard', 'line',
   'letter', 'number', 'row', 'column', 'raise', 'lower', 'toggle', 'clear', 'fill', 'invert', 'undo', 'redo',
   'send', 'reset', 'yes', 'no', 'help', 'repeat', 'stop', 'open saved', 'read row', "what's on the board",
+  'graph', 'plot', 'y equals', 'x squared', 'sine', 'cosine', 'square root', 'the quantity', 'over',
+  'start camera', 'capture', 'stop camera', 'choose photo', 'use this pattern', 'search for', 'pictures of', 'next',
 ];

@@ -15,7 +15,7 @@ import { HistoryTimeline } from '@/ui/HistoryTimeline';
 import { MIN_TOUCH, radius, space, useTheme } from '@/ui/theme';
 import { useUndoShortcuts } from '@/ui/useUndoShortcuts';
 import { VoicePanel } from '@/ui/VoicePanel';
-import { useVoiceCommands } from '@/voice/useVoiceCommands';
+import { useVoice } from '@/voice/VoiceProvider';
 import { announce } from '@/voice/announce';
 
 export default function DisplayScreen() {
@@ -24,7 +24,7 @@ export default function DisplayScreen() {
   const [saveOpen, setSaveOpen] = useState(false);
   const t = useTheme();
   useUndoShortcuts(undo, redo);
-  const voice = useVoiceCommands();
+  const voice = useVoice();
 
   const raised = countRaised(pattern);
   const total = GRID.rows * GRID.cols;
@@ -33,9 +33,9 @@ export default function DisplayScreen() {
 
   return (
     // iPhone: VoiceOver's two-finger double-tap ("Magic Tap") anywhere on this tab starts or stops listening.
-    <Screen title="Display" onMagicTap={voice.toggleListening}>
-      <Section title="Voice">
-        <VoicePanel voice={voice} />
+    <Screen title="Display" onMagicTap={voice.openAndListen}>
+      <Section title={voice.prefs.voiceControl ? 'Voice' : undefined}>
+        <VoicePanel />
       </Section>
       <Columns
         left={

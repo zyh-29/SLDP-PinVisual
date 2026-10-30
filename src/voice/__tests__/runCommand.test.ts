@@ -86,3 +86,28 @@ describe('running voice commands', () => {
     expect(run('undo', { canUndo: false }).reply).toBe('There is nothing to undo.');
   });
 });
+
+describe('graphs and suggestions', () => {
+  it('a spoken graph is read back in words, and drawn as text the equation reader takes', () => {
+    const o = run('graph y equals sine of the quantity x plus one');
+    expect(o.reply).toBe('Drawing y equals sine of the quantity x plus 1.');
+    expect(o.effect).toEqual({ type: 'graph', text: 'y = sin(x + 1)', words: 'y equals sine of the quantity x plus 1' });
+  });
+
+  it('an equation it cannot read says why, with an example', () => {
+    expect(run('graph y equals banana').reply).toBe(
+      "I couldn't read that equation. “banana” isn't part of an equation I know. For example, say graph y equals x squared.",
+    );
+  });
+
+  it('a suggestion runs only after yes', () => {
+    expect(run('yes', { pending: { suggestion: 'show a heart' } }).effect).toEqual({ type: 'run', text: 'show a heart' });
+    expect(run('no', { pending: { suggestion: 'show a heart' } })).toMatchObject({ reply: 'OK, ignored.', pending: null });
+  });
+
+  it('on the Image tab, send and describe are about its pins', () => {
+    const active = cellsFromString('1'.repeat(30), 5, 6)!;
+    expect(run('send', { active }).reply).toBe('Send these pins to the board? 30 of 30 pins raised. Say yes to send, or no.');
+    expect(run("what's on the board", { active }).reply).toMatch(/^30 of 30 pins raised/);
+  });
+});

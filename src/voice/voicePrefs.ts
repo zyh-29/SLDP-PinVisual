@@ -7,22 +7,26 @@ import { useSyncExternalStore } from 'react';
  *   screen reader already reads them, so the app's own voice stays quiet while one is on).
  * - onlineRecognition: allow voice commands where the browser can only recognise speech on its maker's servers
  *   (Chrome on Android, Safari). Off by default: the app otherwise sends nothing anywhere.
+ * - voiceControl: the voice panel is open on the Display tab (and its bar shows on the Image tab).
+ * - onlinePictures: "find pictures of …" may search Openverse and Wikimedia Commons on the internet.
  */
 export interface VoicePrefs {
   speakResults: boolean;
   onlineRecognition: boolean;
+  voiceControl: boolean;
+  onlinePictures: boolean;
 }
 
 export const VOICE_KEY = '@pinvisual/voice/v1';
-const DEFAULTS: VoicePrefs = { speakResults: false, onlineRecognition: false };
+const DEFAULTS: VoicePrefs = { speakResults: false, onlineRecognition: false, voiceControl: false, onlinePictures: false };
+const KEYS = Object.keys(DEFAULTS) as (keyof VoicePrefs)[];
 
 export function parseVoicePrefs(json: string | null): VoicePrefs {
   try {
     const v = json ? (JSON.parse(json) as Partial<VoicePrefs>) : {};
-    return {
-      speakResults: typeof v.speakResults === 'boolean' ? v.speakResults : DEFAULTS.speakResults,
-      onlineRecognition: typeof v.onlineRecognition === 'boolean' ? v.onlineRecognition : DEFAULTS.onlineRecognition,
-    };
+    const out = { ...DEFAULTS };
+    for (const k of KEYS) if (typeof v[k] === 'boolean') out[k] = v[k];
+    return out;
   } catch {
     return DEFAULTS;
   }

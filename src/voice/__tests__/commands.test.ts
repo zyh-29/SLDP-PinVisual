@@ -77,3 +77,50 @@ describe('voice commands', () => {
     expect(p('um').kind).toBe('unknown');
   });
 });
+
+describe('graph, Image tab, search and navigation commands', () => {
+  it.each<[string, Command]>([
+    ['graph y equals x squared', { kind: 'graph', said: 'y equals x squared' }],
+    ['plot sine of x', { kind: 'graph', said: 'sine of x' }],
+    ['draw the graph of x cubed', { kind: 'graph', said: 'x cubed' }],
+    ['y equals two x plus one', { kind: 'graph', said: 'y equals two x plus one' }],
+    ['y = x^2 - 3', { kind: 'graph', said: 'y = x^2 - 3' }],
+    ['draw x squared minus four', { kind: 'graph', said: 'x squared minus four' }],
+    ['start camera', { kind: 'image', action: 'camera' }],
+    ['turn on the camera', { kind: 'image', action: 'camera' }],
+    ['take a picture', { kind: 'image', action: 'capture' }],
+    ['capture', { kind: 'image', action: 'capture' }],
+    ['stop the camera', { kind: 'image', action: 'stopCamera' }],
+    ['flip camera', { kind: 'image', action: 'flipCamera' }],
+    ['choose a photo', { kind: 'image', action: 'photo' }],
+    ['share my screen', { kind: 'image', action: 'shareScreen' }],
+    ['stop sharing', { kind: 'image', action: 'stopSharing' }],
+    ['clear the image', { kind: 'image', action: 'clearImage' }],
+    ['use this pattern', { kind: 'image', action: 'usePattern' }],
+    ['what do the pins see', { kind: 'image', action: 'describeResult' }],
+    ['turn off remove background', { kind: 'setting', setting: 'removeBackground', on: false }],
+    ['smart cutout on', { kind: 'setting', setting: 'smartCutout', on: true }],
+    ['one pin lines off', { kind: 'setting', setting: 'oneLine', on: false }],
+    ['tolerance up', { kind: 'adjust', setting: 'tolerance', up: true }],
+    ['lower the sensitivity', { kind: 'adjust', setting: 'sensitivity', up: false }],
+    ['go to the image tab', { kind: 'navigate', tab: 'image' }],
+    ['open device', { kind: 'navigate', tab: 'device' }],
+    ['show saved', { kind: 'navigate', tab: 'saved' }],
+    ['search for house', { kind: 'search', query: 'house', pictures: false }],
+    ['find pictures of a cat', { kind: 'search', query: 'cat', pictures: true }],
+    ['show me a photo of the eiffel tower', { kind: 'search', query: 'eiffel tower', pictures: true }],
+    ['next', { kind: 'next', back: false }],
+    ['another one', { kind: 'next', back: false }],
+    ['previous', { kind: 'next', back: true }],
+    ['voice control off', { kind: 'voiceOff' }],
+  ])('%s', (said, expected) => {
+    expect(p(said)).toEqual(expected);
+  });
+
+  it('shapes and letters still win over graphs without maths in them', () => {
+    expect(p('draw a circle')).toEqual({ kind: 'shape', shape: 'circle' });
+    expect(p('draw a line')).toEqual({ kind: 'shape', shape: 'horizontal line' });
+    expect(p('show x')).toEqual({ kind: 'character', char: 'X' });
+    expect(p('open saved morning')).toEqual({ kind: 'saved', name: 'Morning' });
+  });
+});
