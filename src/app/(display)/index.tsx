@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { AccessibilityInfo, Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
 import { countRaised, patternsEqual } from '@/domain/pattern';
@@ -14,6 +14,9 @@ import { SavePatternSheet } from '@/ui/SavePatternSheet';
 import { HistoryTimeline } from '@/ui/HistoryTimeline';
 import { MIN_TOUCH, radius, space, useTheme } from '@/ui/theme';
 import { useUndoShortcuts } from '@/ui/useUndoShortcuts';
+import { VoicePanel } from '@/ui/VoicePanel';
+import { useVoiceCommands } from '@/voice/useVoiceCommands';
+import { announce } from '@/voice/announce';
 
 export default function DisplayScreen() {
   const { pattern, source, toggle, clear, undo, redo, steps, position, jumpTo, clearHistory } = usePattern();
@@ -21,6 +24,7 @@ export default function DisplayScreen() {
   const [saveOpen, setSaveOpen] = useState(false);
   const t = useTheme();
   useUndoShortcuts(undo, redo);
+  const voice = useVoiceCommands();
 
   const raised = countRaised(pattern);
   const total = GRID.rows * GRID.cols;
@@ -28,7 +32,11 @@ export default function DisplayScreen() {
   const changedSinceSend = connected && last !== null && !patternsEqual(last, pattern);
 
   return (
-    <Screen title="Display">
+    // iPhone: VoiceOver's two-finger double-tap ("Magic Tap") anywhere on this tab starts or stops listening.
+    <Screen title="Display" onMagicTap={voice.toggleListening}>
+      <Section title="Voice">
+        <VoicePanel voice={voice} />
+      </Section>
       <Columns
         left={
       <Section padded>
@@ -52,7 +60,7 @@ export default function DisplayScreen() {
             accessibilityHint="Lowers every pin in the preview only. Does not move the physical pins."
             onPress={() => {
               clear();
-              AccessibilityInfo.announceForAccessibility('Preview cleared');
+              announce('Preview cleared');
             }}
           />
           <Button title="Save" icon="save" variant="secondary" compact style={{ flex: 1 }} onPress={() => setSaveOpen(true)} />
@@ -118,7 +126,7 @@ export default function DisplayScreen() {
         onClose={() => setSaveOpen(false)}
         onSaved={(name) => {
           setSaveOpen(false);
-          AccessibilityInfo.announceForAccessibility(`Saved ${name}`);
+          announce(`Saved ${name}`);
         }}
       />
     </Screen>

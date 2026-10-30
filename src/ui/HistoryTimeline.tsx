@@ -1,6 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import {
-  AccessibilityInfo,
   Animated,
   PanResponder,
   Platform,
@@ -32,6 +31,7 @@ import {
   TRACK,
   TRACK_BOTTOM,
 } from './timelineGeometry';
+import { announce as say } from '@/voice/announce';
 
 /** The step arrows: Material's triangles fill less of their box than SF Symbols' do. */
 const STEP_ICON = Platform.OS === 'ios' ? 17 : 28;
@@ -94,7 +94,7 @@ export function HistoryTimeline({
   const now = describe(position);
 
   const announce = (i: number) =>
-    AccessibilityInfo.announceForAccessibility(`Step ${i + 1} of ${steps.length}: ${describe(i).text}`);
+    say(`Step ${i + 1} of ${steps.length}: ${describe(i).text}`);
   const jump = (i: number) => {
     const to = Math.max(0, Math.min(last, i));
     if (to === position) return;
@@ -205,7 +205,7 @@ export function HistoryTimeline({
     });
     if (!ok) return;
     onClear();
-    AccessibilityInfo.announceForAccessibility('History cleared');
+    say('History cleared');
   };
 
   const transport = (

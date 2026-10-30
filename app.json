@@ -65,7 +65,18 @@
         {
           "photosPermission": "PinVisual uses your photos to turn a picture into a raised-pin pattern.",
           "cameraPermission": false,
-          "microphonePermission": false
+          "microphonePermission": "PinVisual uses the microphone for voice commands, such as \"show a circle\" or \"send\"."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "PinVisual uses the microphone for voice commands, such as \"show a circle\" or \"send\".",
+          "speechRecognitionPermission": "PinVisual turns what you say into commands on this device. Nothing is stored.",
+          "androidSpeechServicePackages": [
+            "com.google.android.as",
+            "com.google.android.googlequicksearchbox"
+          ]
         }
       ],
       "./modules/subject-segmentation/app.plugin.js"

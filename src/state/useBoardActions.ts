@@ -1,10 +1,10 @@
 import { router } from 'expo-router';
 import { useCallback } from 'react';
-import { AccessibilityInfo } from 'react-native';
 
 import type { Pattern } from '@/domain/pattern';
 import { useDevice } from './DeviceProvider';
 import { usePattern } from './PatternProvider';
+import { announce } from '@/voice/announce';
 
 /** Send / reset flows shared by every screen that offers them. */
 export function useBoardActions() {
@@ -18,7 +18,7 @@ export function useBoardActions() {
   const sendPattern = useCallback(
     async (p: Pattern) => {
       const res = await controller.sendPattern(p);
-      AccessibilityInfo.announceForAccessibility(res.ok ? 'Board received pattern.' : `Send failed. ${res.message}`);
+      announce(res.ok ? 'Board received pattern.' : `Send failed. ${res.message}`);
     },
     [controller],
   );
@@ -32,9 +32,9 @@ export function useBoardActions() {
       if (res.ok) {
         clear();
         if (goHome) router.navigate('/');
-        AccessibilityInfo.announceForAccessibility('Board acknowledged reset. Preview cleared.');
+        announce('Board acknowledged reset. Preview cleared.');
       } else {
-        AccessibilityInfo.announceForAccessibility(`Reset failed. ${res.message}`);
+        announce(`Reset failed. ${res.message}`);
       }
     },
     [controller, clear],

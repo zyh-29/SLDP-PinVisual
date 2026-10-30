@@ -1,4 +1,3 @@
-import { AccessibilityInfo } from 'react-native';
 
 import { smartCutoutAvailable } from '@/imaging/segment';
 import type { ConversionPrefs } from '@/state/useConversionSettings';
@@ -7,6 +6,7 @@ import { Label, Section, Separator } from './components';
 import { EquationInput } from './EquationInput';
 import { GraphRangeControl } from './GraphRangeControl';
 import { SliderRow, SwitchRow } from './SettingRows';
+import { announce } from '@/voice/announce';
 
 /** The Image tab's Conversion card: how the picture becomes pins. Rows appear only where they apply. */
 export function ConversionSettings({
@@ -48,7 +48,7 @@ export function ConversionSettings({
             live={live}
             onPan={(p) => {
               set('graphPan', p);
-              AccessibilityInfo.announceForAccessibility(
+              announce(
                 p.x === 0 && p.y === 0 ? 'Back on the curve' : `Moved ${Math.abs(p.x)} ${p.x < 0 ? 'left' : 'right'}, ${Math.abs(p.y)} ${p.y < 0 ? 'down' : 'up'}`,
               );
             }}

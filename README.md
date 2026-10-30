@@ -37,7 +37,10 @@ Built with Expo (SDK 58), React Native and TypeScript.
 | Bluetooth on phones | Written, never run. Needs a development build, a phone and firmware |
 | Web layout (laptop, tablet, phone) | Works |
 | Web Bluetooth (Chrome, Edge) | Written, never run against a board |
-| Letter recognition | Not started |
+| Voice commands (spoken or typed) on the Display tab | Works in Chrome with a stand-in recogniser and by typing. Not yet tried with a real microphone, VoiceOver or TalkBack. Phones need a development build |
+| Speak Results (the device's voice reads results) | Written; not yet heard on a phone |
+| Showing letters and digits on the pins (A to Z, 0 to 9) | Works (by voice or typed command) |
+| Letter recognition (reading letters from a picture) | Not started |
 | Board firmware (ESP32 + PCA9685) | Written. Its protocol code passes its tests on a computer; not yet run on an ESP32 |
 | BLE UUIDs | Set; the app and the firmware use the same ones (checked by a test) |
 | Checking where the pins really are | Not possible: the hardware has no position sensors. The app only knows the board acknowledged a command |
@@ -64,6 +67,11 @@ src/
                   surface                           flattening screens and pages
                   shapes, pinSampling               shapes, and the final pins
                   imageInput.web, cameraDevice.web  camera, screen sharing, drag and drop
+  voice/        Voice commands and speech:
+                  commands, runCommand              what a sentence asks for, and doing it
+                  glyphs                            shapes, letters and digits drawn for the pins
+                  recognizer(.web)                  hearing one command (on the device where possible)
+                  announce, liveRegion.web          telling screen readers (and Speak Results)
   storage/      Saved patterns (stored locally) and backup files
   state/        React providers and hooks; useImageConversion runs the Image tab
   ui/           Theme, components, tab bar and sidebar, the Image tab's cards
@@ -357,9 +365,64 @@ The simulator can't check these:
 - Grid cells are at least 40 pt. On narrow screens the grid scrolls instead
   of shrinking.
 - Screen readers announce each pin, give row-by-row summaries of previews,
-  and announce send, reset and save results.
+  and announce send, reset and save results. On the website these go through
+  a hidden live region (React Native Web's own announcement call does nothing).
+- Voice commands sit at the top of the Display tab, before the 30 pins, so a
+  screen reader reaches them first. See "Voice commands" below.
 - The connection status is in every screen's header; tapping it opens the
   Device tab.
+
+## Voice commands
+
+The Display tab has a **Speak** button and a box to type the same commands.
+Everything works both ways: typing is there for noisy rooms, for speech the
+recogniser doesn't follow, and for browsers without speech recognition.
+
+- **What you can say:** "show a circle" (also square, triangle, diamond,
+  cross, plus, heart, smile, checkerboard, a line, arrow up/down/left/right),
+  "letter B", "number 3", "raise row 2 column 3", "lower row 2", "clear",
+  "fill", "invert", "undo", "redo", "what's on the board", "read row 2",
+  "open saved Morning", "send", "reset", "repeat", "stop", "help". Number
+  words, homophones ("row to") and spoken letter names ("bee") are understood.
+- **Nothing moves without a yes.** "Send" and "reset" ask first ("Say yes to
+  send, or no") and offer Yes / Cancel buttons. Any other command cancels the
+  question.
+- **Every answer says what happened,** including what was heard when it wasn't
+  a command, and points to "help".
+- **Listening** starts with a tone and a vibration and stops with a lower one.
+  No spoken "listening", which the microphone would hear. On iPhone,
+  VoiceOver's two-finger double-tap anywhere on the Display tab also starts
+  it.
+- **Where speech is recognised.** Commands are understood by the app itself
+  (`src/voice/commands.ts`), from a fixed list. The audio is turned into words
+  by the device:
+
+  | Where | Recogniser | Leaves the device? |
+  |---|---|---|
+  | iPhone, Android app | The phone's own (`expo-speech-recognition`), on-device | No, where the phone supports it |
+  | Chrome on a computer | Chrome's on-device recognition (downloads the language once) | No |
+  | Chrome on Android, Safari, Edge | The browser's maker's servers | Only with **Online Speech Recognition** on (Device tab) |
+  | Firefox | None | Type commands instead |
+
+- **Speak Results** (Device tab) reads results aloud with the device's voice,
+  for people who don't use a screen reader. While VoiceOver or TalkBack is on,
+  the app stays quiet and lets the screen reader speak, so nothing is heard
+  twice. (A browser can't tell whether a screen reader is running, so on the
+  website leave it off if you use one.)
+
+### Checking it with blind users
+
+Unit tests cover the command list and the answers. They can't show whether
+it's usable. Before calling it done:
+
+1. Use it with VoiceOver's Screen Curtain (three-finger triple-tap) or
+   TalkBack's dimmed screen: show a shape, check it by touch, send it, and
+   reset, without looking.
+2. Try it in a noisy room and with a quiet voice. The typed box must cover
+   whatever fails.
+3. Ask blind testers to do the same tasks without help. Note where they get
+   stuck and what they try to say that isn't understood: those phrasings
+   belong in `commands.ts`.
 
 ## How the board is handled
 

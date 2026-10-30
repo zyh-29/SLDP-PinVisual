@@ -1,7 +1,7 @@
-import { AccessibilityInfo } from 'react-native';
 
 import { type AppearancePref, useAppearance } from '@/state/appearance';
 import { SegmentedControl } from './components';
+import { announce } from '@/voice/announce';
 
 const NAMES: Record<AppearancePref, string> = { auto: 'Automatic', light: 'Light', dark: 'Dark' };
 
@@ -18,7 +18,7 @@ export function AppearancePicker({ compact }: { compact?: boolean }) {
       value={pref}
       onChange={(p) => {
         setPref(p);
-        AccessibilityInfo.announceForAccessibility(`Appearance: ${NAMES[p]}`);
+        announce(`Appearance: ${NAMES[p]}`);
       }}
       options={[
         { value: 'auto', label: compact ? 'Auto' : NAMES.auto },

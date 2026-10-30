@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AccessibilityInfo, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
 import { cellsToString, countRaised, type Pattern } from '@/domain/pattern';
@@ -11,6 +11,7 @@ import { Icon, type IconName } from './Icon';
 import { PinGrid } from './PinGrid';
 import { Sheet } from './Sheet';
 import { MIN_TOUCH, radius, space, type, useTheme } from './theme';
+import { announce } from '@/voice/announce';
 
 const SMALL_CELL = 8;
 
@@ -41,7 +42,7 @@ export function SequenceEditorSheet({
   const add = (step: SequenceStep) => {
     setSteps((s) => [...s, step]);
     setError(null);
-    AccessibilityInfo.announceForAccessibility(`Added ${step.name} as step ${steps.length + 1}`);
+    announce(`Added ${step.name} as step ${steps.length + 1}`);
   };
   const move = (i: number, by: number) =>
     setSteps((s) => {

@@ -10,6 +10,7 @@ import { Button, Columns, Label, Row, Screen, Section, Separator, StatusBanner }
 import { connectionSummary } from '@/ui/ConnectionPill';
 import { Icon } from '@/ui/Icon';
 import { useResponsive } from '@/ui/layout';
+import { SpeechSettings } from '@/ui/SpeechSettings';
 import { space, useTheme } from '@/ui/theme';
 
 export default function DeviceScreen() {
@@ -170,6 +171,8 @@ export default function DeviceScreen() {
         <Separator inset={space.lg} />
         <Row title="Service UUID" detail={`${BLE.serviceUUID}${BLE.uuidsArePlaceholders ? ' (placeholder)' : ''}`} />
       </Section>
+
+      <SpeechSettings />
 
       {/* The website's sidebar has its own; phones and narrow browsers get it here. */}
       {!sidebar ? (

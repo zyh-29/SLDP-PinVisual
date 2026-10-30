@@ -1,7 +1,7 @@
 import * as ImagePicker from 'expo-image-picker';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
 import { cellsToString, type Pattern, togglePin } from '@/domain/pattern';
@@ -41,6 +41,7 @@ import { PixelImage } from '@/ui/PixelImage';
 import { LiveVideo } from '@/ui/LiveVideo';
 import { SavePatternSheet } from '@/ui/SavePatternSheet';
 import { radius, space, useTheme } from '@/ui/theme';
+import { announce } from '@/voice/announce';
 
 
 /**
@@ -202,7 +203,7 @@ export default function ImageScreen() {
   }
   useEffect(() => {
     if (capture)
-      AccessibilityInfo.announceForAccessibility(
+      announce(
         capture.sketch
           ? 'Captured. The pins hold still until the camera turns to something else.'
           : 'Captured. The pins hold still on this item until you tap another one.',
@@ -241,7 +242,7 @@ export default function ImageScreen() {
     if (!analysed) return;
     const unlocked = !pinsUnlocked;
     setEditState({ picked: analysed, auto: autoKey, pattern: edit?.pattern ?? null, unlocked });
-    AccessibilityInfo.announceForAccessibility(unlocked ? 'Pins unlocked. Tap a pin to raise or lower it.' : 'Pins locked');
+    announce(unlocked ? 'Pins unlocked. Tap a pin to raise or lower it.' : 'Pins locked');
   };
   const togglePinAt = (row: number, col: number) => {
     if (!analysed || !shown || !pinsUnlocked) return;
@@ -250,7 +251,7 @@ export default function ImageScreen() {
   const resetPins = () => {
     if (!analysed || !edit) return;
     setEditState({ ...edit, picked: analysed, auto: autoKey, pattern: null });
-    AccessibilityInfo.announceForAccessibility('Pins reset to the image');
+    announce('Pins reset to the image');
   };
 
   const resetForNewImage = () => {
@@ -282,7 +283,7 @@ export default function ImageScreen() {
         if (keep.focus) setFocus({ ...keep.focus, x: keep.focus.x * k, y: keep.focus.y * k });
         if (keep.crop) setManualCrop({ x: keep.crop.x * k, y: keep.crop.y * k, width: keep.crop.width * k, height: keep.crop.height * k });
       }
-      AccessibilityInfo.announceForAccessibility(
+      announce(
         keep ? 'Photo captured. The camera is off.' : 'Image converted to pin preview, cropped to the main subject',
       );
     } catch (e) {
@@ -305,7 +306,7 @@ export default function ImageScreen() {
       const uri = rgbToPngDataUri(renderCrop(rgb, raster.width, raster.height, null, fullRect(raster.width, raster.height)));
       setPicked({ uri, raster, rgb, equation: { text, scale } });
       resetForNewImage();
-      AccessibilityInfo.announceForAccessibility(`Drew ${text}`);
+      announce(`Drew ${text}`);
     } catch (e) {
       setEquationError(e instanceof Error ? e.message : String(e));
     }
@@ -373,7 +374,7 @@ export default function ImageScreen() {
       live?.stop();
       resetForNewImage();
       setLive(session);
-      AccessibilityInfo.announceForAccessibility(
+      announce(
         source === 'camera'
           ? 'Camera on. Once it locks onto something, the pins hold still on it. Tap the picture to switch to another thing.'
           : 'Sharing screen. The pin preview updates live.',
@@ -409,7 +410,7 @@ export default function ImageScreen() {
     try {
       await live.flip();
       resetForNewImage();
-      AccessibilityInfo.announceForAccessibility(live.facing === 'user' ? 'Front camera' : 'Back camera');
+      announce(live.facing === 'user' ? 'Front camera' : 'Back camera');
     } catch (e) {
       setError(`Camera failed: ${e instanceof Error ? e.message : String(e)}`);
       stopLive();
@@ -441,7 +442,7 @@ export default function ImageScreen() {
     setPicked(null);
     setError(null);
     resetForNewImage();
-    AccessibilityInfo.announceForAccessibility('Image cleared');
+    announce('Image cleared');
   };
 
   const dropping = useImageDrop(load, setError);
@@ -518,7 +519,7 @@ export default function ImageScreen() {
                         const vh = surface?.frameHeight ?? h;
                         if (vw && vh) live.focusAt(seen.x / vw, seen.y / vh).catch(() => {});
                       }
-                      AccessibilityInfo.announceForAccessibility(
+                      announce(
                         live?.kind === 'camera' ? 'Locked onto what you tapped' : 'Cropped to what you tapped',
                       );
                     }}
@@ -732,7 +733,7 @@ export default function ImageScreen() {
           onClose={() => setSaveOpen(false)}
           onSaved={(name) => {
             setSaveOpen(false);
-            AccessibilityInfo.announceForAccessibility(`Saved ${name}`);
+            announce(`Saved ${name}`);
           }}
         />
       ) : null}

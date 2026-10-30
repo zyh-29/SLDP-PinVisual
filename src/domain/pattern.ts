@@ -138,3 +138,17 @@ export function servoForPin(index: number): { board: number; i2cAddress: number;
     channel: index % SERVO_LAYOUT.channelsPerBoard,
   };
 }
+
+/** Plain-language description of a pattern, row by row, for screen readers. */
+export function describePattern(p: Pattern): string {
+  const raised = countRaised(p);
+  if (raised === 0) return `All ${p.rows * p.cols} pins lowered.`;
+  const rows: string[] = [];
+  for (let r = 0; r < p.rows; r++) {
+    const cols: number[] = [];
+    for (let c = 0; c < p.cols; c++) if (getPin(p, r, c) === 1) cols.push(c + 1);
+    if (cols.length === p.cols) rows.push(`row ${r + 1}: all raised`);
+    else if (cols.length) rows.push(`row ${r + 1}: column${cols.length > 1 ? 's' : ''} ${cols.join(', ')}`);
+  }
+  return `${raised} of ${p.rows * p.cols} pins raised. ${rows.join('; ')}.`;
+}

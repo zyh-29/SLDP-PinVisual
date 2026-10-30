@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { AccessibilityInfo, ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
 import { countRaised, fitPatternToGrid, patternsEqual } from '@/domain/pattern';
@@ -19,6 +19,7 @@ import { PinGrid } from '@/ui/PinGrid';
 import { SequenceEditorSheet } from '@/ui/SequenceEditorSheet';
 import { SequencePlayerSheet } from '@/ui/SequencePlayerSheet';
 import { radius, space, useTheme } from '@/ui/theme';
+import { announce } from '@/voice/announce';
 
 /** "3 patterns", "1 pattern". */
 const count = (n: number) => `${n} pattern${n === 1 ? '' : 's'}`;
@@ -39,7 +40,7 @@ export default function SavedScreen() {
 
   const report = (r: NonNullable<typeof transfer>) => {
     setTransfer(r);
-    AccessibilityInfo.announceForAccessibility(r.message ? `${r.title}. ${r.message}` : r.title);
+    announce(r.message ? `${r.title}. ${r.message}` : r.title);
   };
 
   const exportAll = async () => {
@@ -119,7 +120,7 @@ export default function SavedScreen() {
     const p = toPattern(saved);
     if (!p) return;
     setPattern(adapt ? fitPatternToGrid(p, GRID.rows, GRID.cols) : p, saved.name);
-    AccessibilityInfo.announceForAccessibility(`Loaded ${saved.name} into the preview`);
+    announce(`Loaded ${saved.name} into the preview`);
     router.navigate('/');
   };
 
@@ -143,7 +144,7 @@ export default function SavedScreen() {
     if (!ok) return;
     await patternStore.remove(saved.id);
     await reload();
-    AccessibilityInfo.announceForAccessibility(`Deleted ${saved.name}`);
+    announce(`Deleted ${saved.name}`);
   };
 
   const removeSequence = async (seq: SavedSequence) => {
@@ -157,7 +158,7 @@ export default function SavedScreen() {
     if (!ok) return;
     await sequenceStore.remove(seq.id);
     await sequences.reload();
-    AccessibilityInfo.announceForAccessibility(`Deleted ${seq.name}`);
+    announce(`Deleted ${seq.name}`);
   };
 
   const sequenceSection = (
@@ -362,7 +363,7 @@ export default function SavedScreen() {
           onSaved={async (name) => {
             setEditor(null);
             await sequences.reload();
-            AccessibilityInfo.announceForAccessibility(`Saved sequence ${name}`);
+            announce(`Saved sequence ${name}`);
           }}
         />
       ) : null}

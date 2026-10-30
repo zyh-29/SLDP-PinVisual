@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AccessibilityInfo, Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
 import { createEmptyPattern, fitPatternToGrid, type Pattern } from '@/domain/pattern';
@@ -11,6 +11,7 @@ import { PinGrid } from './PinGrid';
 import { SwitchRow } from './SettingRows';
 import { Sheet } from './Sheet';
 import { MIN_TOUCH, radius, space, useTheme } from './theme';
+import { announce } from '@/voice/announce';
 
 /** How long each step stays up while playing, in seconds. */
 const SPEEDS = ['2', '5', '10', '20'] as const;
@@ -65,7 +66,7 @@ export function SequencePlayerSheet({ sequence, onClose }: { sequence: SavedSequ
   }, [connected, controller, patterns, at]);
 
   useEffect(() => {
-    AccessibilityInfo.announceForAccessibility(`Step ${index + 1} of ${count}: ${sequence.steps[index]?.name ?? ''}`);
+    announce(`Step ${index + 1} of ${count}: ${sequence.steps[index]?.name ?? ''}`);
   }, [index, count, sequence]);
 
   // Playing: move on once the step has had its time.

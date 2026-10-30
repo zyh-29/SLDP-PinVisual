@@ -54,6 +54,9 @@ const ICONS = {
   stepBack: { ios: 'arrowtriangle.left.fill', android: 'arrow_left', web: 'arrow_left' },
   stepForward: { ios: 'arrowtriangle.right.fill', android: 'arrow_right', web: 'arrow_right' },
   sequence: { ios: 'play.rectangle.on.rectangle', android: 'playlist_play', web: 'playlist_play' },
+  mic: { ios: 'mic.fill', android: 'mic', web: 'mic' },
+  help: { ios: 'questionmark.circle', android: 'help', web: 'help' },
+  speaker: { ios: 'speaker.wave.2.fill', android: 'volume_up', web: 'volume_up' },
 } as const satisfies Record<string, SymbolName>;
 
 export type IconName = keyof typeof ICONS;
