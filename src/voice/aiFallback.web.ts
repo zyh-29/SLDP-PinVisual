@@ -40,7 +40,7 @@ const SYSTEM = `You help a blind person control PinVisual, an app for a 5 by 6 t
 Rewrite what they said as exactly ONE command from this list, filling in the parts in angle brackets.
 If nothing fits, answer with an empty command. Never invent other commands.
 
-show a <circle | square | triangle | diamond | cross | plus | heart | smile | checkerboard | horizontal line | vertical line | arrow up | arrow down | arrow left | arrow right>
+show a <circle | square | triangle | diamond | circle outline | square outline | triangle outline | diamond outline | cross | plus | heart | smile | checkerboard | horizontal line | vertical line | arrow up | arrow down | arrow left | arrow right>
 letter <A to Z>
 number <0 to 9>
 raise row <1-5> column <1-6>
@@ -67,6 +67,7 @@ const EXAMPLES: [string, string][] = [
   ['I want to feel a picture of a dog', 'find pictures of dog'],
   ['turn the camera on please', 'start camera'],
   ['get rid of everything', 'clear'],
+  ['just the edge of a box', 'show a square outline'],
   ['what time is it', ''],
 ];
 

@@ -388,7 +388,9 @@ Each command goes to the tab it belongs to: pin pictures to Display; graphs,
 the camera and pictures to Image.
 
 - **What you can say:** "show a circle" (also square, triangle, diamond,
-  cross, plus, heart, smile, checkerboard, a line, arrow up/down/left/right),
+  cross, plus, heart, smile, checkerboard, a line, arrow up/down/left/right;
+  circles, squares, triangles and diamonds are solid, and "circle outline",
+  "hollow square" or "ring" give just the edge),
   "letter B", "number 3", "raise row 2 column 3", "lower row 2", "clear",
   "fill", "invert", "undo", "redo", "what's on the board", "read row 2",
   "open saved Morning", "send", "reset", "repeat", "stop", "help". Number
@@ -414,7 +416,11 @@ the camera and pictures to Image.
   pictures of a cat" searches Openverse and Wikimedia Commons (only with
   **Online Picture Search** on in the Device tab), loads the first openly
   licensed picture on the Image tab and says its credit; "next" and
-  "previous" go through the results.
+  "previous" go through the results. Silhouettes come first (drawn ones, then
+  photos against the light, and only ones whose title names the thing), so
+  the pins show one solid shape rather than a busy scene; ordinary photos
+  follow. A result whose pins say nothing (two or fewer, or nearly all 30) is
+  skipped, up to three in a row.
 - **Going places:** "go to image", "go to display", "open device".
 - **On-device AI help:** where the browser has a built-in model (Chrome on a
   computer with Gemini Nano downloaded), a sentence that isn't a listed

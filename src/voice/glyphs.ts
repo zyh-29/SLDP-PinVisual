@@ -54,6 +54,10 @@ export type ShapeName =
   | 'square'
   | 'triangle'
   | 'diamond'
+  | 'circle outline'
+  | 'square outline'
+  | 'triangle outline'
+  | 'diamond outline'
   | 'cross'
   | 'plus'
   | 'heart'
@@ -67,10 +71,15 @@ export type ShapeName =
   | 'checkerboard';
 
 const SHAPES: Record<ShapeName, string[]> = {
-  circle: ['.####.', '#....#', '#....#', '#....#', '.####.'],
-  square: ['######', '#....#', '#....#', '#....#', '######'],
-  triangle: ['..##..', '.#..#.', '.#..#.', '#....#', '######'],
-  diamond: ['..##..', '.#..#.', '#....#', '.#..#.', '..##..'],
+  // Solid: a whole area of raised pins is the easiest shape to feel. The outlines are asked for by name.
+  circle: ['.####.', '######', '######', '######', '.####.'],
+  square: ['######', '######', '######', '######', '######'],
+  triangle: ['..##..', '.####.', '.####.', '######', '######'],
+  diamond: ['..##..', '.####.', '######', '.####.', '..##..'],
+  'circle outline': ['.####.', '#....#', '#....#', '#....#', '.####.'],
+  'square outline': ['######', '#....#', '#....#', '#....#', '######'],
+  'triangle outline': ['..##..', '.#..#.', '.#..#.', '#....#', '######'],
+  'diamond outline': ['..##..', '.#..#.', '#....#', '.#..#.', '..##..'],
   cross: ['#...#', '.#.#.', '..#..', '.#.#.', '#...#'],
   plus: ['..##..', '..##..', '######', '..##..', '..##..'],
   heart: ['.#..#.', '######', '######', '.####.', '..##..'],

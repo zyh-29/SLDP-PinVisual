@@ -126,6 +126,9 @@ const LETTER_NAMES: Record<string, string> = {
   z: 'Z', zee: 'Z', zed: 'Z',
 };
 
+/** Asking for just the edge of a shape. */
+const OUTLINED = /\b(outline|outlined|hollow|empty|edge|edges|border)\b/;
+
 /** Other names for the shapes. The first match in this list wins, so longer phrases come first. */
 const SHAPE_WORDS: [RegExp, ShapeName][] = [
   [/\b(up arrow|arrow (pointing )?up|upward arrow)\b/, 'arrow up'],
@@ -138,11 +141,15 @@ const SHAPE_WORDS: [RegExp, ShapeName][] = [
   [/\b(smiley face|smiley|smile|happy face|face)\b/, 'smile'],
   [/\b(plus sign|plus)\b/, 'plus'],
   [/\b(cross|x shape|times sign)\b/, 'cross'],
-  [/\b(circle|ring|round|oval)\b/, 'circle'],
-  [/\b(square|box|rectangle|frame|border|outline)\b/, 'square'],
+  [/\b(ring)\b/, 'circle outline'],
+  [/\b(frame|border)\b/, 'square outline'],
+  [/\b(circle|round|oval|dot)\b/, 'circle'],
+  [/\b(square|box|rectangle|block)\b/, 'square'],
   [/\b(triangle)\b/, 'triangle'],
   [/\b(diamond|rhombus)\b/, 'diamond'],
   [/\b(heart)\b/, 'heart'],
+  // "an outline" with no shape named: a square's.
+  [/\b(outline)\b/, 'square'],
 ];
 
 /** Lower case, no punctuation, single spaces, and the polite or filler words around a command taken off. */
@@ -371,7 +378,13 @@ export function parseCommand(text: string, savedNames: readonly string[] = []): 
   }
 
   // A shape: "show a circle", "draw an up arrow", or just "heart"
-  for (const [re, shape] of SHAPE_WORDS) if (re.test(thing) && SHAPE_NAMES.includes(shape)) return { kind: 'shape', shape };
+  // Circles, squares, triangles and diamonds are solid unless the outline is asked for ("hollow circle").
+  for (const [re, shape] of SHAPE_WORDS)
+    if (re.test(thing)) {
+      const outline = `${shape} outline` as ShapeName;
+      if (OUTLINED.test(thing) && SHAPE_NAMES.includes(outline)) return { kind: 'shape', shape: outline };
+      if (SHAPE_NAMES.includes(shape)) return { kind: 'shape', shape };
+    }
 
   // "show b", "show bee", "show 3", "show three": a single letter or digit after a show verb
   if (new RegExp(`^${SHOW}\\s`).test(s)) {
@@ -394,7 +407,7 @@ export function parseCommand(text: string, savedNames: readonly string[] = []): 
 
 /** The spoken list of things to say, short enough to listen to in one go. */
 export const HELP_TEXT =
-  'You can say: show a circle, or another shape such as square, triangle, heart or arrow up. ' +
+  'You can say: show a circle, or another shape such as square, triangle, heart or arrow up. Shapes are solid; say outline, as in circle outline, for just the edge. ' +
   'Letter B, or number 3. Raise row 2 column 3, or lower row 2. Clear, fill, invert, undo or redo. ' +
   'What is on the board, or read row 2. Open saved, then a pattern name. ' +
   'Send, to put it on the board, or reset, to lower the real pins. ' +
@@ -404,7 +417,7 @@ export const HELP_TEXT =
 
 /** Words the recogniser should expect (better accuracy for short commands). */
 export const HINT_WORDS = [
-  'show', 'circle', 'square', 'triangle', 'diamond', 'heart', 'cross', 'plus', 'arrow', 'smile', 'checkerboard', 'line',
+  'show', 'circle', 'outline', 'hollow', 'square', 'triangle', 'diamond', 'heart', 'cross', 'plus', 'arrow', 'smile', 'checkerboard', 'line',
   'letter', 'number', 'row', 'column', 'raise', 'lower', 'toggle', 'clear', 'fill', 'invert', 'undo', 'redo',
   'send', 'reset', 'yes', 'no', 'help', 'repeat', 'stop', 'open saved', 'read row', "what's on the board",
   'graph', 'plot', 'y equals', 'x squared', 'sine', 'cosine', 'square root', 'the quantity', 'over',

@@ -2,7 +2,7 @@ import { type Href, router, useFocusEffect, usePathname } from 'expo-router';
 import { createContext, type ReactNode, type RefObject, useCallback, useContext, useEffect, useRef, useState } from 'react';
 
 import { GRID } from '@/config/hardware';
-import type { Pattern } from '@/domain/pattern';
+import { cellsToString, countRaised, type Pattern } from '@/domain/pattern';
 import { usePattern } from '@/state/PatternProvider';
 import { useBoardActions } from '@/state/useBoardActions';
 import { patternStore } from '@/state/useSavedPatterns';
@@ -56,6 +56,8 @@ const VoiceContext = createContext<VoiceValue | null>(null);
 const PATHS = { display: '/', image: '/image', saved: '/saved', pinTest: '/pin-test', device: '/device' } as const satisfies Record<Tab, Href>;
 const TAB_NAMES: Record<Tab, string> = { display: 'Display', image: 'Image', saved: 'Saved', pinTest: 'Pin Test', device: 'Device' };
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** Search results in a row skipped for making no useful pins, before one is shown anyway. */
+const SKIP_POOR = 3;
 
 /**
  * Voice commands for the whole app: one conversation shared by the Display tab's panel and the Image tab's bar.
@@ -113,12 +115,36 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     announce(text);
   };
 
-  const showPicture = async (list: Picture[], index: number, query: string) => {
+  /** The Image tab's pins once they stop changing (a cut-out can take a second or two), or null. */
+  const settledPins = async (): Promise<Pattern | null> => {
+    let last = '';
+    for (let i = 0; i < 15; i++) {
+      await wait(400);
+      // Read through the ref each time: the tab's handler is renewed on every render.
+      const r = image.current?.current.result() ?? null;
+      const key = r ? cellsToString(r) : '';
+      if (key && key === last) return r;
+      last = key;
+    }
+    return image.current?.current.result() ?? null;
+  };
+
+  /**
+   * Shows a search result on the Image tab. Results whose pins say nothing (two pins or fewer, or nearly all of
+   * them: the conversion picked a detail, or the whole frame) are skipped quietly, up to SKIP_POOR in a row, going
+   * the same way ("next" or "previous").
+   */
+  const showPicture = async (list: Picture[], index: number, query: string, step = 1, skipped = 0): Promise<void> => {
     const h = await imageTab();
     if (!h) return say('The Image tab did not open.');
     const p = list[index];
     setResults({ query, pictures: list, index });
     const err = await h.loadPicture(p.uri);
+    const pins = err ? null : await settledPins();
+    const raised = pins ? countRaised(pins) : 0;
+    const poor = !pins || raised <= 2 || raised >= pins.rows * pins.cols - 1;
+    if (poor && skipped < SKIP_POOR && list.length > 1)
+      return showPicture(list, (index + step + list.length) % list.length, query, step, skipped + 1);
     if (err) return say(`That picture could not be loaded. ${list.length > 1 ? 'Say next for another.' : ''}`.trim());
     say(`Picture ${index + 1} of ${list.length}: ${credit(p)}. Say next for another, or use this pattern.`);
   };
@@ -198,7 +224,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         const r = now.results;
         if (!r?.pictures.length) return say('There is no picture search to go through. Say find pictures of, then something.');
         const i = (r.index + (effect.back ? -1 : 1) + r.pictures.length) % r.pictures.length;
-        return showPicture(r.pictures, i, r.query);
+        return showPicture(r.pictures, i, r.query, effect.back ? -1 : 1);
       }
       case 'voiceOff':
         say(outReply);

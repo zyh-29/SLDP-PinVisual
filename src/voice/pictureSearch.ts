@@ -1,7 +1,11 @@
 /**
  * Online picture search (only when the user turned on Online Picture Search): openly licensed pictures from
  * Openverse and Wikimedia Commons. Both are free, need no account or key, and allow pictures to be read from a web
- * page (CORS). Both are asked at once; one being slow or down doesn't stop the other.
+ * page (CORS). All the searches run at once; one being slow or down doesn't stop the others.
+ *
+ * Silhouettes come first: one solid dark shape of the thing on a plain background, which is what 30 pins can show
+ * (a photo of an apple tree becomes scattered pins; an apple's silhouette becomes an apple). Ordinary photos follow,
+ * for things nobody has drawn a silhouette of.
  */
 export interface Picture {
   /** A copy about 800 px wide, enough for 30 pins. */
@@ -15,6 +19,8 @@ export interface Picture {
 
 const TIMEOUT_MS = 10_000;
 const PER_SOURCE = 10;
+/** Of each kind (silhouettes, then photos), at most this many from each source. */
+const PER_KIND = 6;
 
 const stripTags = (html: string) =>
   html
@@ -84,13 +90,18 @@ interface WikiPage {
   imageinfo?: { thumburl?: string; mime?: string; extmetadata?: Record<string, { value?: string }> }[];
 }
 
-export async function searchWikimedia(query: string, signal?: AbortSignal): Promise<Picture[]> {
+/**
+ * `kind`: 'photo' (bitmap files) or 'drawing' (SVG drawings, which Commons serves as PNG previews; most clean
+ * silhouettes are drawings).
+ */
+export async function searchWikimedia(query: string, signal?: AbortSignal, kind: 'photo' | 'drawing' = 'photo'): Promise<Picture[]> {
+  const drawings = kind === 'drawing';
   const params = new URLSearchParams({
     action: 'query',
     format: 'json',
     origin: '*',
     generator: 'search',
-    gsrsearch: `${query} filetype:bitmap`,
+    gsrsearch: `${query} filetype:${drawings ? 'drawing' : 'bitmap'}`,
     gsrnamespace: '6',
     gsrlimit: String(PER_SOURCE),
     prop: 'imageinfo',
@@ -102,7 +113,8 @@ export async function searchWikimedia(query: string, signal?: AbortSignal): Prom
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
     .flatMap((p) => {
       const info = p.imageinfo?.[0];
-      if (!info?.thumburl || !/^image\/(jpeg|png|webp|gif)$/.test(info.mime ?? '')) return [];
+      const kinds = drawings ? /^image\/(jpeg|png|webp|gif|svg\+xml)$/ : /^image\/(jpeg|png|webp|gif)$/;
+      if (!info?.thumburl || !kinds.test(info.mime ?? '')) return [];
       const meta = info.extmetadata ?? {};
       return [
         {
@@ -116,14 +128,10 @@ export async function searchWikimedia(query: string, signal?: AbortSignal): Prom
     });
 }
 
-/** Both sources at once, interleaved (best of each first). Throws only when neither answered. */
-export async function searchPictures(query: string, signal?: AbortSignal): Promise<Picture[]> {
-  const [a, b] = await Promise.allSettled([searchOpenverse(query, signal), searchWikimedia(query, signal)]);
-  if (a.status === 'rejected' && b.status === 'rejected') throw new Error('Picture search is not reachable. Check the internet connection.');
-  const lists = [a.status === 'fulfilled' ? a.value : [], b.status === 'fulfilled' ? b.value : []];
+/** Lists taken in turn (the best of each first), without repeats. */
+function interleave(lists: Picture[][], seen: Set<string>): Picture[] {
   const out: Picture[] = [];
-  const seen = new Set<string>();
-  for (let i = 0; i < PER_SOURCE; i++)
+  for (let i = 0; i < PER_KIND; i++)
     for (const list of lists) {
       const p = list[i];
       if (p && !seen.has(p.uri)) {
@@ -132,6 +140,48 @@ export async function searchPictures(query: string, signal?: AbortSignal): Promi
       }
     }
   return out;
+}
+
+/**
+ * Whether a picture's title names what was asked for (each word of 3 letters or more, plural or not). Silhouette
+ * searches return look-alikes otherwise: "star silhouette" also finds a woman's silhouette and maps of countries.
+ */
+export function mentions(title: string, query: string): boolean {
+  const t = ` ${title.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+  const words = query.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+  return words.length > 0 && words.every((w) => t.includes(` ${w.replace(/(es|s)$/, '')}`));
+}
+
+/**
+ * Drawn silhouettes first (one solid shape on a plain background), then silhouette photos (the thing against the
+ * light), then ordinary photos for anything nobody has drawn. Silhouettes count only when their title names the
+ * thing. Throws only when no search answered.
+ */
+export async function searchPictures(query: string, signal?: AbortSignal): Promise<Picture[]> {
+  const solid = `${query} silhouette`;
+  const all = await Promise.allSettled([
+    searchWikimedia(solid, signal, 'drawing'),
+    searchOpenverse(solid, signal),
+    searchWikimedia(solid, signal),
+    searchOpenverse(query, signal),
+    searchWikimedia(query, signal),
+  ]);
+  if (all.every((r) => r.status === 'rejected')) throw new Error('Picture search is not reachable. Check the internet connection.');
+  const [drawn, ovSolid, wmSolid, ovPhoto, wmPhoto] = all.map((r) => (r.status === 'fulfilled' ? r.value : []));
+  // Plainest titles first: "House silhouette" is more likely just a house than "House cat silhouette (NIH …)".
+  const words = (t: string) => t.split(/\s+/).length;
+  const about = (list: Picture[]) =>
+    list
+      .filter((p) => mentions(p.title, query))
+      .map((p, i) => ({ p, i }))
+      .sort((a, b) => words(a.p.title) - words(b.p.title) || a.i - b.i)
+      .map((x) => x.p);
+  const seen = new Set<string>();
+  return [
+    ...interleave([about(drawn), about(ovSolid)], seen),
+    ...interleave([about(wmSolid)], seen),
+    ...interleave([ovPhoto, wmPhoto], seen),
+  ];
 }
 
 /** How a picture is credited, spoken and shown: "Cat on snow, by Von.grzanka, CC BY-SA 3.0, from Wikimedia Commons". */
