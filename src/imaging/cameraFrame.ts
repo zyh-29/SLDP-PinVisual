@@ -9,6 +9,7 @@
  *    the last frames and only flips it once the average has clearly crossed over (hysteresis).
  */
 import type { Pattern, PinValue } from '@/domain/pattern';
+import { luma } from './pixels';
 
 /** 3 x 3 box blur of RGBA pixels, in place (alpha untouched). Separable, so about 12 operations per pixel. */
 export function denoiseFrame(rgba: Uint8ClampedArray, width: number, height: number): void {
@@ -54,7 +55,7 @@ export function sharpness(rgba: ArrayLike<number>, width: number, height: number
   for (let y = 0; y < h * b; y++)
     for (let x = 0; x < w * b; x++) {
       const p = (y * width + x) * 4;
-      lum[Math.floor(y / b) * w + Math.floor(x / b)] += 0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2];
+      lum[Math.floor(y / b) * w + Math.floor(x / b)] += luma(rgba[p], rgba[p + 1], rgba[p + 2]);
     }
   let sum = 0;
   for (let y = 0; y < h - 1; y++)
@@ -129,7 +130,7 @@ export function frameLight(rgba: ArrayLike<number>, width: number, height: numbe
       for (let y = by * B; y < by * B + B; y += 2)
         for (let x = bx * B; x < bx * B + B; x += 2) {
           const p = (y * width + x) * 4;
-          s += 0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2];
+          s += luma(rgba[p], rgba[p + 1], rgba[p + 2]);
         }
       const m = s / ((B * B) / 4);
       sum += m;
@@ -232,7 +233,7 @@ export function viewSketch(rgb: ArrayLike<number>, width: number, height: number
     for (let x = 0; x < width; x += 2) {
       const i = (y * width + x) * channels;
       const b = by * cols + Math.min(cols - 1, Math.floor((x * cols) / width));
-      sum[b] += 0.299 * rgb[i] + 0.587 * rgb[i + 1] + 0.114 * rgb[i + 2];
+      sum[b] += luma(rgb[i], rgb[i + 1], rgb[i + 2]);
       count[b]++;
     }
   }

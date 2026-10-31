@@ -28,6 +28,7 @@ import { evenLight } from './lighting';
 import { type Component, dilate, labelComponents } from './masks';
 import { refineSubject } from './refineMask';
 import { median } from './stats';
+import { luma } from './pixels';
 
 /** A long thin straight line (axis or gridline). */
 export interface StraightLine {
@@ -469,7 +470,7 @@ export function paletteDistance2(palette: Rgb[]): (r: number, g: number, b: numb
     pg[k] = c.g;
     pb[k] = c.b;
     inv[k] = 1 / (c.r * c.r + c.g * c.g + c.b * c.b || 1);
-    shade[k] = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b > 100 ? 1 : 0;
+    shade[k] = luma(c.r, c.g, c.b) > 100 ? 1 : 0;
   });
   return (r, g, b) => {
     let best = Infinity;
@@ -1036,7 +1037,6 @@ function removeShadows(
   const rw = x1 - x0;
   const rh = y1 - y0;
   if (rw < 3 || rh < 3) return null;
-  const lum = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b;
   // The background colours to compare with: the plane where the pixel is, and the edge palette (camera).
   const refAt = (x: number, y: number): Rgb => ({
     r: plane.r[0] + plane.r[1] * x + plane.r[2] * y,
@@ -1044,14 +1044,14 @@ function removeShadows(
     b: plane.b[0] + plane.b[1] * x + plane.b[2] * y,
   });
   const centre = refAt((x0 + x1) / 2, (y0 + y1) / 2);
-  if (lum(centre.r, centre.g, centre.b) < 100) return null;
+  if (luma(centre.r, centre.g, centre.b) < 100) return null;
 
   // Brightness, averaged over 3 x 3 (camera noise would otherwise look like steps).
   const L = new Float32Array(rw * rh);
   for (let y = 0; y < rh; y++)
     for (let x = 0; x < rw; x++) {
       const q = ((y0 + y) * width + x0 + x) * 3;
-      L[y * rw + x] = lum(rgb[q], rgb[q + 1], rgb[q + 2]);
+      L[y * rw + x] = luma(rgb[q], rgb[q + 1], rgb[q + 2]);
     }
   const S = new Float32Array(rw * rh);
   for (let y = 0; y < rh; y++)
@@ -1080,7 +1080,7 @@ function removeShadows(
     let best = 0;
     for (const c of [refAt(x, y), ...palette]) {
       const len2 = c.r * c.r + c.g * c.g + c.b * c.b;
-      if (lum(c.r, c.g, c.b) < 100 || !len2) continue;
+      if (luma(c.r, c.g, c.b) < 100 || !len2) continue;
       const k = (r * c.r + g * c.g + b * c.b) / len2;
       if (k < SHADOW_DEEPEST || k > SHADOW_LIGHTEST) continue;
       const depth = (1 - k) * Math.sqrt(len2);

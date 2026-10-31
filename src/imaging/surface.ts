@@ -18,6 +18,7 @@
  */
 import { convexHull, type Point, polygonArea, type Rect } from './geometry';
 import { labelComponents } from './masks';
+import { luma } from './pixels';
 
 export type Quad = [Point, Point, Point, Point]; // top-left, top-right, bottom-right, bottom-left
 
@@ -193,7 +194,7 @@ function smallLum(rgb: ArrayLike<number>, width: number, height: number, k: numb
   for (let y = 0; y < h * k; y++)
     for (let x = 0; x < w * k; x++) {
       const p = (y * width + x) * 3;
-      lum[Math.floor(y / k) * w + Math.floor(x / k)] += (0.299 * rgb[p] + 0.587 * rgb[p + 1] + 0.114 * rgb[p + 2]) / (k * k);
+      lum[Math.floor(y / k) * w + Math.floor(x / k)] += luma(rgb[p], rgb[p + 1], rgb[p + 2]) / (k * k);
     }
   return { lum, w, h };
 }

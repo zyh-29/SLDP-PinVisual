@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 import type { RgbPixels } from './PixelImage';
+import { rgbToRgba } from '@/imaging/pixels';
 
 /**
  * Browser version of PixelImage.tsx: the pixels are drawn straight onto a canvas. The preview changes on every live
@@ -36,13 +37,7 @@ export function PixelImage({
       img.data.fill(255); // opaque
       buffer.current = img;
     }
-    const out = img.data;
-    const src = pixels.data;
-    for (let p = 0, n = pixels.width * pixels.height; p < n; p++) {
-      out[p * 4] = src[p * 3];
-      out[p * 4 + 1] = src[p * 3 + 1];
-      out[p * 4 + 2] = src[p * 3 + 2];
-    }
+    rgbToRgba(pixels.data, pixels.width * pixels.height, img.data);
     ctx.putImageData(img, 0, 0);
   }, [pixels]);
 

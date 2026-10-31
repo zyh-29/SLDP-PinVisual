@@ -54,19 +54,19 @@ const TW = 24;
 /** The template also takes in this much around the item (each side): its edge against the background. */
 const MARGIN = 0.15;
 
-/** Mean brightness of a rectangle (small-frame pixels), clamped to the frame. */
-function areaMean(f: SmallGray, x0: number, y0: number, x1: number, y1: number): number {
-  const a = Math.min(f.w - 1, Math.max(0, Math.floor(x0)));
-  const b = Math.min(f.h - 1, Math.max(0, Math.floor(y0)));
-  const c = Math.min(f.w, Math.max(a + 1, Math.ceil(x1)));
-  const d = Math.min(f.h, Math.max(b + 1, Math.ceil(y1)));
-  const W1 = f.w + 1;
-  return (f.sum[d * W1 + c] - f.sum[b * W1 + c] - f.sum[d * W1 + a] + f.sum[b * W1 + a]) / ((c - a) * (d - b));
-}
+/** Cell edges along each side, reused between calls (the tracker samples about a thousand boxes a frame). */
+type Edges = Int32Array<ArrayBuffer>;
+let colLo: Edges = new Int32Array(0);
+let colHi: Edges = new Int32Array(0);
+let rowLo: Edges = new Int32Array(0);
+let rowHi: Edges = new Int32Array(0);
+const fit = (a: Edges, n: number): Edges => (a.length >= n ? a : new Int32Array(n));
 
 /**
  * The item's picture on a tw x th grid: each cell is the average of the area it covers (so thin lines count,
- * whatever the size), over the box plus a margin around it.
+ * whatever the size), over the box plus a margin around it, clamped to the frame. Each cell's mean comes from the
+ * summed-area table in four lookups. The cells' edges (whole small-frame pixels) are worked out once per column
+ * and once per row, not for every cell: this runs for every box the tracker tries.
  */
 function sample(f: SmallGray, box: Rect, tw: number, th: number, out: Float32Array) {
   const mx = box.width * MARGIN;
@@ -75,8 +75,33 @@ function sample(f: SmallGray, box: Rect, tw: number, th: number, out: Float32Arr
   const y0 = box.y - my;
   const cw = (box.width + 2 * mx) / tw;
   const ch = (box.height + 2 * my) / th;
-  for (let j = 0; j < th; j++)
-    for (let i = 0; i < tw; i++) out[j * tw + i] = areaMean(f, x0 + i * cw, y0 + j * ch, x0 + (i + 1) * cw, y0 + (j + 1) * ch);
+  colLo = fit(colLo, tw);
+  colHi = fit(colHi, tw);
+  rowLo = fit(rowLo, th);
+  rowHi = fit(rowHi, th);
+  // A cell covers at least one pixel: from the pixel its start is in to the one its end is in.
+  for (let i = 0; i < tw; i++) {
+    const a = Math.min(f.w - 1, Math.max(0, Math.floor(x0 + i * cw)));
+    colLo[i] = a;
+    colHi[i] = Math.min(f.w, Math.max(a + 1, Math.ceil(x0 + (i + 1) * cw)));
+  }
+  for (let j = 0; j < th; j++) {
+    const b = Math.min(f.h - 1, Math.max(0, Math.floor(y0 + j * ch)));
+    rowLo[j] = b;
+    rowHi[j] = Math.min(f.h, Math.max(b + 1, Math.ceil(y0 + (j + 1) * ch)));
+  }
+  const W1 = f.w + 1;
+  const sum = f.sum;
+  for (let j = 0; j < th; j++) {
+    const top = rowLo[j] * W1;
+    const bottom = rowHi[j] * W1;
+    const rows = rowHi[j] - rowLo[j];
+    for (let i = 0; i < tw; i++) {
+      const a = colLo[i];
+      const c = colHi[i];
+      out[j * tw + i] = (sum[bottom + c] - sum[top + c] - sum[bottom + a] + sum[top + a]) / ((c - a) * rows);
+    }
+  }
 }
 
 /** Zero mean, unit length: comparing these is the normalised cross-correlation. Null for a flat patch. */

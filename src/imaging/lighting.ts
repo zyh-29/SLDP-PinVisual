@@ -23,6 +23,7 @@
  *
  * Pure functions, no React Native imports.
  */
+import { median } from './stats';
 
 /** Cell size, pixels. */
 const CELL = 32;
@@ -99,11 +100,6 @@ function solve(A: Float64Array, b: Float64Array, n: number): Float64Array | null
   }
   return x;
 }
-
-const median = (a: number[]) => {
-  const s = [...a].sort((x, y) => x - y);
-  return s.length ? s[s.length >> 1] : 0;
-};
 
 /** Share of neighbouring background cells (side by side or one above the other) whose colours step (see STEP). */
 export function stepShare(cellLog: Float64Array, weight: Float64Array, cols: number, rows: number): number {
@@ -226,7 +222,7 @@ export function measureLight(rgb: ArrayLike<number>, width: number, height: numb
       resid[c] = worst;
       fitted.push(worst);
     }
-    const scale = Math.max(MIN_SCALE, 1.4826 * median(fitted));
+    const scale = Math.max(MIN_SCALE, 1.4826 * median(fitted, 0));
     for (let c = 0; c < n; c++) {
       if (!valid[c]) continue;
       const u = resid[c] / (TUKEY * scale);

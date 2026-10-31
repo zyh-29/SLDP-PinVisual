@@ -17,6 +17,7 @@
  * Pure functions, no React Native imports.
  */
 import type { Rect } from './geometry';
+import { luma } from './pixels';
 
 /** The sky is found on a copy about this wide (it's a large, smooth area: detail doesn't matter, speed does). */
 const WORK_WIDTH = 160;
@@ -41,7 +42,6 @@ export interface Sky {
   share: number;
 }
 
-const lum = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b;
 
 /** The sky joined to the picture's top, and the skyline below it, or null when there is no sky across the top. */
 export function findSky(rgb: ArrayLike<number>, width: number, height: number): Sky | null {
@@ -95,7 +95,7 @@ export function findSky(rgb: ArrayLike<number>, width: number, height: number): 
       texture[y * sw + x] = worst;
     }
   const skyLike = (p: number) =>
-    texture[p] <= SKY_TEXTURE && lum(small[p * 3], small[p * 3 + 1], small[p * 3 + 2]) >= SKY_DARKEST;
+    texture[p] <= SKY_TEXTURE && luma(small[p * 3], small[p * 3 + 1], small[p * 3 + 2]) >= SKY_DARKEST;
   const step = (a: number, b: number) =>
     Math.max(Math.abs(small[a * 3] - small[b * 3]), Math.abs(small[a * 3 + 1] - small[b * 3 + 1]), Math.abs(small[a * 3 + 2] - small[b * 3 + 2]));
 

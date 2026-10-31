@@ -40,6 +40,7 @@ import {
 } from './graph';
 import { dilate, labelComponents } from './masks';
 import { findGrids, type Grid } from './plotGrid';
+import { luma } from './pixels';
 
 export type SubjectKind = 'curves' | 'shape' | 'none';
 
@@ -584,7 +585,7 @@ function pageBackground(rgb: ArrayLike<number>, width: number, height: number, r
       const R = rgb[p * 3];
       const G = rgb[p * 3 + 1];
       const B = rgb[p * 3 + 2];
-      lum.push(0.299 * R + 0.587 * G + 0.114 * B);
+      lum.push(luma(R, G, B));
       sat.push(Math.max(R, G, B) - Math.min(R, G, B));
     }
   if (!lum.length) return false;

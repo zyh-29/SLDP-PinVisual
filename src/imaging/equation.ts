@@ -221,14 +221,20 @@ export function renderEquation(f: Fn): { raster: RasterImage; scale: GraphScale 
     const k = (pos - origin) / every;
     return Math.abs(k - Math.round(k)) * every < 0.5;
   };
+  // What each column and each row is (0 paper, 1 minor line, 2 major line, 3 axis): a pixel is the stronger of its
+  // column and its row, so each is worked out once rather than for every pixel.
+  const level = (pos: number, origin: number) =>
+    Math.abs(pos + 0.5 - origin) <= 1 ? 3 : on(pos, origin, ppu) ? 2 : on(pos, origin, ppu / 5) ? 1 : 0;
+  const cols = Uint8Array.from({ length: W }, (_, x) => level(x, ox));
+  const rows = Uint8Array.from({ length: H }, (_, y) => level(y, oy));
+  const SHADES = [255, 232, 200, 60];
   for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) {
-      let c = [255, 255, 255];
-      if (on(x, ox, ppu / 5) || on(y, oy, ppu / 5)) c = [232, 232, 232];
-      if (on(x, ox, ppu) || on(y, oy, ppu)) c = [200, 200, 200];
-      if (Math.abs(x + 0.5 - ox) <= 1 || Math.abs(y + 0.5 - oy) <= 1) c = [60, 60, 60];
-      set(x, y, c);
-      data[(y * W + x) * 4 + 3] = 255;
+    for (let x = 0, i = y * W * 4; x < W; x++, i += 4) {
+      const v = SHADES[Math.max(cols[x], rows[y])];
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
+      data[i + 3] = 255;
     }
   // The curve: in each column, a vertical run joining it to the previous column's height (steep parts stay
   // connected); a jump of more than the plot's height is a break (1/x, tan), not a line.

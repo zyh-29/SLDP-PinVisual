@@ -41,17 +41,30 @@ const segDist = (px: number, py: number, ax: number, ay: number, bx: number, by:
 const polyEdges = (pts: [number, number][]) => pts.map((p, i) => [p, pts[(i + 1) % pts.length]] as const);
 const insidePoly = (pts: [number, number][], x: number, y: number) => {
   let c = false;
-  for (const [[ax, ay], [bx, by]] of polyEdges(pts)) if (ay > y !== by > y && x < ((bx - ax) * (y - ay)) / (by - ay) + ax) c = !c;
+  for (let i = 0; i < pts.length; i++) {
+    const ax = pts[i][0];
+    const ay = pts[i][1];
+    const bx = pts[(i + 1) % pts.length][0];
+    const by = pts[(i + 1) % pts.length][1];
+    if (ay > y !== by > y && x < ((bx - ax) * (y - ay)) / (by - ay) + ax) c = !c;
+  }
   return c;
 };
 const outline = (pts: [number, number][], width: number) => {
-  const edges = polyEdges(pts);
+  // Flat list of segments (ax, ay, bx, by): checked for every pixel, so no unpacking there.
+  const segs = polyEdges(pts).flatMap(([a, b]) => [a[0], a[1], b[0], b[1]]);
   // Points well away from the outline's box are never on it (keeps drawing the scenes quick).
   const xs = pts.map((p) => p[0]);
   const ys = pts.map((p) => p[1]);
-  const [x0, x1, y0, y1] = [Math.min(...xs) - width, Math.max(...xs) + width, Math.min(...ys) - width, Math.max(...ys) + width];
-  return (x: number, y: number) =>
-    x >= x0 && x <= x1 && y >= y0 && y <= y1 && edges.some(([[ax, ay], [bx, by]]) => segDist(x, y, ax, ay, bx, by) <= width / 2);
+  const x0 = Math.min(...xs) - width;
+  const x1 = Math.max(...xs) + width;
+  const y0 = Math.min(...ys) - width;
+  const y1 = Math.max(...ys) + width;
+  return (x: number, y: number) => {
+    if (x < x0 || x > x1 || y < y0 || y > y1) return false;
+    for (let i = 0; i < segs.length; i += 4) if (segDist(x, y, segs[i], segs[i + 1], segs[i + 2], segs[i + 3]) <= width / 2) return true;
+    return false;
+  };
 };
 const star = (r1: number, r2: number): [number, number][] =>
   Array.from({ length: 10 }, (_, i) => {
@@ -111,6 +124,8 @@ export const LIGHTS: Lighting[] = [
 ];
 
 const PAPER: C = [244, 242, 236];
+/** 2 x 2 supersampling offsets (x, y pairs) within a pixel. */
+const SUPER = [0.25, 0.25, 0.75, 0.25, 0.25, 0.75, 0.75, 0.75];
 
 /** The scene: subject on paper under the light, softened (lens) and noisy. Returns the picture and the true mask. */
 export function cameraScene(subject: Subject, lighting: Lighting, seed = 7): { raster: RasterImage; truth: Uint8Array } {
@@ -123,7 +138,7 @@ export function cameraScene(subject: Subject, lighting: Lighting, seed = 7): { r
     for (let x = 0; x < W; x++) {
       // 2 x 2 supersampling for anti-aliased edges.
       let cov = 0;
-      for (const [ox, oy] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) if (subject.inside(x + ox, y + oy)) cov++;
+      for (let s = 0; s < 4; s++) if (subject.inside(x + SUPER[s * 2], y + SUPER[s * 2 + 1])) cov++;
       cov /= 4;
       const i = y * W + x;
       truth[i] = subject.inside(x + 0.5, y + 0.5) ? 1 : 0;

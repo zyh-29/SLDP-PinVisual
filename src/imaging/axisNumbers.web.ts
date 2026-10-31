@@ -9,6 +9,7 @@
 import { APP_BASE, loadScript } from './webScript';
 import type { Rect } from './geometry';
 import { type AxisReading, findLabelBoxes } from './graph';
+import { rgbToRgba } from './pixels';
 
 /** Where the picture comes from: the original image (URL), the live share's video, or pixels (a flattened page). */
 export interface AxisNumberSource {
@@ -63,12 +64,7 @@ async function fullResolution(source: AxisNumberSource): Promise<HTMLCanvasEleme
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return null;
     const img = new ImageData(width, height);
-    for (let p = 0; p < width * height; p++) {
-      img.data[p * 4] = rgb[p * 3];
-      img.data[p * 4 + 1] = rgb[p * 3 + 1];
-      img.data[p * 4 + 2] = rgb[p * 3 + 2];
-      img.data[p * 4 + 3] = 255;
-    }
+    rgbToRgba(rgb, width * height, img.data);
     ctx.putImageData(img, 0, 0);
     return canvas;
   }

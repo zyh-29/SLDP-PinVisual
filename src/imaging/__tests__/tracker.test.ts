@@ -15,12 +15,17 @@ const PLOT_A: Rect = { x: 120, y: 120, width: 220, height: 200 };
 const PLOT_B: Rect = { x: 400, y: 120, width: 220, height: 200 };
 const CARD: Rect = { x: 680, y: 160, width: 110, height: 110 };
 
+/** The two graphs: where each is, and its curve. Built once: world() runs for every pixel of every frame. */
+const PLOTS = [
+  [PLOT_A, (u: number) => 70 + 0.008 * (u - 110) ** 2], // parabola
+  [PLOT_B, (u: number) => 170 - 0.8 * (u - 40)], // line
+] as const;
+
 function world(x: number, y: number): C {
   const inR = (r: Rect) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
-  for (const [r, curve] of [
-    [PLOT_A, (u: number) => 70 + 0.008 * (u - 110) ** 2], // parabola
-    [PLOT_B, (u: number) => 170 - 0.8 * (u - 40)], // line
-  ] as const) {
+  for (let i = 0; i < PLOTS.length; i++) {
+    const r = PLOTS[i][0];
+    const curve = PLOTS[i][1];
     if (!inR(r)) continue;
     const u = x - r.x;
     const v = y - r.y;

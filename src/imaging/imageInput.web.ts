@@ -7,6 +7,7 @@ import { denoiseFrame, FocusGate, frameLight, LightGate, sharpness, viewSketch, 
 import type { RasterImage } from './convert';
 import { flatten, type Quad, SurfaceWatch, type SurfaceView } from './surface';
 import { cameraError, focusCameraAt, openCamera, tuneCamera } from './cameraDevice.web';
+import { rgbaToRgb, rgbToRgba } from './pixels';
 
 export interface ImageSource {
   uri: string;
@@ -319,12 +320,7 @@ export async function startLiveCapture(o: {
    */
   const flattenSurface = (data: Uint8ClampedArray, width: number, height: number, vw: number, vh: number) => {
     // Only read while searching (SurfaceWatch doesn't keep it), so it can be reused.
-    const rgb = (rgbBuffer = reuse(rgbBuffer, width * height * 3));
-    for (let p = 0; p < width * height; p++) {
-      rgb[p * 3] = data[p * 4];
-      rgb[p * 3 + 1] = data[p * 4 + 1];
-      rgb[p * 3 + 2] = data[p * 4 + 2];
-    }
+    const rgb = rgbaToRgb(data, width * height, (rgbBuffer = reuse(rgbBuffer, width * height * 3)));
     const found = surfaces.update(rgb, width, height);
     lastSurface = found ? { quad: found.quad, aspect: found.aspect, frameWidth: width } : null;
     if (!found || !hiCtx) return null;
@@ -348,12 +344,7 @@ export async function startLiveCapture(o: {
     const hi = hiCtx.getImageData(0, 0, hw, hh).data;
     denoiseFrame(hi, hw, hh);
     // Read by flatten only (its page is a new picture), so it can be reused.
-    const hiRgb = (hiRgbBuffer = reuse(hiRgbBuffer, hw * hh * 3));
-    for (let p = 0; p < hw * hh; p++) {
-      hiRgb[p * 3] = hi[p * 4];
-      hiRgb[p * 3 + 1] = hi[p * 4 + 1];
-      hiRgb[p * 3 + 2] = hi[p * 4 + 2];
-    }
+    const hiRgb = rgbaToRgb(hi, hw * hh, (hiRgbBuffer = reuse(hiRgbBuffer, hw * hh * 3)));
     // Frame pixel -> pixel of the area read, and back.
     const toHi = (p: { x: number; y: number }) => ({ x: (p.x * k - bx) * r, y: (p.y * k - by) * r });
     const fromHi = (p: { x: number; y: number }) => ({ x: (p.x / r + bx) / k, y: (p.y / r + by) / k });
@@ -472,21 +463,11 @@ export async function startLiveCapture(o: {
       sctx.putImageData(img, 0, 0);
       if (surface) {
         // The photo is the surface flattened, as the live view analysed it.
-        const rgb = new Uint8ClampedArray(shot.width * shot.height * 3);
-        for (let p = 0; p < shot.width * shot.height; p++) {
-          rgb[p * 3] = img.data[p * 4];
-          rgb[p * 3 + 1] = img.data[p * 4 + 1];
-          rgb[p * 3 + 2] = img.data[p * 4 + 2];
-        }
+        const rgb = rgbaToRgb(img.data, shot.width * shot.height);
         const f = shot.width / surface.frameWidth;
         const page = flatten(rgb, shot.width, shot.height, { ...surface, fill: 1, quad: surface.quad.map((q) => ({ x: q.x * f, y: q.y * f })) as Quad }, SNAPSHOT_SIZE);
         const out = new ImageData(page.width, page.height);
-        for (let p = 0; p < page.width * page.height; p++) {
-          out.data[p * 4] = page.rgb[p * 3];
-          out.data[p * 4 + 1] = page.rgb[p * 3 + 1];
-          out.data[p * 4 + 2] = page.rgb[p * 3 + 2];
-          out.data[p * 4 + 3] = 255;
-        }
+        rgbToRgba(page.rgb, page.width * page.height, out.data);
         shot.width = page.width;
         shot.height = page.height;
         sctx.putImageData(out, 0, 0);

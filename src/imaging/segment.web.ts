@@ -5,6 +5,7 @@
  * works offline and costs nothing. Loaded on first use only.
  */
 import { APP_BASE, loadScript } from './webScript';
+import { rgbToRgba } from './pixels';
 /** The parts of ONNX Runtime Web used here (it is loaded as a script, not bundled). */
 interface OrtSession {
   inputNames: readonly string[];
@@ -74,12 +75,7 @@ export async function segmentSubject(input: SegmentInput): Promise<Float32Array 
   src.width = width;
   src.height = height;
   const rgba = new ImageData(width, height);
-  for (let p = 0; p < width * height; p++) {
-    rgba.data[p * 4] = rgb[p * 3];
-    rgba.data[p * 4 + 1] = rgb[p * 3 + 1];
-    rgba.data[p * 4 + 2] = rgb[p * 3 + 2];
-    rgba.data[p * 4 + 3] = 255;
-  }
+  rgbToRgba(rgb, width * height, rgba.data);
   src.getContext('2d')!.putImageData(rgba, 0, 0);
   const small = document.createElement('canvas');
   small.width = SIZE;
