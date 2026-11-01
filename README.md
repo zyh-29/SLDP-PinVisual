@@ -134,8 +134,18 @@ To put it online:
 No server code is needed. The build writes a page for every tab
 (`scripts/web-routes.mjs`), so refreshing works on any static host. On Vercel,
 import the repo and deploy; `vercel.json` has the settings and every push to
-`main` redeploys. The cut-out model files (about 15 MB) only load when a photo
-needs them.
+`main` redeploys.
+
+**Offline:** after the first visit the website works without internet, and it
+can be added to a phone's home screen to open like an app. The build writes a
+service worker (`scripts/web-offline.mjs` fills in `scripts/service-worker.js`)
+that saves the app's code first (about 3 MB). It then saves the Smart Cut-Out
+model and the graph-number reader in the background (about 26 MB, only the
+engine variant the browser can run), unless the browser asks to save data. An
+update downloads only the files that changed and takes over the next time the
+app is opened. The Device tab says whether the copy is ready. Picture search
+and online speech recognition still need the internet. The service worker is
+off on the development server.
 
 On laptops the app uses a sidebar and a two-column layout. On tablets and
 phones it uses a bottom tab bar, like the native app.

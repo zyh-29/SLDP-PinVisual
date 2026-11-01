@@ -10,6 +10,8 @@ import { VoiceProvider } from '@/voice/VoiceProvider';
 import { useScheme } from '@/ui/theme';
 // Website only: page-wide styles (no selecting text with the mouse).
 import '@/ui/webPage';
+// Website only: keeps a copy of the app in the browser so it works offline.
+import '@/offline/serviceWorker';
 
 export default function RootLayout() {
   const scheme = useScheme();
