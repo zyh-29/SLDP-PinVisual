@@ -17,6 +17,8 @@ const light = {
   segmentSelected: '#FFFFFF', // the chosen option in a segmented control
   tint: '#0062CC', // accessible system blue, 5.9:1 on white
   tintSoft: 'rgba(0, 98, 204, 0.11)',
+  /** Filled buttons and icon tiles: system blue that keeps white text at 4.5:1 or more. */
+  tintFill: '#0062CC',
   onTint: '#FFFFFF',
   destructive: '#C02A1F', // 5.9:1 on white
   destructiveSoft: 'rgba(192, 42, 31, 0.10)',
@@ -28,6 +30,8 @@ const light = {
   pinLoweredBorder: '#8E8E93',
   pinLoweredFill: '#FFFFFF',
   gridWell: '#F2F2F7',
+  switchOn: '#34C759', // iOS system green
+  switchOff: '#E9E9EB',
   sidebar: '#E9E9EE',
 };
 
@@ -40,9 +44,10 @@ const dark: typeof light = {
   separator: '#38383A',
   fill: '#2C2C2E',
   segmentSelected: '#636366', // iOS dark: the chosen segment is lighter than its track
-  tint: '#4BA3FF',
-  tintSoft: 'rgba(75, 163, 255, 0.18)',
-  onTint: '#000000',
+  tint: '#409CFF', // iOS dark system blue (increased contrast), for text and icons
+  tintSoft: 'rgba(64, 156, 255, 0.16)',
+  tintFill: '#0071E3', // white text 4.7:1
+  onTint: '#FFFFFF',
   destructive: '#FF6B61',
   destructiveSoft: 'rgba(255, 107, 97, 0.16)',
   success: '#4CD471',
@@ -53,6 +58,8 @@ const dark: typeof light = {
   pinLoweredBorder: '#7C7C80',
   pinLoweredFill: '#1C1C1E',
   gridWell: '#111113',
+  switchOn: '#30D158',
+  switchOff: '#39393D',
   sidebar: '#161618',
 };
 

@@ -34,7 +34,7 @@ import { type PickedImage, useImageConversion } from '@/state/useImageConversion
 import { Button, Columns, Screen, Section, StatusBanner } from '@/ui/components';
 import { ConversionSettings } from '@/ui/ConversionSettings';
 import { CropEditor } from '@/ui/CropEditor';
-import { CAMERA_HINT, ImageSourcePicker, SCREEN_HINT } from '@/ui/ImageSourcePicker';
+import { CAMERA_HINT, ImageSourcePicker, PICKER_WIDTH, SCREEN_HINT } from '@/ui/ImageSourcePicker';
 import { DropOverlay, LiveBadge } from '@/ui/ImageOverlays';
 import { ImageResult } from '@/ui/ImageResult';
 import { PixelImage } from '@/ui/PixelImage';
@@ -43,7 +43,7 @@ import { SavePatternSheet } from '@/ui/SavePatternSheet';
 import { radius, space, useTheme } from '@/ui/theme';
 import { announce } from '@/voice/announce';
 import { useImageVoice, useVoice } from '@/voice/VoiceProvider';
-import { VoiceBar } from '@/ui/VoicePanel';
+import { VoiceBar, VoiceToggle } from '@/ui/VoicePanel';
 
 
 /**
@@ -557,21 +557,21 @@ export default function ImageScreen() {
   });
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={styles.tool}>
       <Screen
         title="Image"
         // Native: hold the scroll view still while the crop box is dragged. Web: never toggle it, because hiding the
         // page scrollbar changes the content width and makes the whole picture jump; the crop area blocks touch scrolling itself.
         scrollEnabled={Platform.OS === 'web' || !dragging}
         // iPhone: VoiceOver's two-finger double-tap starts or stops listening.
+        headerRight={<VoiceToggle />}
+        // Before there's a picture the page is one list column: the header lines up with it.
+        width={!picked || !fg ? PICKER_WIDTH : undefined}
         onMagicTap={voice.openAndListen}>
-        {voice.prefs.voiceControl ? (
-          <Section title="Voice">
-            <VoiceBar pictureUri={picked?.uri} />
-          </Section>
-        ) : null}
         {!picked || !fg ? (
-          <ImageSourcePicker
+          <View style={{ gap: space.xl }}>
+            <VoiceBar pictureUri={picked?.uri} />
+            <ImageSourcePicker
             loading={loading}
             onPick={pick}
             onCamera={supportsCamera ? () => startLive('camera') : undefined}
@@ -579,8 +579,11 @@ export default function ImageScreen() {
             dropHint={supportsFileDrop}
             onEquation={drawEquation}
             equationError={equationError}
-          />
+            />
+          </View>
         ) : (
+          <>
+          <VoiceBar pictureUri={picked?.uri} />
           <Columns
             rightWidth={420}
             left={
@@ -650,7 +653,7 @@ export default function ImageScreen() {
                       icon="sparkles"
                       variant="secondary"
                       compact
-                      style={{ flex: 1 }}
+                      style={styles.tool}
                       disabled={!manualCrop && !focus}
                       onPress={() => {
                         lock.release();
@@ -667,7 +670,7 @@ export default function ImageScreen() {
                         icon="fullscreen"
                         variant="secondary"
                         compact
-                        style={{ flex: 1 }}
+                        style={styles.tool}
                         onPress={() => {
                           dropCapture();
                           setManualCrop(fullRect(picked.raster.width, picked.raster.height));
@@ -680,7 +683,7 @@ export default function ImageScreen() {
                         icon="close"
                         variant="destructive"
                         compact
-                        style={{ flex: 1 }}
+                        style={styles.tool}
                         onPress={clearImage}
                         accessibilityHint="Removes the image and returns to the start"
                       />
@@ -693,7 +696,7 @@ export default function ImageScreen() {
                           title="Capture"
                           icon="camera"
                           compact
-                          style={{ flex: 1 }}
+                          style={styles.tool}
                           onPress={capturePhoto}
                           loading={loading}
                           accessibilityLabel="Capture photo"
@@ -704,7 +707,7 @@ export default function ImageScreen() {
                           variant="destructive"
                           icon="stop"
                           compact
-                          style={{ flex: 1 }}
+                          style={styles.tool}
                           onPress={stopLive}
                           accessibilityHint="Turns the camera off and keeps the last picture"
                         />
@@ -727,12 +730,12 @@ export default function ImageScreen() {
                         variant="secondary"
                         icon="photo"
                         compact
-                        style={{ flex: 1 }}
+                        style={styles.tool}
                         onPress={pick}
                         loading={loading}
                       />
                       {live ? (
-                        <Button title="Stop Sharing" variant="destructive" icon="stop" compact style={{ flex: 1 }} onPress={stopLive} />
+                        <Button title="Stop Sharing" variant="destructive" icon="stop" compact style={styles.tool} onPress={stopLive} />
                       ) : (
                         <>
                           {supportsCamera ? (
@@ -741,7 +744,7 @@ export default function ImageScreen() {
                               variant="secondary"
                               icon="camera"
                               compact
-                              style={{ flex: 1 }}
+                              style={styles.tool}
                               onPress={() => startLive('camera')}
                               disabled={loading}
                               accessibilityLabel="Live camera"
@@ -750,11 +753,12 @@ export default function ImageScreen() {
                           ) : null}
                           {supportsScreenCapture ? (
                             <Button
-                              title="Share Screen"
+                              title="Screen"
+                              accessibilityLabel="Share screen"
                               variant="secondary"
                               icon="screen"
                               compact
-                              style={{ flex: 1 }}
+                              style={styles.tool}
                               onPress={() => startLive('screen')}
                               disabled={loading}
                               accessibilityHint={SCREEN_HINT}
@@ -821,6 +825,7 @@ export default function ImageScreen() {
               </>
             }
           />
+          </>
         )}
 
         {error ? <StatusBanner tone="error" title="Image not converted" message={error} /> : null}
@@ -842,7 +847,9 @@ export default function ImageScreen() {
 }
 
 const styles = StyleSheet.create({
-  buttonRow: { flexDirection: 'row', gap: space.sm },
+  buttonRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  // Equal widths, but never so narrow a label is cut off: they wrap to another line instead.
+  tool: { flexGrow: 1, flexBasis: 120 },
   frame: {
     width: '100%',
     maxWidth: 480,

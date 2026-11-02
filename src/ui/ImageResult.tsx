@@ -52,7 +52,7 @@ export function ImageResult({
           <Button
             title={unlocked ? 'Unlocked' : 'Locked'}
             icon={unlocked ? 'unlock' : 'lock'}
-            variant={unlocked ? 'secondary' : 'destructive'}
+            variant="secondary"
             compact
             style={styles.pill}
             onPress={onToggleLock}

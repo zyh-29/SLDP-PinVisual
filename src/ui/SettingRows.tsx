@@ -1,7 +1,7 @@
 import Slider from '@react-native-community/slider';
-import { StyleSheet, Switch, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
-import { Button, Label } from './components';
+import { AppSwitch, Button, Label } from './components';
 import { space, useTheme } from './theme';
 
 /** A setting with an on/off switch. */
@@ -11,7 +11,7 @@ export function SwitchRow({ title, hint, value, onChange }: { title: string; hin
       <Label variant="body" style={{ flex: 1 }}>
         {title}
       </Label>
-      <Switch value={value} onValueChange={onChange} accessibilityLabel={title} accessibilityHint={hint} />
+      <AppSwitch value={value} onValueChange={onChange} accessibilityLabel={title} accessibilityHint={hint} />
     </View>
   );
 }

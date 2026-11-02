@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, Switch, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 
 import { BLE, GRID, PROTOCOL } from '@/config/hardware';
 import { useDevice } from '@/state/DeviceProvider';
 import { useBoardActions } from '@/state/useBoardActions';
 import { AppearancePicker } from '@/ui/AppearancePicker';
 import { CommandStatus } from '@/ui/CommandStatus';
-import { Button, Columns, Label, Row, Screen, Section, Separator, StatusBanner } from '@/ui/components';
+import { AppSwitch, Button, Columns, Label, Row, Screen, Section, Separator, StatusBanner } from '@/ui/components';
 import { connectionSummary } from '@/ui/ConnectionPill';
 import { Icon } from '@/ui/Icon';
 import { useResponsive } from '@/ui/layout';
@@ -111,7 +111,7 @@ export default function DeviceScreen() {
               <Label variant="body" style={{ flex: 1 }}>
                 {picker ? 'Show every device in the list' : 'Show all named devices'}
               </Label>
-              <Switch value={showAll} onValueChange={setShowAll} accessibilityLabel="Show all named Bluetooth devices" />
+              <AppSwitch value={showAll} onValueChange={setShowAll} accessibilityLabel="Show all named Bluetooth devices" />
             </View>
           </View>
           {state.scanError ? (

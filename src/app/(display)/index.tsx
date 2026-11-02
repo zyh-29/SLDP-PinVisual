@@ -14,7 +14,7 @@ import { SavePatternSheet } from '@/ui/SavePatternSheet';
 import { HistoryTimeline } from '@/ui/HistoryTimeline';
 import { MIN_TOUCH, radius, space, useTheme } from '@/ui/theme';
 import { useUndoShortcuts } from '@/ui/useUndoShortcuts';
-import { VoicePanel } from '@/ui/VoicePanel';
+import { VoiceBar, VoiceToggle } from '@/ui/VoicePanel';
 import { useVoice } from '@/voice/VoiceProvider';
 import { announce } from '@/voice/announce';
 
@@ -33,10 +33,8 @@ export default function DisplayScreen() {
 
   return (
     // iPhone: VoiceOver's two-finger double-tap ("Magic Tap") anywhere on this tab starts or stops listening.
-    <Screen title="Display" onMagicTap={voice.openAndListen}>
-      <Section title={voice.prefs.voiceControl ? 'Voice' : undefined}>
-        <VoicePanel />
-      </Section>
+    <Screen title="Display" headerRight={<VoiceToggle />} onMagicTap={voice.openAndListen}>
+      <VoiceBar />
       <Columns
         left={
       <Section padded>

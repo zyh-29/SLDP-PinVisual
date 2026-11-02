@@ -5,6 +5,8 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Switch,
+  type SwitchProps,
   type ScrollViewProps,
   StyleSheet,
   Text,
@@ -31,7 +33,20 @@ export function tapFeedback() {
  * page draws its own large title (and the connection pill when there is no
  * sidebar showing it). On the website, pulling down at the top reloads the page (usePullToRefresh).
  */
-export function Screen({ children, title, ...rest }: ScrollViewProps & { children: ReactNode; title: string }) {
+export function Screen({
+  children,
+  title,
+  headerRight,
+  width,
+  ...rest
+}: ScrollViewProps & {
+  /** A narrower column for the whole page, title and header buttons included, so they line up with the content. */
+  width?: number;
+  children: ReactNode;
+  title: string;
+  /** Buttons at the trailing end of the title, where iOS puts navigation-bar buttons. */
+  headerRight?: ReactNode;
+}) {
   const t = useTheme();
   const { gutter, sidebar } = useResponsive();
   const web = Platform.OS === 'web';
@@ -45,15 +60,30 @@ export function Screen({ children, title, ...rest }: ScrollViewProps & { childre
       keyboardShouldPersistTaps="handled"
       {...rest}>
       <View style={styles.screenInner}>
-        {web ? (
+        <View style={[styles.screenColumn, width ? { maxWidth: width } : null]}>
+        {web && !sidebar ? (
+          // Narrow (phones): like iOS, bar buttons get their own row above the large title, so the title is never cut.
+          <View style={{ gap: space.xs }}>
+            <View style={styles.webBar}>
+              {headerRight}
+              <ConnectionPill />
+            </View>
+            <Text accessibilityRole="header" aria-level={1} style={[type.largeTitle, { color: t.text }]} numberOfLines={1}>
+              {title}
+            </Text>
+          </View>
+        ) : web ? (
           <View style={styles.webHeader}>
             <Text accessibilityRole="header" aria-level={1} style={[type.largeTitle, { color: t.text, flex: 1 }]} numberOfLines={1}>
               {title}
             </Text>
-            {!sidebar ? <ConnectionPill /> : null}
+            {headerRight}
           </View>
+        ) : headerRight ? (
+          <View style={styles.nativeHeaderRight}>{headerRight}</View>
         ) : null}
         {children}
+        </View>
       </View>
     </ScrollView>
   );
@@ -124,6 +154,44 @@ export function Separator({ inset = 0 }: { inset?: number }) {
   return <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: t.separator, marginLeft: inset }} />;
 }
 
+/**
+ * An iOS switch: green when on, a white knob. Phones use their own switch; the browser's is drawn here at iOS's
+ * size (51 × 31), since the browser's default is a thin Material track with an overhanging knob.
+ */
+export function AppSwitch(props: SwitchProps) {
+  const t = useTheme();
+  if (Platform.OS !== 'web') {
+    return <Switch trackColor={{ false: t.switchOff, true: t.switchOn }} ios_backgroundColor={t.switchOff} {...props} />;
+  }
+  const { value = false, onValueChange, disabled, accessibilityLabel, accessibilityHint } = props;
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value, disabled: !!disabled }}
+      accessibilityLabel={accessibilityLabel}
+      accessibilityHint={accessibilityHint}
+      disabled={disabled}
+      onPress={() => onValueChange?.(!value)}
+      style={[SWITCH.track, { backgroundColor: value ? t.switchOn : t.switchOff, opacity: disabled ? 0.5 : 1 }]}>
+      <View style={[SWITCH.knob, { transform: [{ translateX: value ? 20 : 0 }] }]} />
+    </Pressable>
+  );
+}
+
+// Web-only animation properties, which React Native's style types don't list.
+const SWITCH = {
+  track: { width: 51, height: 31, borderRadius: 16, padding: 2, transitionProperty: 'background-color', transitionDuration: '200ms' } as unknown as ViewStyle,
+  knob: {
+    width: 27,
+    height: 27,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
+    transitionProperty: 'transform',
+    transitionDuration: '200ms',
+  } as unknown as ViewStyle,
+};
+
 // ---------- Buttons ----------
 
 type ButtonVariant = 'primary' | 'secondary' | 'destructive' | 'plain';
@@ -153,7 +221,7 @@ export function Button({
 }) {
   const t = useTheme();
   const colors: Record<ButtonVariant, { bg: string; fg: string }> = {
-    primary: { bg: t.tint, fg: t.onTint },
+    primary: { bg: t.tintFill, fg: t.onTint },
     secondary: { bg: t.tintSoft, fg: t.tint },
     destructive: { bg: t.destructiveSoft, fg: t.destructive },
     plain: { bg: 'transparent', fg: t.tint },
@@ -272,6 +340,10 @@ export function Row({
   title,
   detail,
   right,
+  icon,
+  chevron,
+  loading,
+  disabled,
   onPress,
   accessibilityLabel,
   accessibilityHint,
@@ -279,23 +351,38 @@ export function Row({
   title: string;
   detail?: string;
   right?: ReactNode;
+  /** Leading icon on a coloured rounded square, as in iOS Settings. */
+  icon?: IconName;
+  /** A chevron at the end: the row opens something. */
+  chevron?: boolean;
+  /** A spinner at the end, and the row can't be pressed meanwhile. */
+  loading?: boolean;
+  disabled?: boolean;
   onPress?: () => void;
   accessibilityLabel?: string;
   accessibilityHint?: string;
 }) {
   const t = useTheme();
+  const inactive = disabled || loading;
   const content = (
     <>
+      {icon ? (
+        <View style={[styles.rowIcon, { backgroundColor: inactive ? t.textSecondary : t.tintFill }]}>
+          <Icon name={icon} color="#FFFFFF" size={18} />
+        </View>
+      ) : null}
       <View style={{ flex: 1, gap: 2 }}>
-        <Text style={[type.body, { color: t.text }]}>{title}</Text>
+        <Text style={[type.body, { color: disabled ? t.textSecondary : t.text }]}>{title}</Text>
         {detail ? <Text style={[type.subhead, { color: t.textSecondary }]}>{detail}</Text> : null}
       </View>
       {right}
+      {loading ? <ActivityIndicator color={t.textSecondary} /> : chevron ? <Icon name="chevron" color={t.textSecondary} size={16} /> : null}
     </>
   );
+  const label = accessibilityLabel ?? [title, detail].filter(Boolean).join(', ');
   if (!onPress) {
     return (
-      <View style={styles.row} accessible accessibilityLabel={accessibilityLabel ?? [title, detail].filter(Boolean).join(', ')}>
+      <View style={styles.row} accessible accessibilityLabel={label}>
         {content}
       </View>
     );
@@ -303,10 +390,18 @@ export function Row({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? [title, detail].filter(Boolean).join(', ')}
+      accessibilityLabel={label}
       accessibilityHint={accessibilityHint}
-      onPress={onPress}
-      style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [styles.row, (pressed || hovered) && { backgroundColor: t.cardPressed }]}>
+      accessibilityState={{ disabled: !!inactive, busy: !!loading }}
+      disabled={inactive}
+      onPress={() => {
+        tapFeedback();
+        onPress();
+      }}
+      style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+        styles.row,
+        !inactive && (pressed || hovered) && { backgroundColor: t.cardPressed },
+      ]}>
       {content}
     </Pressable>
   );
@@ -314,7 +409,11 @@ export function Row({
 
 const styles = StyleSheet.create({
   screenContent: { paddingBottom: 48, alignItems: 'center' },
-  screenInner: { width: '100%', maxWidth: MAX_CONTENT_WIDTH, gap: space.xl },
+  screenInner: { width: '100%', maxWidth: MAX_CONTENT_WIDTH },
+  // Left-aligned in the page column, so a narrower page keeps its title where every other tab has it.
+  screenColumn: { width: '100%', gap: space.xl },
+  nativeHeaderRight: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: -space.md },
+  webBar: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: space.sm, minHeight: 36 },
   webHeader: { flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: 48 },
   columns: { flexDirection: 'row', alignItems: 'flex-start', gap: space.xl },
   columnMain: { flex: 1, minWidth: 0, gap: space.xl },
@@ -325,7 +424,7 @@ const styles = StyleSheet.create({
   card: { borderRadius: radius.lg, overflow: 'hidden' },
   cardPadded: { padding: space.lg, gap: space.md },
   button: {
-    minHeight: 52,
+    minHeight: 50,
     borderRadius: radius.md,
     paddingHorizontal: space.lg,
     flexDirection: 'row',
@@ -346,5 +445,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
+  rowIcon: { width: 30, height: 30, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
   row: { minHeight: MIN_TOUCH + 8, flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.lg, paddingVertical: space.md },
 });
