@@ -97,7 +97,7 @@ export function toNumber(word: string | undefined): number | null {
 }
 
 /** How speech recognisers write letters said on their own. */
-const LETTER_NAMES: Record<string, string> = {
+export const LETTER_NAMES: Record<string, string> = {
   a: 'A', ay: 'A', eh: 'A',
   b: 'B', be: 'B', bee: 'B',
   c: 'C', see: 'C', sea: 'C', cee: 'C',
@@ -131,11 +131,11 @@ const OUTLINED = /\b(outline|outlined|hollow|empty|edge|edges|border)\b/;
 
 /** Other names for the shapes. The first match in this list wins, so longer phrases come first. */
 const SHAPE_WORDS: [RegExp, ShapeName][] = [
-  [/\b(up arrow|arrow (pointing )?up|upward arrow)\b/, 'arrow up'],
-  [/\b(down arrow|arrow (pointing )?down|downward arrow)\b/, 'arrow down'],
-  [/\b(left arrow|arrow (pointing )?(to the )?left)\b/, 'arrow left'],
+  [/\b(up arrow|arrow (pointing |facing |going )?up(wards?)?|upward arrow)\b/, 'arrow up'],
+  [/\b(down arrow|arrow (pointing |facing |going )?down(wards?)?|downward arrow)\b/, 'arrow down'],
+  [/\b(left arrow|arrow (pointing |facing |going )?(to the )?left)\b/, 'arrow left'],
   [/\b(right arrow|arrow (pointing )?(to the )?right|arrow)\b/, 'arrow right'],
-  [/\b(vertical line|line down|up and down line|standing line)\b/, 'vertical line'],
+  [/\b(vertical line|line down|up and down line|line (going )?up and down|standing line)\b/, 'vertical line'],
   [/\b(horizontal line|line across|flat line|dash|line)\b/, 'horizontal line'],
   [/\b(checkerboard|checker board|checkers|chessboard|chess board|checked)\b/, 'checkerboard'],
   [/\b(smiley face|smiley|smile|happy face|face)\b/, 'smile'],
@@ -151,6 +151,20 @@ const SHAPE_WORDS: [RegExp, ShapeName][] = [
   // "an outline" with no shape named: a square's.
   [/\b(outline)\b/, 'square'],
 ];
+
+/**
+ * The shape a phrase names, or null. Circles, squares, triangles and diamonds are solid unless the outline is asked
+ * for ("hollow circle").
+ */
+export function shapeIn(thing: string): ShapeName | null {
+  for (const [re, shape] of SHAPE_WORDS)
+    if (re.test(thing)) {
+      const outline = `${shape} outline` as ShapeName;
+      if (OUTLINED.test(thing) && SHAPE_NAMES.includes(outline)) return outline;
+      if (SHAPE_NAMES.includes(shape)) return shape;
+    }
+  return null;
+}
 
 /** Lower case, no punctuation, single spaces, and the polite or filler words around a command taken off. */
 export function normalise(text: string): string {
@@ -273,7 +287,7 @@ export function parseCommand(text: string, savedNames: readonly string[] = []): 
   // Talking to the app itself
   if (/^(help|what can i say|what can you do|commands|list commands|options|what are the commands)$/.test(s)) return { kind: 'help' };
   if (/^(repeat|repeat that|again|say again|say that again|what|pardon|sorry|come again|what did you say)$/.test(s)) return { kind: 'repeat' };
-  if (/^(stop|stop talking|quiet|be quiet|silence|shush|hush|shut up)$/.test(s)) return { kind: 'stop' };
+  if (/^(stop|stop talking|quiet|be quiet|silence|shh+|shush|hush|shut up)$/.test(s)) return { kind: 'stop' };
   if (/^(yes|yeah|yep|yup|yes please|confirm|confirmed|ok|okay|sure|do it|go|go ahead|correct|affirmative)$/.test(s)) return { kind: 'yes' };
   if (/^(no|nope|nah|cancel|never mind|nevermind|dont|do not|no thanks|abort)$/.test(s)) return { kind: 'no' };
 
@@ -303,8 +317,12 @@ export function parseCommand(text: string, savedNames: readonly string[] = []): 
   // Searching: "search for cats", "find house", "show me pictures of a car"
   const pictures = /^(?:search|find|look|get|show(?: me)?)\s+(?:for\s+)?(?:an?\s+|some\s+)?(?:pictures?|photos?|images?)\s+(?:of|for)\s+(?:an?\s+|the\s+|some\s+)?(.+)$/.exec(s);
   if (pictures) return { kind: 'search', query: pictures[1], pictures: true };
+  // "search the internet for a butterfly": pictures, not a saved pattern
+  const online = /^(?:search|look|find|check)\s+(?:on\s+)?(?:the\s+)?(?:internet|web|online)\s+for\s+(?:an?\s+|the\s+|some\s+)?(.+)$/.exec(s);
+  if (online) return { kind: 'search', query: online[1], pictures: true };
   const search = /^(?:search|find|look)\s+(?:for\s+)?(?:an?\s+|the\s+)?(.+)$/.exec(s);
-  if (search) return { kind: 'search', query: search[1].replace(/\s+(pattern|patterns|picture|pictures)$/, ''), pictures: false };
+  if (search)
+    return { kind: 'search', query: search[1].replace(/^(my|the)\s+/, '').replace(/\s+(pattern|patterns|picture|pictures)$/, ''), pictures: false };
   if (/^(next|next one|next picture|another|another one|another picture|skip|show another)$/.test(s)) return { kind: 'next', back: false };
   if (/^(previous|previous one|previous picture|back one|last one|go back one)$/.test(s)) return { kind: 'next', back: true };
 
@@ -378,13 +396,8 @@ export function parseCommand(text: string, savedNames: readonly string[] = []): 
   }
 
   // A shape: "show a circle", "draw an up arrow", or just "heart"
-  // Circles, squares, triangles and diamonds are solid unless the outline is asked for ("hollow circle").
-  for (const [re, shape] of SHAPE_WORDS)
-    if (re.test(thing)) {
-      const outline = `${shape} outline` as ShapeName;
-      if (OUTLINED.test(thing) && SHAPE_NAMES.includes(outline)) return { kind: 'shape', shape: outline };
-      if (SHAPE_NAMES.includes(shape)) return { kind: 'shape', shape };
-    }
+  const shape = shapeIn(thing);
+  if (shape) return { kind: 'shape', shape };
 
   // "show b", "show bee", "show 3", "show three": a single letter or digit after a show verb
   if (new RegExp(`^${SHOW}\\s`).test(s)) {
@@ -397,6 +410,9 @@ export function parseCommand(text: string, savedNames: readonly string[] = []): 
     const name = matchName(rest, savedNames);
     if (name) return { kind: 'saved', name };
   }
+
+  // A digit said on its own: "six" (not the homophones: "to" or "for" alone is something else)
+  if (/^(zero|one|two|three|four|five|six|seven|eight|nine|\d)$/.test(s)) return { kind: 'character', char: String(toNumber(s)) };
 
   // A saved pattern's name on its own
   const bare = matchName(s, savedNames);

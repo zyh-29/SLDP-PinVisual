@@ -387,9 +387,11 @@ The simulator can't check these:
 
 ## Voice commands
 
-Press **Voice Control** on the Display tab (it stays on until turned off, and
-can also be switched in the Device tab). The panel has a **Speak** button and
-a box to type the same commands; a smaller bar appears on the Image tab too.
+Press **Voice** at the top of the Display or Image tab (it stays on until
+turned off, and can also be switched in the Device tab). A command field
+appears under the title, with a microphone in it: type a command and press
+return, or tap the microphone and speak. The **?** beside it lists examples,
+each of which can be tapped to try it.
 On iPhone, VoiceOver's two-finger double-tap on either tab opens it and starts
 listening. Typing is there for noisy rooms, for speech the recogniser doesn't
 follow, and for browsers without speech recognition.
@@ -432,12 +434,14 @@ the camera and pictures to Image.
   follow. A result whose pins say nothing (two or fewer, or nearly all 30) is
   skipped, up to three in a row.
 - **Going places:** "go to image", "go to display", "open device".
-- **On-device AI help:** where the browser has a built-in model (Chrome on a
-  computer with Gemini Nano downloaded), a sentence that isn't a listed
-  command is rewritten as one, then confirmed: "Did you mean: show a heart?
-  Say yes or no." Nothing is done until "yes", and nothing leaves the
-  computer. Elsewhere only listed commands work. (iPhone: Apple's on-device
-  model needs a native module, not written yet.)
+- **Say it your own way.** "Could you get rid of everything", "make the
+  fourth column stick up", "turn the camera on", "I want to feel a picture of
+  a tree" all work. See "How commands are understood" below.
+- **Browser AI as a last resort:** where the browser has a built-in model
+  (Chrome on a computer with Gemini Nano downloaded), a sentence neither the
+  rules nor the voice model understood is rewritten as a command, then
+  confirmed: "Did you mean: show a heart? Say yes or no." Nothing is done
+  until "yes", and nothing leaves the computer.
 - **Nothing moves without a yes.** "Send" and "reset" ask first ("Say yes to
   send, or no") and offer Yes / Cancel buttons. Any other command cancels the
   question.
@@ -448,8 +452,7 @@ the camera and pictures to Image.
   VoiceOver's two-finger double-tap anywhere on the Display tab also starts
   it.
 - **Where speech is recognised.** Commands are understood by the app itself
-  (`src/voice/commands.ts`), from a fixed list. The audio is turned into words
-  by the device:
+  (below). The audio is turned into words by the device:
 
   | Where | Recogniser | Leaves the device? |
   |---|---|---|
@@ -457,6 +460,55 @@ the camera and pictures to Image.
   | Chrome on a computer | Chrome's on-device recognition (downloads the language once) | No |
   | Chrome on Android, Safari, Edge | The browser's maker's servers | Only with **Online Speech Recognition** on (Device tab) |
   | Firefox | None | Type commands instead |
+
+### How commands are understood
+
+`src/voice/understand.ts` reads every sentence, spoken or typed, in steps,
+fastest first. All of it runs on the device in about 0.05 ms.
+
+1. **The command rules** (`src/voice/commands.ts`): fixed phrasings, exact and
+   predictable.
+2. **The rules again after tidying**: filler taken out anywhere ("could you
+   just … now please"), and a few words folded into known ones ("hart",
+   "pyramid", "ball").
+3. **The voice model** (`src/voice/intent/`): a small neural network in the
+   style of fastText. It reads the words, word pairs and three-letter pieces
+   of words (so "sqare" or "camra" still land), and says which of 39 kinds of
+   command the sentence is, and how sure it is. It's about 130,000 numbers
+   stored as bytes (177 KB in the app) and needs no download, runtime or
+   internet.
+   - The model only picks the kind. The details (row 2, the letter B, what to
+     search for) are read from the sentence and checked by the rules, so the
+     model can't make up a row number or a search.
+   - 80% sure or more: done. 40–80%: "Did you mean …? Say yes or no."
+     Less: not a command.
+   - Its guess is ignored when under half the words are ones it learned
+     ("pizza" isn't a command, however sure it seems).
+   - It overrules the rules only when 97% sure they misread a sentence ("find
+     me an image of a car" is a picture search, not a saved pattern).
+4. **The browser's AI**, where there is one (above).
+
+**Training.** `npm run train:voice` (Node 22.18 or newer) builds about 15,000
+example sentences from `scripts/voice-training-data.mjs` (each kind of command
+said many ways, with filler, recogniser mishearings and typos), trains for
+about a second, and writes `src/voice/intent/weights.ts`. To teach it a new
+phrasing, add it to the lists there and retrain.
+
+**Measuring.** `src/voice/__tests__/voicePhrases.ts` holds about 350 natural
+phrasings, and none of them is used for training. Run
+`VOICE_REPORT=1 npx jest understand.eval` for the report. When the model was
+built:
+
+| Phrases | Rules alone | With the model |
+|---|---|---|
+| Tuning set (189) | 69% understood | 98% understood, 2% asked, 0 wrong |
+| Exam set (95, scored before any fixes) | 49% | 96% at first; 98% after fixes |
+| Fresh set (62, written after tuning, scored once) | 50% | 97% at first; 98% after one fix ("capital letter r") |
+
+The one fresh phrase still acted on wrongly is "what is for dinner", which
+reads the board aloud. That's harmless, but it shows the model can be fooled
+by sentences that sound like commands. The test fails if understanding drops
+below these levels or more than one phrase per set is acted on wrongly.
 
 - **Speak Results** (Device tab) reads results aloud with the device's voice,
   for people who don't use a screen reader. While VoiceOver or TalkBack is on,

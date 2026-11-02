@@ -9,11 +9,12 @@ import { patternStore } from '@/state/useSavedPatterns';
 import { isCompatible, toPattern } from '@/storage/patternStore';
 import { aiStatus, aiSuggest } from './aiFallback';
 import { announce, lastAnnouncement, screenReaderOn, stopSpeaking } from './announce';
-import { HINT_WORDS, type ImageAction, type ImageSetting, matchName, parseCommand, type Tab } from './commands';
+import { type Command, HINT_WORDS, type ImageAction, type ImageSetting, matchName, parseCommand, type Tab } from './commands';
 import { listeningCue } from './cue';
 import { credit, type Picture, searchPictures } from './pictureSearch';
 import { cancelListening, finishListening, listen, recognitionSupport, type RecognitionSupport } from './recognizer';
 import { type Effect, type Pending, runCommand } from './runCommand';
+import { understand } from './understand';
 import { useVoicePrefs, type VoicePrefs } from './voicePrefs';
 
 export type VoicePhase = 'idle' | 'downloading' | 'listening' | 'thinking' | 'searching';
@@ -241,24 +242,28 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       .then((r) => r.patterns)
       .catch(() => []);
     const now = latest.current;
-    let used = transcripts[0] ?? '';
-    let cmd = parseCommand(used, names.map((p) => p.name));
-    for (const t of transcripts) {
-      const c = parseCommand(t, names.map((p) => p.name));
-      if (c.kind !== 'unknown') {
-        used = t;
-        cmd = c;
-        break;
-      }
-    }
+    const saved = names.map((p) => p.name);
+    // The first of the recogniser's guesses that's understood (understand.ts: the rules, then the voice model);
+    // failing that, the first one the voice model would ask about.
+    const readings = transcripts.map((text) => ({ text, u: understand(text, saved) }));
+    const chosen = readings.find((r) => r.u.command.kind !== 'unknown') ?? readings.find((r) => r.u.confirm) ?? readings[0];
+    const used = chosen?.text ?? '';
+    const cmd: Command = chosen?.u.command ?? { kind: 'unknown', heard: '' };
     setHeard(used);
 
-    // Not a listed command: the on-device AI (where there is one) suggests one, which must be confirmed.
+    // The voice model is fairly sure, not certain: ask before doing anything.
+    if (chosen?.u.confirm) {
+      setPending({ suggestion: chosen.u.confirm });
+      return say(`Did you mean: ${chosen.u.confirm}? Say yes or no.`);
+    }
+
+    // Neither the rules nor the voice model understood: the browser's on-device AI (where there is one) suggests a
+    // command, which must be confirmed.
     if (cmd.kind === 'unknown' && cmd.heard && (await aiStatus()) === 'available') {
       setPhase('thinking');
       const suggestion = await aiSuggest(cmd.heard);
       setPhase('idle');
-      if (suggestion && parseCommand(suggestion, names.map((p) => p.name)).kind !== 'unknown') {
+      if (suggestion && parseCommand(suggestion, saved).kind !== 'unknown') {
         setPending({ suggestion });
         return say(`Did you mean: ${suggestion}? Say yes or no.`);
       }
