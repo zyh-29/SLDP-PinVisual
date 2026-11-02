@@ -152,22 +152,36 @@ export function mentions(title: string, query: string): boolean {
   return words.length > 0 && words.every((w) => t.includes(` ${w.replace(/(es|s)$/, '')}`));
 }
 
+/** What arrives first, and what follows once every source has answered. */
+export interface PictureResults {
+  /** The best results available as soon as the best source with any answered (see searchPicturesFast). */
+  pictures: Picture[];
+  /** Every result, once all sources have answered: `pictures` first in the same order, then the rest. */
+  complete: Promise<Picture[]>;
+}
+
 /**
  * Drawn silhouettes first (one solid shape on a plain background), then silhouette photos (the thing against the
  * light), then ordinary photos for anything nobody has drawn. Silhouettes count only when their title names the
- * thing. Throws only when no search answered.
+ * thing.
+ *
+ * Answers as soon as the first result can't change: the best source that found something has answered, and every
+ * better one has too. Usually that's Wikimedia's drawings, in well under a second, while a slow source (Openverse
+ * can take its full 10 seconds) only adds to `complete`, for "next". Throws only when no search answered.
  */
-export async function searchPictures(query: string, signal?: AbortSignal): Promise<Picture[]> {
+export function searchPicturesFast(query: string, signal?: AbortSignal): Promise<PictureResults> {
   const solid = `${query} silhouette`;
-  const all = await Promise.allSettled([
+  // Best first: the first result comes from the earliest of these that found something.
+  const requests = [
     searchWikimedia(solid, signal, 'drawing'),
     searchOpenverse(solid, signal),
     searchWikimedia(solid, signal),
     searchOpenverse(query, signal),
     searchWikimedia(query, signal),
-  ]);
-  if (all.every((r) => r.status === 'rejected')) throw new Error('Picture search is not reachable. Check the internet connection.');
-  const [drawn, ovSolid, wmSolid, ovPhoto, wmPhoto] = all.map((r) => (r.status === 'fulfilled' ? r.value : []));
+  ];
+  const done: (Picture[] | null)[] = requests.map(() => null);
+  let failed = 0;
+
   // Plainest titles first: "House silhouette" is more likely just a house than "House cat silhouette (NIH …)".
   const words = (t: string) => t.split(/\s+/).length;
   const about = (list: Picture[]) =>
@@ -176,12 +190,59 @@ export async function searchPictures(query: string, signal?: AbortSignal): Promi
       .map((p, i) => ({ p, i }))
       .sort((a, b) => words(a.p.title) - words(b.p.title) || a.i - b.i)
       .map((x) => x.p);
-  const seen = new Set<string>();
-  return [
-    ...interleave([about(drawn), about(ovSolid)], seen),
-    ...interleave([about(wmSolid)], seen),
-    ...interleave([ovPhoto, wmPhoto], seen),
-  ];
+  /** The sources' results as far as they've answered, filtered: silhouettes must name the thing. */
+  const usable = () => done.map((r, i) => (r ? (i < 3 ? about(r) : r) : []));
+  const ranked = () => {
+    const [drawn, ovSolid, wmSolid, ovPhoto, wmPhoto] = usable();
+    const seen = new Set<string>();
+    return [...interleave([drawn, ovSolid], seen), ...interleave([wmSolid], seen), ...interleave([ovPhoto, wmPhoto], seen)];
+  };
+  /** The first result is settled: some source found something, and every better source has answered. */
+  const firstSettled = () => {
+    const u = usable();
+    for (let i = 0; i < requests.length; i++) {
+      if (done[i] === null) return false;
+      if (u[i].length) return true;
+    }
+    return true;
+  };
+
+  const complete = Promise.allSettled(requests).then(() => {
+    if (failed === requests.length) throw new Error('Picture search is not reachable. Check the internet connection.');
+    return ranked();
+  });
+  return new Promise((resolve, reject) => {
+    let answered = false;
+    const check = () => {
+      if (answered || !firstSettled()) return;
+      if (failed === requests.length) return;
+      answered = true;
+      const pictures = ranked();
+      // Keep the order already given (one may be on screen), and add what came later.
+      const merged = complete.then((all) => [...pictures, ...all.filter((p) => !pictures.some((q) => q.uri === p.uri))]);
+      merged.catch(() => {});
+      resolve({ pictures, complete: merged });
+    };
+    requests.forEach((r, i) =>
+      r.then(
+        (list) => {
+          done[i] = list;
+          check();
+        },
+        () => {
+          done[i] = [];
+          failed++;
+          check();
+        },
+      ),
+    );
+    complete.catch(reject);
+  });
+}
+
+/** Every result, once all sources have answered (see searchPicturesFast for the order). */
+export async function searchPictures(query: string, signal?: AbortSignal): Promise<Picture[]> {
+  return (await searchPicturesFast(query, signal)).complete;
 }
 
 /** How a picture is credited, spoken and shown: "Cat on snow, by Von.grzanka, CC BY-SA 3.0, from Wikimedia Commons". */

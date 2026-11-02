@@ -433,6 +433,12 @@ the camera and pictures to Image.
   the pins show one solid shape rather than a busy scene; ordinary photos
   follow. A result whose pins say nothing (two or fewer, or nearly all 30) is
   skipped, up to three in a row.
+  The first answer comes as soon as the best source has replied, usually
+  Wikimedia's drawings in about half a second, without waiting for a slow
+  one. Slower sources add to the list for "next", and the total ("of 24") is
+  said once it's final. The next few results are converted off screen at
+  the same time, with the Image tab's own settings, so useless ones are
+  skipped without loading each on the tab (`src/voice/PictureCheck.tsx`).
 - **Going places:** "go to image", "go to display", "open device".
 - **Say it your own way.** "Could you get rid of everything", "make the
   fourth column stick up", "turn the camera on", "I want to feel a picture of

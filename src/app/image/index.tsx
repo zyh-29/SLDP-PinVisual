@@ -29,7 +29,7 @@ import { type CaptureWatch, carryRect, watchCapture } from '@/state/conversionLo
 import { useCameraLock, useLockTarget } from '@/state/useCameraLock';
 import { useBoardActions } from '@/state/useBoardActions';
 import { useLiveSend } from '@/state/useLiveSend';
-import { NO_PAN, useConversionSettings } from '@/state/useConversionSettings';
+import { forNewPicture, NO_PAN, useConversionSettings } from '@/state/useConversionSettings';
 import { type PickedImage, useImageConversion } from '@/state/useImageConversion';
 import { Button, Columns, Screen, Section, StatusBanner } from '@/ui/components';
 import { ConversionSettings } from '@/ui/ConversionSettings';
@@ -237,6 +237,18 @@ export default function ImageScreen() {
   const pinsUnlocked = !!edit?.unlocked;
   /** What the user gets: their edited pins, or the automatic result. */
   const shown = edit?.pattern ?? result;
+
+  // Voice: a picture's pins are settled once it's loaded and nothing is still being worked out for it (Smart
+  // Cut-Out, the numbers on a graph's axes). Voice waits for this instead of watching the pins for a while.
+  const settled = !!picked && !loading && !c.cuttingOut && !c.readingNumbers;
+  const settleWaiters = useRef<{ uri: string; resolve: (p: Pattern | null) => void }[]>([]);
+  useEffect(() => {
+    if (!settled || !picked) return;
+    const ready = settleWaiters.current.filter((w) => w.uri === picked.uri);
+    if (!ready.length) return;
+    settleWaiters.current = settleWaiters.current.filter((w) => w.uri !== picked.uri);
+    ready.forEach((w) => w.resolve(shown ?? null));
+  }, [settled, picked, shown]);
   // Send Live to Board: off until asked for, and only while live.
   const [liveSendOn, setLiveSendOn] = useState(false);
   const liveSend = useLiveSend(liveSendOn && !!live, live ? shown : null);
@@ -552,6 +564,19 @@ export default function ImageScreen() {
       return `Sensitivity ${next}. Higher raises more pins.`;
     },
     loadPicture: (uri) => load({ uri }),
+    pictureSettings: () => forNewPicture(prefs.settings),
+    settled: (uri) =>
+      new Promise((resolve) => {
+        if (settled && picked?.uri === uri) return resolve(shown ?? null);
+        const waiter = { uri, resolve };
+        settleWaiters.current.push(waiter);
+        // A picture that never settles (it failed to load, or another replaced it) mustn't hold voice up forever.
+        setTimeout(() => {
+          if (!settleWaiters.current.includes(waiter)) return;
+          settleWaiters.current = settleWaiters.current.filter((w) => w !== waiter);
+          resolve(null);
+        }, 8000);
+      }),
     result: () => shown ?? null,
     send: sendResult,
   });

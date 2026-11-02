@@ -1,4 +1,4 @@
-import { credit, mentions, openverseLicense, searchPictures } from '../pictureSearch';
+import { credit, mentions, openverseLicense, searchPictures, searchPicturesFast } from '../pictureSearch';
 
 const openverse = {
   results: [
@@ -81,6 +81,36 @@ describe('picture search', () => {
   it('everything down: a message about the connection', async () => {
     global.fetch = jest.fn(() => respond({}, false)) as unknown as typeof fetch;
     await expect(searchPictures('cat')).rejects.toThrow('Picture search is not reachable. Check the internet connection.');
+  });
+
+  it("answers without waiting for a slow source, which adds to the list later", async () => {
+    let release: () => void = () => {};
+    const slow = new Promise<void>((r) => (release = r));
+    global.fetch = jest.fn((url: string) => (url.includes('openverse') ? slow.then(() => route(url)) : route(url))) as unknown as typeof fetch;
+    const fast = await searchPicturesFast('cat');
+    expect(fast.pictures[0].title).toBe('Cat silhouette');
+    release();
+    const all = await fast.complete;
+    expect(all.slice(0, fast.pictures.length)).toEqual(fast.pictures); // what was shown keeps its place
+    expect(all.some((p) => p.title === 'Tabby')).toBe(true);
+  });
+
+  it('waits for a better source when the best one found nothing yet', async () => {
+    let release: () => void = () => {};
+    const slow = new Promise<void>((r) => (release = r));
+    // Wikimedia's drawings are slow; the photos answer first but mustn't jump ahead of a silhouette.
+    global.fetch = jest.fn((url: string) =>
+      decodeURIComponent(url).includes('filetype:drawing') ? slow.then(() => route(url)) : route(url),
+    ) as unknown as typeof fetch;
+    let settled = false;
+    const fast = searchPicturesFast('cat').then((r) => {
+      settled = true;
+      return r;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+    release();
+    expect((await fast).pictures[0].title).toBe('Cat silhouette');
   });
 
   it('licence names', () => {
