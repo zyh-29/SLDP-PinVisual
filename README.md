@@ -136,6 +136,14 @@ No server code is needed. The build writes a page for every tab
 import the repo and deploy; `vercel.json` has the settings and every push to
 `main` redeploys.
 
+**Live at https://zongyaohuang.com/pinvisual.** `vercel.json` builds the app for
+the `/pinvisual` folder (`WEB_BASE_URL=/pinvisual`) and serves it at
+`/pinvisual/` on this project's own `*.vercel.app` address (its root redirects
+there). The main website, zongyaohuang.com (the Portfolio-Web repo), passes
+every `/pinvisual/...` request through to this project, so the two deploy
+separately. To host PinVisual at the root of a site again, change the build
+command back to `npm run build:web` and remove the `redirects` and `rewrites`.
+
 **Offline:** after the first visit the website works without internet, and it
 can be added to a phone's home screen to open like an app. The build writes a
 service worker (`scripts/web-offline.mjs` fills in `scripts/service-worker.js`)
