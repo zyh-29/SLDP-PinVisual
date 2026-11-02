@@ -8,6 +8,7 @@
   ],
   "rewrites": [
     { "source": "/pinvisual", "destination": "/index.html" },
+    { "source": "/pinvisual/", "destination": "/index.html" },
     { "source": "/pinvisual/:path*", "destination": "/:path*" }
   ],
   "headers": [
