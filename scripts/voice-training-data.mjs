@@ -17,14 +17,20 @@ function random(seed) {
   };
 }
 
+/** Saved pattern names used in examples. */
+export const NAMES = ['house', 'morning', 'star', 'robot', 'flower', 'my name', 'test one', 'cat', 'smiley', 'boat', 'tree', 'rocket', 'sun', 'class demo', 'pattern one', 'lesson two', 'map', 'fish'];
+/** Things to find pictures of. */
+export const THINGS = ['cat', 'dog', 'dogs', 'house', 'car', 'apple', 'tree', 'bird', 'giraffe', 'butterfly', 'moon', 'horse', 'elephant', 'plane', 'airplane', 'boat', 'flower', 'guitar', 'chair', 'bicycle', 'fish', 'star', 'rabbit', 'lion', 'shoe', 'cup', 'banana', 'train', 'castle', 'whale', 'spider', 'key', 'umbrella', 'mountain', 'eiffel tower'];
+/** Filler said before and after a command. */
+export const PRE = ['please', 'can you', 'could you', 'would you', 'i want to', 'id like to', 'i would like to', 'lets', 'now', 'ok', 'okay', 'hey', 'um', 'uh', 'so', 'just', 'go ahead and', 'pinvisual', 'i need to', 'can we', 'could we', 'i want you to', 'right'];
+export const POST = ['please', 'now', 'for me', 'thanks', 'thank you', 'right now', 'quickly', 'ok', 'if you can', 'pinvisual'];
+
 export function examples(seed = 1, perLabel = 400, { noise = true } = {}) {
   const rnd = random(seed);
   const pick = (a) => a[Math.floor(rnd() * a.length)];
   const maybe = (s, p = 0.5) => (rnd() < p ? (typeof s === 'function' ? s() : s) : '');
   const join = (...parts) => parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 
-  const PRE = ['please', 'can you', 'could you', 'would you', 'i want to', 'id like to', 'i would like to', 'lets', 'now', 'ok', 'okay', 'hey', 'um', 'uh', 'so', 'just', 'go ahead and', 'pinvisual', 'i need to', 'can we', 'could we', 'i want you to', 'right'];
-  const POST = ['please', 'now', 'for me', 'thanks', 'thank you', 'right now', 'quickly', 'ok', 'if you can', 'pinvisual'];
   const wrap = (s) => join(maybe(() => pick(PRE), 0.35), s, maybe(() => pick(POST), 0.25));
 
   // Numbers as a speech recogniser writes them.
@@ -57,8 +63,6 @@ export function examples(seed = 1, perLabel = 400, { noise = true } = {}) {
   const LETTERS = 'abcdefghijklmnopqrstuvwxyz'.split('');
   const LETTER_SOUNDS = { b: ['bee', 'be'], c: ['see', 'sea'], d: ['dee'], g: ['gee'], j: ['jay'], k: ['kay'], o: ['oh'], p: ['pee'], q: ['cue', 'queue'], r: ['are'], t: ['tee', 'tea'], u: ['you'], y: ['why'], z: ['zed', 'zee'] };
   const letter = (l) => (LETTER_SOUNDS[l] && rnd() < 0.4 ? pick(LETTER_SOUNDS[l]) : l);
-  const NAMES = ['house', 'morning', 'star', 'robot', 'flower', 'my name', 'test one', 'cat', 'smiley', 'boat', 'tree', 'rocket', 'sun', 'class demo', 'pattern one', 'lesson two', 'map', 'fish'];
-  const THINGS = ['cat', 'dog', 'dogs', 'house', 'car', 'apple', 'tree', 'bird', 'giraffe', 'butterfly', 'moon', 'horse', 'elephant', 'plane', 'airplane', 'boat', 'flower', 'guitar', 'chair', 'bicycle', 'fish', 'star', 'rabbit', 'lion', 'shoe', 'cup', 'banana', 'train', 'castle', 'whale', 'spider', 'key', 'umbrella', 'mountain', 'eiffel tower'];
   const EQS = ['y equals x squared', 'x squared', 'x cubed', 'sine of x', 'sin x', 'cosine of x', 'cosine x', 'one over x', '1 over x', 'square root of x', 'y equals 2 x plus 1', 'x plus 3', 'y equals x', 'tangent of x', 'y equals x squared minus 3', 'two x minus one', 'a parabola', 'a sine wave', 'a cosine wave', 'a straight line', 'a hyperbola', 'y = x^2', 'the absolute value of x', 'x to the power of 3', 'half x', 'negative x squared'];
 
   const GEN = {

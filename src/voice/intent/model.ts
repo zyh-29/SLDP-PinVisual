@@ -85,11 +85,27 @@ function nearly(a: string, b: string): boolean {
  * Low means the sentence is about something else, and the model's guess means little.
  */
 export function familiarity(text: string): number {
-  vocabulary ??= new Set(WEIGHTS.vocabulary.split(' '));
   const words = tokens(text);
   if (!words.length) return 0;
+  vocabulary ??= new Set(WEIGHTS.vocabulary.split(' '));
   const known = words.filter(
     (w) => vocabulary!.has(w) || /^\d+$/.test(w) || (w.length >= 4 && [...vocabulary!].some((v) => v.length >= 4 && nearly(w, v))),
   );
   return known.length / words.length;
+}
+
+let anchors: Map<string, Set<string>> | null = null;
+
+/**
+ * Whether a sentence has one of the words of the kind of command the model chose ("snap" for capture), counting
+ * a longer word with one letter dropped or added ("captur"), but not changed: "shark" isn't "share". Without one the sentence is about
+ * something else, whatever the model makes of its letters: "flower" isn't "lower", "cake" isn't "take".
+ */
+export function anchored(text: string, label: string): boolean {
+  anchors ??= new Map(Object.entries(WEIGHTS.anchors).map(([l, words]) => [l, new Set(words.split(' ').filter(Boolean))]));
+  const own = anchors.get(label);
+  if (!own) return false;
+  return tokens(text).some(
+    (w) => own.has(w) || (w.length >= 5 && [...own].some((v) => v.length >= 5 && v.length !== w.length && v[0] === w[0] && nearly(w, v))),
+  );
 }

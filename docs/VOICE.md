@@ -3,8 +3,8 @@
 Press **Voice** at the top of the Display or Image tab (it stays on until
 turned off, and can also be switched in the Device tab). A command field
 appears under the title, with a microphone in it: type a command and press
-return, or tap the microphone and speak. The **?** beside it lists examples,
-each of which can be tapped to try it.
+return, or tap the microphone and speak. Say or type "help" to hear the list of
+commands.
 On iPhone, VoiceOver's two-finger double-tap on either tab opens it and starts
 listening. Typing is there for noisy rooms, for speech the recogniser doesn't
 follow, and for browsers without speech recognition.
@@ -103,6 +103,13 @@ fastest first. All of it runs on the device in about 0.05 ms.
      Less: not a command.
    - Its guess is ignored when under half the words are ones it learned
      ("pizza" isn't a command, however sure it seems).
+   - Its guess only counts when the sentence has one of that command's own
+     words ("snap" or "take" for capture, "lower" or "reset" for reset). The
+     lists come from the training sentences (`anchors` in `weights.ts`), and
+     a word with a letter dropped or added still counts ("captur"). Without
+     one, the sentence is naming a thing, not giving a command, so a word that
+     merely looks like a command ("flower" and "lower") is searched for as a
+     picture instead.
    - It overrules the rules only when 97% sure they misread a sentence ("find
      me an image of a car" is a picture search, not a saved pattern).
 4. **The browser's AI**, where there is one (above).

@@ -15,7 +15,7 @@
  *    a car" is a picture search, not a saved pattern called "me an image of a car").
  */
 import { type Command, LETTER_NAMES, matchName, normalise, parseCommand, shapeIn, toNumber } from './commands';
-import { classify, familiarity, type Intent } from './intent/model';
+import { anchored, classify, familiarity, type Intent } from './intent/model';
 
 export interface Understanding {
   /** What to do now; { kind: 'unknown' } when asking or not understood. */
@@ -41,7 +41,7 @@ const OVERRULE = 0.97;
 const FAMILIAR = 0.5;
 
 const FILLER =
-  /\b(please|kindly|just|for me|thanks|thank you|oops|um+|uh+|er|a bit|a little|right now|quickly|if you can|pinvisual|pin visual)\b/g;
+  /\b(please|kindly|just|actually|sorry|for me|thanks|thank you|oops|whoops|um+|uh+|er|a bit|a little|right now|quickly|if you can|pinvisual|pin visual)\b/g;
 const LEAD =
   /^(now|so|ok|okay|hey|and|then|can you|could you|would you|will you|can we|could we|i want you to|i want to|i want|i would like to|i would like|id like to|id like|i need to|i need|lets|let me|go ahead and|try to)\s+/;
 const SYNONYMS: [RegExp, string][] = [
@@ -54,6 +54,8 @@ const SYNONYMS: [RegExp, string][] = [
   [/\bcolum\b/g, 'column'],
   [/\bcamra\b/g, 'camera'],
   [/\bpitcher\b/g, 'picture'],
+  [/\bupside down\b/g, 'inverted'],
+  [/\b(i )?missed (that|it)\b/g, 'say that again'],
 ];
 
 /** The sentence normalised, with filler removed anywhere in it and a few words folded into ones the rules know. */
@@ -296,9 +298,10 @@ export function understand(text: string, savedNames: readonly string[] = []): Un
   const ranked = tidied && familiarity(tidied) >= FAMILIAR ? classify(tidied) : [];
   const top = ranked[0];
 
-  // The model's reading, filled in and checked by the rules.
+  // The model's reading, filled in and checked by the rules. It only counts when the sentence has a word of that
+  // kind of command: otherwise the sentence names a thing (any thing), which is searched for as a picture.
   const modelReading = () => {
-    if (!top || top.label === 'none') return null;
+    if (!top || top.label === 'none' || !anchored(tidied, top.label)) return null;
     const canonical = rewrite(top.label, tidied, savedNames);
     if (!canonical) return null;
     const command = parseCommand(canonical, savedNames);

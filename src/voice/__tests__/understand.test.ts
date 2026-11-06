@@ -47,6 +47,19 @@ describe('understand', () => {
       expect(understand(s).command.kind).toBe('unknown');
   });
 
+  it('reads a thing as a thing, never as a command it looks like', () => {
+    // Any thing at all, including words the model learned or that look like commands ("flower" / "lower").
+    const things = ['grenade', 'a grenade', 'show me a grenade', 'a giraffe please', 'the eiffel tower', 'flower', 'banana', 'a cake',
+      'frog', 'ship', 'house', 'a tree', 'shark', 'statue', 'a crab', 'show me a rocket'];
+    for (const s of things) {
+      // Not a command, or a search for the thing: never "capture", "next" and so on.
+      const u = understand(s);
+      expect(['unknown', 'search']).toContain(u.command.kind);
+      expect(u.confirm).toBeUndefined();
+    }
+    expect(understand('find pictures of a grenade').command).toEqual({ kind: 'search', query: 'grenade', pictures: true });
+  });
+
   it("doesn't trust the model with words it never learned", () => {
     expect(familiarity('pizza')).toBe(0);
     expect(familiarity('show a sqare')).toBe(1); // a near misspelling counts

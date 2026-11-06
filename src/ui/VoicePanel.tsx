@@ -2,7 +2,6 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { HELP_TEXT } from '@/voice/commands';
 import { credit } from '@/voice/pictureSearch';
 import { useVoice } from '@/voice/VoiceProvider';
 import { Button, Label, tapFeedback } from './components';
@@ -123,66 +122,6 @@ function CommandField() {
           )
         ) : null}
       </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="What can I say?"
-        onPress={() => {
-          tapFeedback();
-          voice.runText('help');
-        }}
-        style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
-          styles.helpButton,
-          (pressed || hovered) && { backgroundColor: t.fill },
-        ]}>
-        <Icon name="help" color={t.tint} size={22} />
-      </Pressable>
-    </View>
-  );
-}
-
-/** "What can I say?", grouped. Every example can be tapped to run it. */
-const HELP_GROUPS: { title: string; examples: string[] }[] = [
-  { title: 'Pins', examples: ['show a circle', 'show a circle outline', 'letter B', 'number 3', 'raise row 2 column 3', 'invert', 'undo', 'clear'] },
-  { title: 'Board', examples: ["what's on the board", 'read row 2', 'send', 'reset'] },
-  { title: 'Pictures', examples: ['find pictures of a cat', 'next', 'start camera', 'capture', 'choose photo', 'use this pattern', 'remove background on'] },
-  { title: 'Graphs', examples: ['graph y equals x squared', 'plot sine of x'] },
-  { title: 'Getting around', examples: ['go to image', 'open saved', 'repeat', 'stop'] },
-];
-
-function CommandHelp() {
-  const t = useTheme();
-  const voice = useVoice();
-  return (
-    <View style={{ gap: space.lg }} accessibilityLabel="Things you can say">
-      {HELP_GROUPS.map((g) => (
-        <View key={g.title} style={{ gap: space.sm }}>
-          <Text accessibilityRole="header" style={[type.footnote, { color: t.textSecondary, fontWeight: '600' }]}>
-            {g.title.toUpperCase()}
-          </Text>
-          <View style={styles.chips}>
-            {g.examples.map((e) => (
-              <Pressable
-                key={e}
-                accessibilityRole="button"
-                accessibilityLabel={e}
-                accessibilityHint="Runs this command"
-                onPress={() => {
-                  tapFeedback();
-                  voice.runText(e);
-                }}
-                style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
-                  styles.chip,
-                  { backgroundColor: t.tintSoft, opacity: pressed ? 0.6 : hovered ? 0.8 : 1 },
-                ]}>
-                <Text style={[type.subhead, { color: t.tint, fontWeight: '500' }]}>{e}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
-      ))}
-      <Label variant="footnote" secondary>
-        Tap one to try it. Shapes are solid; add “outline” for just the edge. Say “stop” to quiet the voice.
-      </Label>
     </View>
   );
 }
@@ -196,7 +135,6 @@ function Conversation({ pictureUri }: { pictureUri?: string }) {
   const voice = useVoice();
   const { heard, reply, pending, picture } = voice;
   const yesTitle = pending === 'send' ? 'Yes, Send' : pending === 'reset' ? 'Yes, Lower Pins' : 'Yes';
-  const help = reply === HELP_TEXT;
   const credited = picture && picture.uri === pictureUri;
   if (!heard && !reply && !pending && !credited) return null;
   return (
@@ -204,14 +142,14 @@ function Conversation({ pictureUri }: { pictureUri?: string }) {
       {heard || reply ? (
         <View
           style={{ gap: space.xs }}
-          accessible={!help}
-          accessibilityLabel={help ? undefined : [heard ? `Heard: ${heard}.` : '', reply].join(' ').trim()}>
-          {heard && !help ? (
+          accessible
+          accessibilityLabel={[heard ? `Heard: ${heard}.` : '', reply].join(' ').trim()}>
+          {heard ? (
             <Label variant="footnote" secondary>
               “{heard}”
             </Label>
           ) : null}
-          {help ? <CommandHelp /> : reply ? <Label variant="body">{reply}</Label> : null}
+          {reply ? <Label variant="body">{reply}</Label> : null}
         </View>
       ) : null}
       {credited ? (
@@ -278,9 +216,6 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, minHeight: MIN_TOUCH - 4, outlineStyle: 'none' } as object,
   mic: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  helpButton: { width: MIN_TOUCH, height: MIN_TOUCH, borderRadius: MIN_TOUCH / 2, alignItems: 'center', justifyContent: 'center' },
   card: { borderRadius: radius.lg, padding: space.lg, gap: space.md },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: space.sm },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  chip: { minHeight: 36, justifyContent: 'center', paddingHorizontal: space.md + 2, borderRadius: radius.pill },
 });

@@ -288,7 +288,7 @@ export function parseCommand(text: string, savedNames: readonly string[] = []): 
   if (/^(help|what can i say|what can you do|commands|list commands|options|what are the commands)$/.test(s)) return { kind: 'help' };
   if (/^(repeat|repeat that|again|say again|say that again|what|pardon|sorry|come again|what did you say)$/.test(s)) return { kind: 'repeat' };
   if (/^(stop|stop talking|quiet|be quiet|silence|shh+|shush|hush|shut up)$/.test(s)) return { kind: 'stop' };
-  if (/^(yes|yeah|yep|yup|yes please|confirm|confirmed|ok|okay|sure|do it|go|go ahead|correct|affirmative)$/.test(s)) return { kind: 'yes' };
+  if (/^(yes|yeah|yep|yup|yes please|confirm|confirmed|ok|okay|sure|do it|go|go ahead|correct|affirmative|right|thats right|that is right|thats correct|that is correct)$/.test(s)) return { kind: 'yes' };
   if (/^(no|nope|nah|cancel|never mind|nevermind|dont|do not|no thanks|abort)$/.test(s)) return { kind: 'no' };
 
   // The board
