@@ -1,571 +1,353 @@
-# PinVisual
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/images/logo-dark.svg">
+    <img src="./assets/images/logo.svg" alt="PinVisual" width="360"/>
+  </picture>
+</p>
 
-PinVisual is a phone and web app for a tactile pin display. You draw a pattern,
-or give it a picture, and it works out which pins should be up (1) and which
-should be down (0). The pattern goes over Bluetooth Low Energy to an ESP32,
-which moves the servos through PCA9685 boards.
+<p align="center">
+  <a href="https://github.com/zyh-29/SLDP-PinVisual/actions/workflows/ci.yml"><img src="https://github.com/zyh-29/SLDP-PinVisual/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"/></a>
+  <a href="https://zongyaohuang.com/pinvisual"><img src="https://img.shields.io/badge/try%20it-web-7C3AED.svg" alt="Try it on the web"/></a>
+</p>
 
-Everything runs on the device. There are no accounts and nothing is sent to a
-server.
+# PinVisual 📍
 
-- Firmware protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md)
-- Board firmware (ESP32 + PCA9685), wiring and setup: [firmware/README.md](firmware/README.md)
-- Grid size and hardware settings: `src/config/hardware.ts` (the grid is 5 × 6 for now)
+PinVisual is a React Native / Expo app for a **tactile pin display**, built so
+blind and low-vision people can feel pictures, shapes, letters and graphs. You
+draw a pattern, give it a picture, or say what you want, and it works out which
+pins should be up and which should be down. The pattern goes over Bluetooth Low
+Energy to an ESP32, which moves one servo per pin through PCA9685 servo boards.
 
-Built with Expo (SDK 58), React Native and TypeScript.
+Everything runs on the device. There are no accounts and no backend, and
+nothing leaves the device unless you turn on an online feature (picture search
+or online speech recognition).
 
-## Where things stand
+## 📱 App Information
+
+- **Version:** 1.0.0
+- **Platforms:** iOS, Android and web
+- **Grid:** 5 × 6 (30 pins), set in `src/config/hardware.ts`
+- **Bundle ID (iOS) / Package (Android):** `com.sldp.pinvisual`
+- **Try it in a browser:** https://zongyaohuang.com/pinvisual
+
+## ✨ Features
+
+### Core Features
+
+- ✏️ **Draw on the grid** and send the pattern to the board
+- 🖼️ **Picture to pins** - photos, drawings, graphs, shared screens and the live
+  camera, with automatic background removal, smart cropping and shape snapping
+  ([how it works](docs/IMAGING.md))
+- 📈 **Graphs and equations** - type `y = x^2 - 3` or point the camera at a graph;
+  pick the range, zoom, pan and hear a description
+- 🎙️ **Voice commands** - spoken or typed: "show a circle", "letter B", "graph y
+  equals x squared", "send" ([full list](docs/VOICE.md))
+- 🔤 **Letters and digits** - A–Z and 0–9 drawn for the pins
+- 💾 **Saved patterns** with backup export and import
+
+### Technical Features
+
+- 🔒 **On-device everything** - image processing, subject cut-out and voice
+  understanding run locally
+- 🧠 **Smart Cut-Out** - Apple Vision (iOS 17+), ML Kit (Android), U²-Net with
+  ONNX Runtime Web (browser)
+- 🗣️ **Built-in voice model** - a small fastText-style network (177 KB) that
+  understands commands phrased many ways, with no download
+- 📡 **Reliable Bluetooth protocol** - framing, CRC-16, chunking, ACKs, retries
+  and timeouts ([spec](docs/PROTOCOL.md))
+- ✈️ **Works offline** on the web after the first visit, and installs to a
+  phone's home screen
+- ♿ **Screen reader first** - every pin, preview and result is announced
+- 🌓 **Light and dark mode**, following Apple's Human Interface Guidelines
+
+## 🚧 Project Status
+
+The app works in the iOS simulator and in Chrome. Bluetooth has been tested
+against a simulated board but **not yet against real hardware**. Help testing on
+real devices is very welcome (see [docs/TESTING.md](docs/TESTING.md)).
 
 | Feature | Status |
 |---|---|
-| Drawing on the grid, Clear Grid | Works (tested in the iOS simulator) |
-| Send Pattern / Reset Physical Pins | Tested against a simulated board; not yet tried on real hardware |
-| Protocol (framing, CRC, chunking, retries, timeouts, ACKs) | Done, with unit tests |
-| Picture to pins (background removal, graphs, cropping, thin lines) | Works on the web; still needs a run-through on a phone |
-| Shape snapping (triangle to hexagon, circle, oval) | Works |
-| Smart Cut-Out (on-device subject segmentation) | Works on the web. iOS and Android versions are written but need a development build |
-| Saving, loading and deleting patterns | Works |
-| Exporting and importing a backup file | Works on the web; the phone share sheet hasn't been tried yet |
-| Tap to pick what becomes pins | Works |
-| Live camera (web, phones and laptops) | Works in Chrome; not yet tried on a real phone |
-| Camera lock and capture | Works in Chrome; not yet tried on a real phone |
-| Graph Range (Auto, or a typed range such as `5`, `+5` or `-5`) | Works on the web. Reading axis numbers needs `tesseract.js`; on phones one grid square counts as one unit |
-| Graph zoom, panning, and a spoken description of the graph | Works |
-| One-Pin Lines (curves drawn one pin wide) | Works |
-| Typing an equation to draw it | Works |
-| Send Live to Board | Tested against a simulated board only |
-| Bluetooth on phones | Written, never run. Needs a development build, a phone and firmware |
-| Web layout (laptop, tablet, phone) | Works |
-| Web Bluetooth (Chrome, Edge) | Written, never run against a board |
-| Voice commands (spoken or typed): Display and Image tabs | Works in Chrome with a stand-in recogniser and by typing. Not yet tried with a real microphone, VoiceOver or TalkBack. Phones need a development build |
-| Graphs by voice ("graph y equals x squared") | Works (typed and with a stand-in recogniser) |
-| Picture search (Openverse, Wikimedia Commons) | Wikimedia works from Chrome; Openverse timed out from the test network, so it's untested live |
-| On-device AI suggestions | Tested in Chrome with a stand-in model only. Phones: not yet (needs a native module for Apple's model) |
-| Speak Results (the device's voice reads results) | Written; not yet heard on a phone |
-| Showing letters and digits on the pins (A to Z, 0 to 9) | Works (by voice or typed command) |
-| Letter recognition (reading letters from a picture) | Not started |
-| Board firmware (ESP32 + PCA9685) | Written. Its protocol code passes its tests on a computer; not yet run on an ESP32 |
-| BLE UUIDs | Set; the app and the firmware use the same ones (checked by a test) |
-| Checking where the pins really are | Not possible: the hardware has no position sensors. The app only knows the board acknowledged a command |
+| Drawing, Clear Grid, saving and loading | ✅ Works |
+| Picture to pins, shape snapping, tap to pick | ✅ Works on the web; not yet run through on a phone |
+| Graph Range, zoom, panning, typed equations | ✅ Works. Axis numbers are read on the web only; on phones one grid square counts as one unit |
+| Letters and digits on the pins | ✅ Works |
+| Web layout (laptop, tablet, phone) | ✅ Works |
+| Protocol (framing, CRC, chunking, retries, ACKs) | ✅ Done, with unit tests |
+| Smart Cut-Out | 🟡 Works on the web; iOS and Android need a development build |
+| Live camera, lock and capture (web) | 🟡 Works in Chrome; not yet tried on a real phone |
+| Voice commands | 🟡 Works in Chrome by typing and with a stand-in recogniser; not yet tried with a real microphone, VoiceOver or TalkBack |
+| Picture search (Openverse, Wikimedia Commons) | 🟡 Wikimedia works; Openverse untested live |
+| Backup export and import | 🟡 Works on the web; phone share sheet untested |
+| Send Pattern, Reset, Send Live | 🟡 Tested against a simulated board only |
+| Bluetooth on phones, Web Bluetooth | 🟡 Written, never run against a board |
+| On-device AI suggestions, Speak Results | 🟡 Written; tested with stand-ins only |
+| Board firmware (ESP32 + PCA9685) | 🟡 Protocol code passes its tests; not yet flashed to an ESP32 |
+| Letter recognition from a picture | ⬜ Not started |
+| Pin position feedback | ⬜ Not possible: the hardware has no position sensors |
 
-## Project layout
+## 🛠️ Technology Stack
 
-```
-src/
-  app/          Screens (Expo Router): Display, Image, Saved, Device
-  config/       hardware.ts: grid size, BLE UUIDs, protocol timing
-  domain/       pattern.ts: the grid model, pin order, bit packing
-  protocol/     Message encoding, CRC-16, chunking, CommandClient (acks and retries)
-  device/       Bluetooth drivers (BleDriver.ts for phones, BleDriver.web.ts for browsers),
-                DeviceController, LiveSender, and a simulated board used only by tests
-  imaging/      Everything that turns a picture into pins:
-                  lighting                          evening out a camera picture's light
-                  foreground, refineMask, maxflow   background removal
-                  smartCrop, curves, plotGrid       choosing what becomes pins
-                  scene                             landscapes: the sky and the skyline
-                  graph, graphScale, graphSummary   graphs: range, units, description
-                  equation                          typed equations
-                  features, featureTracker,         camera lock
-                  itemTracker, tracker
-                  surface                           flattening screens and pages
-                  shapes, pinSampling               shapes, and the final pins
-                  imageInput.web, cameraDevice.web  camera, screen sharing, drag and drop
-  voice/        Voice commands and speech:
-                  commands, runCommand              what a sentence asks for, and doing it
-                  glyphs                            shapes, letters and digits drawn for the pins
-                  recognizer(.web)                  hearing one command (on the device where possible)
-                  announce, liveRegion.web          telling screen readers (and Speak Results)
-  storage/      Saved patterns (stored locally) and backup files
-  state/        React providers and hooks; useImageConversion runs the Image tab
-  ui/           Theme, components, tab bar and sidebar, the Image tab's cards
-```
+### Framework & Core
 
-The app only talks to real boards. The tests use a simulated board
-(`src/device/__tests__/support`) that speaks the same protocol and can be made
-slow, lossy or faulty to test retries and error handling.
+- **Expo** SDK 58
+- **React Native** 0.88 with React 19.3 and the React Compiler
+- **TypeScript** 6.0
+- **Expo Router** (file-based routing, typed routes)
+- **React Native Web** for the browser version
 
-## Getting started
+### Device & Hardware
 
-You'll need Node.js 22.13 or newer (React Native 0.88 requires it). For native
-builds you also need Xcode and CocoaPods for iOS, or Android Studio for
-Android. EAS Build works too.
+- **react-native-ble-plx** (Bluetooth on phones) and **Web Bluetooth** (Chrome, Edge)
+- **ESP32 + PCA9685** firmware in `firmware/` (Arduino, C++)
+
+### Imaging & AI
+
+- **ONNX Runtime Web** + **U²-Net** small model (browser subject cut-out)
+- **Apple Vision** / **Google ML Kit** through a local Expo module (`modules/subject-segmentation`)
+- **Tesseract.js** (reads graph axis numbers on the web)
+- Hand-written image pipeline: lighting correction, GrabCut-style refinement,
+  ORB feature tracking, shape fitting
+
+### Voice & Accessibility
+
+- **expo-speech-recognition** and the Web Speech API (speech to text)
+- **expo-speech** (Speak Results)
+- On-device intent model trained with `npm run train:voice`
+
+### Storage
+
+- **AsyncStorage** for saved patterns
+- React Context for app state
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- **Node.js 22.13 or newer** (24 recommended, see `.nvmrc`). Training the voice
+  model needs 22.18 or newer.
+- **npm**
+- For phones: Xcode and CocoaPods (iOS), Android Studio (Android), or a free
+  [Expo account](https://expo.dev/signup) to build in the cloud
+- For web Bluetooth: Chrome or Edge
+
+### Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/zyh-29/SLDP-PinVisual.git
+
+# Navigate to project directory
+cd SLDP-PinVisual
+
+# Install dependencies (also copies ONNX Runtime and Tesseract.js into public/)
 npm install
-npm test            # unit tests
-npm run typecheck
-npx expo lint
-```
 
-GitHub Actions runs the same checks and a web build on every push
-(`.github/workflows/ci.yml`).
-
-### Running the app
-
-```bash
+# Start the development server
 npm start
 ```
 
-This starts Expo in Expo Go mode. Press `i` for the iOS simulator, `a` for
-Android, `w` for the browser, or scan the QR code with Expo Go.
+Then press `w` for the browser, `i` for the iOS simulator, `a` for Android, or
+scan the QR code with Expo Go.
 
-Bluetooth doesn't work in Expo Go. The app says so on the Device tab, and
-everything else still works. Once you have a development build installed, use
-`npm run start:dev-client` instead. Plain `npx expo start` expects a
-development build because `expo-dev-client` is installed.
+### Environment Setup
 
-### Web version
+No `.env` file or API keys are needed. The only build setting is optional:
+
+| Variable | Used for |
+|---|---|
+| `WEB_BASE_URL` | Host the web app in a subfolder, e.g. `WEB_BASE_URL=/pinvisual npm run build:web` |
+
+### Running on a Phone
+
+Expo Go is the quickest way to try the app, but it **can't use Bluetooth**,
+Smart Cut-Out on phones or on-device speech recognition. For those you need a
+[development build](https://docs.expo.dev/develop/development-builds/introduction/):
 
 ```bash
-npm run web         # dev server at http://localhost:8081
-npm run build:web   # static site in dist/
+# Build locally
+npm run ios                  # needs Xcode
+npm run android              # needs Android Studio
+
+# Or build in the cloud with EAS
+npx eas-cli@latest build --profile development --platform android   # or ios
+
+# Then start the dev server for the installed build
+npm run start:dev-client
 ```
 
-To put it online:
+The `ios/` and `android/` folders are generated from `app.json` and are not
+checked in. Don't edit them by hand; change `app.json` or a config plugin.
 
-1. Build it. For the root of a site, run `npm run build:web`. For a subfolder
-   such as `https://example.com/pinvisual/`, run
-   `WEB_BASE_URL=/pinvisual npm run build:web`.
-2. Upload everything in `dist/`, including the hidden `.nojekyll` file and the
-   `_expo`, `ort`, `models` and `tesseract` folders.
-3. Serve it over https. The camera, screen sharing and Bluetooth all need it
-   (localhost is fine too).
+### Using Your Own Expo Project
 
-No server code is needed. The build writes a page for every tab
-(`scripts/web-routes.mjs`), so refreshing works on any static host. On Vercel,
-import the repo and deploy; `vercel.json` has the settings and every push to
-`main` redeploys.
+`app.json` points at the original author's Expo account. If you forked the repo
+and want to use EAS:
 
-**Live at https://zongyaohuang.com/pinvisual.** `vercel.json` builds the app for
-the `/pinvisual` folder (`WEB_BASE_URL=/pinvisual`) and serves it at
-`/pinvisual/` on this project's own `*.vercel.app` address (its root redirects
-there). The main website, zongyaohuang.com (the Portfolio-Web repo), passes
-every `/pinvisual/...` request through to this project, so the two deploy
-separately. To host PinVisual at the root of a site again, change the build
-command back to `npm run build:web` and remove the `redirects` and `rewrites`.
+1. Remove `"owner"` and `extra.eas.projectId` from `app.json`
+2. Change `ios.bundleIdentifier` and `android.package` to your own
+3. Run `npx eas-cli@latest init`
 
-**Offline:** after the first visit the website works without internet, and it
-can be added to a phone's home screen to open like an app. The build writes a
-service worker (`scripts/web-offline.mjs` fills in `scripts/service-worker.js`)
-that saves the app's code first (about 3 MB). It then saves the Smart Cut-Out
-model and the graph-number reader in the background (about 26 MB, only the
-engine variant the browser can run), unless the browser asks to save data. An
-update downloads only the files that changed and takes over the next time the
-app is opened. The Device tab says whether the copy is ready. Picture search
-and online speech recognition still need the internet. The service worker is
-off on the development server.
+## 📜 Available Scripts
 
-On laptops the app uses a sidebar and a two-column layout. On tablets and
-phones it uses a bottom tab bar, like the native app.
+### Development
 
-Web Bluetooth works in Chrome and Edge on desktop and Android. Safari, Firefox
-and iOS browsers don't support it, and the Device tab says so.
+```bash
+npm start                  # Start Expo (Expo Go mode)
+npm run start:dev-client   # Start Expo for an installed development build
+npm run web                # Web dev server at http://localhost:8081
+npm run ios                # Build and run on iOS
+npm run android            # Build and run on Android
+npm run build:android:dev  # Android development APK with EAS
+```
 
-## Using a picture
+### Checks
 
-The Image tab takes a photo, a dropped or pasted image, a typed equation, a
-shared screen (desktop browsers) or the live camera (web).
+```bash
+npm run typecheck          # TypeScript
+npm run lint               # ESLint
+npm test                   # Jest unit tests
+npm run test:firmware      # Firmware protocol tests (needs a C++17 compiler)
+```
 
-### How a picture becomes pins
+### Build & Tools
 
-The picture is scaled down to 800 px, then:
+```bash
+npm run build:web          # Static web build in dist/, with offline support
+npm run train:voice        # Retrain the voice command model
+```
 
-0. **Light** (camera pictures). A phone camera never sees paper evenly lit:
-   the corners are darker, a lamp makes a bright pool, a window lights one
-   side. `lighting.ts` measures the light across the picture and divides it
-   out, the way astronomy software removes a sky background:
-   - The picture is cut into 32 px cells. Each cell's paper colour is the
-     average of its brighter pixels, so ink crossing it doesn't count.
-   - A smooth surface is fitted through the cells. Cells that don't fit,
-     such as the subject itself, are given less and less weight (a robust,
-     reweighted fit), so the surface follows the paper alone.
-   - Each pixel is divided by the surface, per colour, which also removes a
-     warm lamp's tint.
+## 🌐 Deploying the Web App
 
-   It's skipped when the light is already even, and when neighbouring cells
-   jump sharply. Light changes gradually; a jump means a thing (a card on a
-   desk, a checked cloth, a dark object and its shadow), which the next steps
-   handle. It takes about 7 ms per frame.
-1. **Background.** The background colour is taken from a thin ring around the
-   edge of the crop.
-2. **Subject.** Pixels that differ enough from the background are the subject.
-   The cut-off (Tolerance) is set automatically for each picture, or you can
-   drag the slider.
-3. **Clean-up.** For shapes and objects, a second pass based on GrabCut
-   (`refineMask.ts`) tidies the outline. It learns what the background and
-   the subject look like, then decides all pixels together with a minimum cut
-   (`maxflow.ts`). This removes speckles and patterned backgrounds. Graphs and
-   thin line drawings skip it, because it would erase thin lines.
-4. **Axes and gridlines.** Long straight lines that cross are taken as axes
-   and removed, leaving the curve. A letter like T or E isn't mistaken for
-   axes, because nothing is left once its lines go.
-5. **Labels.** Small pieces such as tick numbers and captions are dropped.
-6. **Smart crop** (`smartCrop.ts`) decides what becomes pins:
-   - On a graph, coloured curves are kept and the grid, text and buttons are
-     ignored. Black curves are found by first finding the plot area by its
-     gridlines.
-   - Otherwise it picks the most likely object: big, central, not touching the
-     edge, and not text.
-   - Tap the picture to choose something else: one shape, one curve, one of
-     several graphs. Auto Crop goes back to automatic. You can also drag the
-     crop box yourself.
-7. **Thin lines** are thickened to about half a pin, so a line through a pin
-   raises it.
-8. **Shapes.** Closed outlines are filled in. Clean triangles, squares,
-   circles and so on are redrawn as perfect shapes that fill the grid, with
-   small tilts straightened. Turn off the *Snap to …* switch to keep the original.
-9. **Pins.** The crop is fitted to the grid. Sensitivity sets how much of a
-   pin must be covered before it's raised.
+The web app is a static site, so it runs on any static host.
 
-*What the pins see* shows the result, with the removed background as a
-checkerboard.
+1. **Build:** `npm run build:web` (or `WEB_BASE_URL=/pinvisual npm run build:web`
+   for a subfolder)
+2. **Upload** everything in `dist/`, including the hidden `.nojekyll` file and
+   the `_expo`, `ort`, `models` and `tesseract` folders
+3. **Serve over https.** The camera, screen sharing and Bluetooth all need it.
+   In an `<iframe>`, add `allow="camera"`
 
-### Smart Cut-Out
+**Vercel:** import the repo and deploy. The included `vercel.json` builds for
+the `/pinvisual` subfolder to match the live site. To host at the root instead,
+set `buildCommand` to `npm run build:web` and remove `redirects` and `rewrites`.
 
-For photos with a busy background, an on-device model separates the main
-subject. It switches on by itself and can be turned off.
+**Offline:** the build adds a service worker that saves the app (about 3 MB),
+then the cut-out model and graph-number reader in the background (about 26 MB).
+It's off on the dev server.
 
-- iOS 17+: Apple Vision, through `modules/subject-segmentation`
-- Android: Google ML Kit Subject Segmentation (beta), same module
-- Web: U²-Net small (`public/models/u2netp.onnx`, Apache-2.0) with ONNX Runtime Web
+## 🔌 Hardware
 
-The phone versions need a development build. In Expo Go the switch is hidden.
-
-On the web, the model only counts as having found a subject when it is sure
-of at least 0.3% of the picture. On a landscape it is never sure of anything
-(its strongest point is a guess), and that guess used to become the "subject":
-a patch of meadow, a bend in a river. Cars, even a small one far off, cover
-1.6% or more.
-
-A shape cut out of a photo is never snapped to a triangle or hexagon: a car is
-not a hexagon, however close its outline comes. It is stretched to fill the
-pins instead, up to 2.2 times taller (or wider) than it really is: a car seen
-from the side is three or four times wider than tall, and kept to those
-proportions it was a single row of pins. Filling the rows shows the cabin on
-top, the body, and the wheels at the bottom corners.
-
-### Landscapes
-
-A photo of mountains or hills has no single object to cut out. The pins show
-the **skyline** instead: the land raised, the sky lowered, cropped around the
-ridge so the peaks fill the grid (`scene.ts`).
-
-- **Sky:** the smooth area joined to the top of the picture, right across it.
-  Clouds stop it, but they are islands: land never floats above sky, so the
-  skyline is just below each column's lowest sky.
-- **Landscape or object?** A car under the sky has a skyline too (trees,
-  buildings). It's a landscape only when the cut-out found nothing, or what it
-  found follows the skyline (its top edge is the ridge). A car's roof sits well
-  below the trees behind it, so the car is shown.
-- **Tap** something in the picture to show just that instead.
-
-Tested on 11 photos (6 cars, 5 mountains): every car was cut out and every
-mountain photo shown as a skyline. Limits: clouds lying right on the peaks with
-no sky under them count as land, and a mountain fading into haze counts as
-sky (the dark foreground is then shown).
-
-### Graphs
-
-Squeezing a whole curve onto 30 pins can lose its shape. Graph Range starts on
-Auto: the whole curve when that shows everything (a parabola, a line), or the
-part where it turns and bends (the two humps of `x^3 - 3x`, the top of a bell
-curve). Waves show one at a time.
-
-To see a set part instead, type a range in the Graph Range field:
-
-| Type | Shows |
+| What | Where |
 |---|---|
-| `5`, `±5`, `+-5` or `+/-5` | 5 units each side of the middle of the graph |
-| `+5` | the 5 units right of the middle |
-| `-5` | the 5 units left of the middle |
-| `whole` | the whole curve |
-| nothing | Auto |
+| Parts, wiring, flashing, calibration | [firmware/README.md](firmware/README.md) |
+| Bluetooth protocol and test vectors | [docs/PROTOCOL.md](docs/PROTOCOL.md) |
+| Grid size, BLE UUIDs, timing | `src/config/hardware.ts` |
+| Real phone and board test checklist | [docs/TESTING.md](docs/TESTING.md) |
 
-A typed range keeps the graph's real proportions, and the curve's lowest or
-highest point sits in the bottom or top row when it is in view.
+You can start with **a single servo and no servo boards**: see "Testing with
+one servo" in the firmware README, then use the app's **Pin Test** tab.
 
-The units come from the numbers on the axes, read with Tesseract.js on the
-device. If they can't be read, one grid square counts as one unit, which can
-be wrong. When you zoom in, the curve keeps its size on the pins. The arrows
-under Graph Range move the window, and a short text description of the graph
-is given for screen readers.
+### How the App Talks to the Board
 
-You can also type an equation such as `y = x^2 - 3` or `sin(x)`. It is drawn
-at an exact scale, so no numbers need reading.
+1. Editing never sends anything. The board only changes on **Send Pattern** or
+   **Reset Physical Pins**
+2. The app waits for an ACK with the matching command ID. A finished Bluetooth
+   write alone doesn't count as success
+3. No ACK → it retries up to three times, then offers Retry
+4. Reset clears the preview only after the board acknowledges it
+5. Only one command runs at a time
 
-### Live camera (web)
+## 📁 Project Structure
 
-Point a phone or webcam at a worksheet, a screen or an object, and the pins
-follow it.
+```
+./
+├── src/
+│   ├── app/              # Expo Router screens: Display, Image, Saved, Device, Pin Test
+│   ├── config/           # hardware.ts: grid size, BLE UUIDs, protocol timing
+│   ├── domain/           # Grid model, pin order, bit packing
+│   ├── protocol/         # Message encoding, CRC-16, chunking, ACKs and retries
+│   ├── device/           # Bluetooth drivers (phone + web), DeviceController, LiveSender
+│   ├── imaging/          # Picture to pins pipeline (see docs/IMAGING.md)
+│   ├── voice/            # Voice commands and on-device intent model (see docs/VOICE.md)
+│   ├── storage/          # Saved patterns and backup files
+│   ├── state/            # React providers and hooks
+│   ├── ui/               # Theme, components, tab bar and sidebar
+│   └── offline/          # Service worker registration (web)
+├── modules/
+│   └── subject-segmentation/  # Local Expo module: Apple Vision + ML Kit
+├── firmware/             # ESP32 sketch and its protocol tests
+├── scripts/              # Web build steps, engine copy, voice model training
+├── public/               # Static web files, including the U²-Net model
+└── docs/                 # Protocol, imaging, voice and testing docs
+```
 
-- **Lock.** When the camera sees the same item twice in a row, it locks on
-  (*Live · Locked*) and follows it as you move. Tap another item to switch.
-  Tracking uses ORB feature points (`features.ts`, `featureTracker.ts`), with
-  template matching as a fallback for plain items.
-- **Capture.** Once locked, the camera keeps one sharp frame of the item
-  (*Live · Captured*). The pins come from that frame, so they stay still while
-  the video keeps running. Tapping something else, Auto Crop or drawing your
-  own crop box releases it. Stop Camera keeps the captured frame as a still
-  picture.
-- **Screens and paper.** Pointed at a laptop screen or a sheet of paper, the
-  camera finds its four corners and straightens it (*Live · Flat*).
-- **Uneven light.** Vignetting, a desk lamp or a window no longer makes the
-  paper itself look like the subject (step 0 above). In tests with 6 drawings
-  under 7 kinds of light, wrong pins fell from 173 to 18 of 1,260; vignetting
-  and lamp light went from 4–30 wrong pins per picture to none.
-- **Steadier pins.** Frames are lightly blurred to remove sensor noise, and
-  each pin is averaged over a few frames so it doesn't flicker.
-- **Speed.** Frames are 640 px and the app adapts how often it processes them
-  to how fast the phone is.
-- **Focus and light.** Blurry frames are skipped while the lens refocuses, and
-  very dark frames aren't processed. Tapping the picture also focuses there
-  (Chrome on Android).
-- **Cars, mountains and other scenes.** Once the camera has settled (locked
-  on an item, or about 1.5 s on a busy scene with nothing to lock onto), the
-  frame it keeps is judged as a photo: Smart Cut-Out and the landscape check
-  run on it, so a car is cut out and a mountain shows its skyline. A kept
-  scene lets go when the camera turns to something else. Frames from the
-  camera always count as photos, however smooth the phone makes them.
-- **Pictures of things.** Pointed at a printed photo or a photo on a screen,
-  the camera finds the print or screen, straightens it (*Live · Flat*) and
-  cuts the object out of the photo inside: a printed car comes out as a car.
-  Not yet for landscapes in a print or on a screen: a smooth printed sky
-  doesn't count as a photo, and a screen's bezel hides where the ground ends.
-- **Not a page:** a bright, smooth patch hanging from the top of the view (an
-  overcast sky above a car) is not taken for a sheet of paper to straighten.
-- **Capture button.** Takes a full-resolution photo and carries on with it as
-  a still picture.
+Files ending in `.web.ts` / `.web.tsx` are the browser versions of the file with
+the same name. The tests use a simulated board (`src/device/__tests__/support`)
+that can be made slow, lossy or faulty.
 
-The camera only works over https or on localhost. If the app is inside an
-`<iframe>`, add `allow="camera"` to it.
+## 📚 Documentation
 
-### Screen sharing (desktop web)
+| Doc | What's in it |
+|---|---|
+| [docs/IMAGING.md](docs/IMAGING.md) | How a picture becomes pins: lighting, background, cropping, landscapes, graphs, live camera, screen sharing |
+| [docs/VOICE.md](docs/VOICE.md) | Every voice command, how sentences are understood, retraining and measuring the model |
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | The Bluetooth protocol between app and board |
+| [docs/TESTING.md](docs/TESTING.md) | Manual checklists for real phones, real boards and blind testers |
+| [firmware/README.md](firmware/README.md) | Building, wiring and flashing the board |
 
-Share Screen lets you pick a screen, window or tab. The pins follow it live,
-up to five times a second. Nothing is sent to the board until you press
-**Use This Pattern** and then **Send**.
+## ♿ Accessibility
 
-Share the window with your graph or shape, not the entire screen. On the
-entire screen PinVisual sees itself (its own preview and pins) and other
-windows, and may pick those instead. Chrome and Edge list windows first and
-leave PinVisual's own tab out. If the entire screen is shared anyway, the
-Image tab says so. Things cut off by the edge of the screen are passed over,
-since they are usually part of another window.
+- Nothing relies on colour alone: raised pins are solid, lowered pins are rings,
+  and every status has an icon and text. Text meets WCAG AA contrast
+- Grid cells are at least 40 pt; on narrow screens the grid scrolls instead of
+  shrinking
+- Screen readers announce each pin ("Row 2, column 3, raised"), summarise
+  previews row by row, and announce send, reset and save results
+- Voice commands sit before the 30 pins, so a screen reader reaches them first
 
-## Testing on a real phone
+## 📝 Development Guidelines
 
-The simulator can't check these:
+- ✅ Add packages with `npx expo install <package>` so versions match SDK 58
+- ✅ Check the [SDK 58 docs](https://docs.expo.dev/versions/v58.0.0/); Expo APIs
+  change between SDKs
+- ✅ Run `npm run typecheck`, `npm run lint` and `npm test` before a pull request
+- ✅ Change the protocol in three places together: `docs/PROTOCOL.md`, the app
+  and the firmware, then run `npm run test:firmware`
+- ❌ Don't edit `ios/` or `android/` by hand
+- ❌ Don't send data off the device without a setting the user turns on
 
-1. Permission prompts: Bluetooth, Android "Nearby devices", location on
-   Android 11 and older, and the photo library.
-2. Scanning finds the ESP32 (named `PinVisual…`).
-3. Connecting finds the service and both characteristics.
-4. The Device tab shows the negotiated MTU.
-5. Send: the firmware receives the right bytes (see the test vectors in
-   `docs/PROTOCOL.md`) and the app shows "Board received pattern".
-6. Pin order: raise only the top-left pin and check it on the display, then
-   the bottom-right one. For a single servo, the **Pin Test** tab shows one
-   pin (the top-left one, whose servo is plugged into the ESP32's D18; see
-   `firmware/README.md`, "Testing with one servo"). Tap it to raise or lower
-   it on the board. It sends the usual pattern command with
-   only that pin raised, so every other pin goes down. The Display preview
-   isn't changed.
-7. Retries: with ACKs turned off in the firmware, the app should try three
-   times and then offer Retry.
-8. Power off the ESP32 mid-send: the app should show "Connection lost".
-9. Reset clears the preview only after the board acknowledges it.
-10. VoiceOver and TalkBack read each pin as "Row r, column c, raised/lowered".
-11. Real photos, transparent PNGs and very large images.
+### Known Issues
 
-## Design and accessibility
+- `react-native-ble-plx` 3.5.1 officially supports only up to Expo 51, and the
+  native build hasn't been compiled on SDK 58 yet. If it fails, switch the import
+  in `src/device/ble/BleDriver.ts` to `@sfourdrinier/react-native-ble-plx`
+  (same API, supports Expo 57+)
 
-- iOS-style look: native tab bar, large titles, grouped cards, light and dark mode.
-- Text colours meet WCAG AA contrast.
-- Nothing relies on colour alone. Raised pins are solid, lowered pins are
-  rings, and every status has an icon and text.
-- Grid cells are at least 40 pt. On narrow screens the grid scrolls instead
-  of shrinking.
-- Screen readers announce each pin, give row-by-row summaries of previews,
-  and announce send, reset and save results. On the website these go through
-  a hidden live region (React Native Web's own announcement call does nothing).
-- Voice commands sit at the top of the Display tab, before the 30 pins, so a
-  screen reader reaches them first. See "Voice commands" below.
-- The connection status is in every screen's header; tapping it opens the
-  Device tab.
+## 🤝 Contributing
 
-## Voice commands
+Contributions are welcome, especially testing on real hardware and with screen
+reader users.
 
-Press **Voice** at the top of the Display or Image tab (it stays on until
-turned off, and can also be switched in the Device tab). A command field
-appears under the title, with a microphone in it: type a command and press
-return, or tap the microphone and speak. The **?** beside it lists examples,
-each of which can be tapped to try it.
-On iPhone, VoiceOver's two-finger double-tap on either tab opens it and starts
-listening. Typing is there for noisy rooms, for speech the recogniser doesn't
-follow, and for browsers without speech recognition.
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-Each command goes to the tab it belongs to: pin pictures to Display; graphs,
-the camera and pictures to Image.
+Bugs and ideas go in [GitHub Issues](https://github.com/zyh-29/SLDP-PinVisual/issues).
 
-- **What you can say:** "show a circle" (also square, triangle, diamond,
-  cross, plus, heart, smile, checkerboard, a line, arrow up/down/left/right;
-  circles, squares, triangles and diamonds are solid, and "circle outline",
-  "hollow square" or "ring" give just the edge),
-  "letter B", "number 3", "raise row 2 column 3", "lower row 2", "clear",
-  "fill", "invert", "undo", "redo", "what's on the board", "read row 2",
-  "open saved Morning", "send", "reset", "repeat", "stop", "help". Number
-  words, homophones ("row to") and spoken letter names ("bee") are understood.
-- **Graphs:** "graph y equals x squared minus three", "plot sine of x",
-  "y equals two x plus one". Spoken maths is turned into an equation
-  (`src/voice/spokenMath.ts`) and read back in words before it's drawn. The
-  rules a listener needs:
-  - a function or root applies to the next term only: "sine of x plus one" is
-    sin(x) + 1;
-  - "the quantity" groups the rest: "sine of the quantity x plus one" is
-    sin(x + 1) ("end quantity" closes it early);
-  - "over" divides by the next term: "one over two x" is 1/(2x), "one over x
-    plus one" is 1/x + 1.
-  Typed maths ("y = x^2 - 3") works too.
-- **The Image tab:** "start camera", "capture", "stop camera", "flip camera",
-  "choose photo", "share screen", "stop sharing", "clear image", "use this
-  pattern", "what do the pins see", "remove background on/off", "smart
-  cut-out on", "one pin lines off", "tolerance up", "sensitivity down". In a
-  browser, "choose photo" and "share screen" may need the button: browsers
-  open those pickers only straight after a tap or key press.
-- **Search:** "search for house" lists matching saved patterns. "Find
-  pictures of a cat" searches Openverse and Wikimedia Commons (only with
-  **Online Picture Search** on in the Device tab), loads the first openly
-  licensed picture on the Image tab and says its credit; "next" and
-  "previous" go through the results. Silhouettes come first (drawn ones, then
-  photos against the light, and only ones whose title names the thing), so
-  the pins show one solid shape rather than a busy scene; ordinary photos
-  follow. A result whose pins say nothing (two or fewer, or nearly all 30) is
-  skipped, up to three in a row.
-  The first answer comes as soon as the best source has replied, usually
-  Wikimedia's drawings in about half a second, without waiting for a slow
-  one. Slower sources add to the list for "next", and the total ("of 24") is
-  said once it's final. The next few results are converted off screen at
-  the same time, with the Image tab's own settings, so useless ones are
-  skipped without loading each on the tab (`src/voice/PictureCheck.tsx`).
-- **Going places:** "go to image", "go to display", "open device".
-- **Say it your own way.** "Could you get rid of everything", "make the
-  fourth column stick up", "turn the camera on", "I want to feel a picture of
-  a tree" all work. See "How commands are understood" below.
-- **Browser AI as a last resort:** where the browser has a built-in model
-  (Chrome on a computer with Gemini Nano downloaded), a sentence neither the
-  rules nor the voice model understood is rewritten as a command, then
-  confirmed: "Did you mean: show a heart? Say yes or no." Nothing is done
-  until "yes", and nothing leaves the computer.
-- **Nothing moves without a yes.** "Send" and "reset" ask first ("Say yes to
-  send, or no") and offer Yes / Cancel buttons. Any other command cancels the
-  question.
-- **Every answer says what happened,** including what was heard when it wasn't
-  a command, and points to "help".
-- **Listening** starts with a tone and a vibration and stops with a lower one.
-  No spoken "listening", which the microphone would hear. On iPhone,
-  VoiceOver's two-finger double-tap anywhere on the Display tab also starts
-  it.
-- **Where speech is recognised.** Commands are understood by the app itself
-  (below). The audio is turned into words by the device:
+## 📄 License
 
-  | Where | Recogniser | Leaves the device? |
-  |---|---|---|
-  | iPhone, Android app | The phone's own (`expo-speech-recognition`), on-device | No, where the phone supports it |
-  | Chrome on a computer | Chrome's on-device recognition (downloads the language once) | No |
-  | Chrome on Android, Safari, Edge | The browser's maker's servers | Only with **Online Speech Recognition** on (Device tab) |
-  | Firefox | None | Type commands instead |
+PinVisual is released under the [MIT License](LICENSE).
 
-### How commands are understood
+## 🙏 Acknowledgments
 
-`src/voice/understand.ts` reads every sentence, spoken or typed, in steps,
-fastest first. All of it runs on the device in about 0.05 ms.
-
-1. **The command rules** (`src/voice/commands.ts`): fixed phrasings, exact and
-   predictable.
-2. **The rules again after tidying**: filler taken out anywhere ("could you
-   just … now please"), and a few words folded into known ones ("hart",
-   "pyramid", "ball").
-3. **The voice model** (`src/voice/intent/`): a small neural network in the
-   style of fastText. It reads the words, word pairs and three-letter pieces
-   of words (so "sqare" or "camra" still land), and says which of 39 kinds of
-   command the sentence is, and how sure it is. It's about 130,000 numbers
-   stored as bytes (177 KB in the app) and needs no download, runtime or
-   internet.
-   - The model only picks the kind. The details (row 2, the letter B, what to
-     search for) are read from the sentence and checked by the rules, so the
-     model can't make up a row number or a search.
-   - 80% sure or more: done. 40–80%: "Did you mean …? Say yes or no."
-     Less: not a command.
-   - Its guess is ignored when under half the words are ones it learned
-     ("pizza" isn't a command, however sure it seems).
-   - It overrules the rules only when 97% sure they misread a sentence ("find
-     me an image of a car" is a picture search, not a saved pattern).
-4. **The browser's AI**, where there is one (above).
-
-**Training.** `npm run train:voice` (Node 22.18 or newer) builds about 15,000
-example sentences from `scripts/voice-training-data.mjs` (each kind of command
-said many ways, with filler, recogniser mishearings and typos), trains for
-about a second, and writes `src/voice/intent/weights.ts`. To teach it a new
-phrasing, add it to the lists there and retrain.
-
-**Measuring.** `src/voice/__tests__/voicePhrases.ts` holds about 350 natural
-phrasings, and none of them is used for training. Run
-`VOICE_REPORT=1 npx jest understand.eval` for the report. When the model was
-built:
-
-| Phrases | Rules alone | With the model |
-|---|---|---|
-| Tuning set (189) | 69% understood | 98% understood, 2% asked, 0 wrong |
-| Exam set (95, scored before any fixes) | 49% | 96% at first; 98% after fixes |
-| Fresh set (62, written after tuning, scored once) | 50% | 97% at first; 98% after one fix ("capital letter r") |
-
-The one fresh phrase still acted on wrongly is "what is for dinner", which
-reads the board aloud. That's harmless, but it shows the model can be fooled
-by sentences that sound like commands. The test fails if understanding drops
-below these levels or more than one phrase per set is acted on wrongly.
-
-- **Speak Results** (Device tab) reads results aloud with the device's voice,
-  for people who don't use a screen reader. While VoiceOver or TalkBack is on,
-  the app stays quiet and lets the screen reader speak, so nothing is heard
-  twice. (A browser can't tell whether a screen reader is running, so on the
-  website leave it off if you use one.)
-
-### Checking it with blind users
-
-Unit tests cover the command list and the answers. They can't show whether
-it's usable. Before calling it done:
-
-1. Use it with VoiceOver's Screen Curtain (three-finger triple-tap) or
-   TalkBack's dimmed screen: show a shape, check it by touch, send it, and
-   reset, without looking.
-2. Try it in a noisy room and with a quiet voice. The typed box must cover
-   whatever fails.
-3. Ask blind testers to do the same tasks without help. Note where they get
-   stuck and what they try to say that isn't understood: those phrasings
-   belong in `commands.ts`.
-
-## How the board is handled
-
-- Editing never sends anything. The board only changes when you press Send
-  Pattern or Reset Physical Pins.
-- A finished Bluetooth write doesn't count as success. The app waits for an
-  ACK with the matching command ID.
-- Reset clears the preview only after the ACK. If it fails, the app says the
-  pins may still be up and offers Retry.
-- Only one command runs at a time.
-- Saved patterns remember their grid size. A pattern from a different size
-  is cropped or padded, after you confirm.
-- Export writes every saved pattern to a JSON file. Import adds patterns from
-  such a file and never overwrites: duplicates are skipped and name clashes
-  become "Name (2)".
-
-## Dependency notes
-
-- `react-native-ble-plx` 3.5.1 officially supports only up to RN 0.74 and
-  Expo 51. This project is on RN 0.88 and Expo 58, and the native build hasn't
-  been compiled yet. If it fails, the fork `@sfourdrinier/react-native-ble-plx`
-  supports Expo 57+ with the same API, so only the import in
-  `src/device/ble/BleDriver.ts` would change.
-- `fast-png` decodes PNGs in plain JavaScript.
-- All other native packages were added with `npx expo install`, so their
-  versions match SDK 58.
+- Built with [Expo](https://expo.dev) and [React Native](https://reactnative.dev)
+- Subject cut-out model: [U²-Net](https://github.com/xuebinqin/U-2-Net) (Apache-2.0)
+- Browser inference: [ONNX Runtime Web](https://github.com/microsoft/onnxruntime) (MIT)
+- Graph numbers: [Tesseract.js](https://github.com/naptha/tesseract.js) (Apache-2.0)
+- Picture search: [Openverse](https://openverse.org) and
+  [Wikimedia Commons](https://commons.wikimedia.org); the app reads out each
+  picture's credit and license
