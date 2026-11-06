@@ -7,7 +7,6 @@
 
 <p align="center">
   <a href="https://github.com/zyh-29/SLDP-PinVisual/actions/workflows/ci.yml"><img src="https://github.com/zyh-29/SLDP-PinVisual/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"/></a>
   <a href="https://zongyaohuang.com/pinvisual"><img src="https://img.shields.io/badge/try%20it-web-7C3AED.svg" alt="Try it on the web"/></a>
 </p>
 
@@ -23,13 +22,17 @@ Everything runs on the device. There are no accounts and no backend, and
 nothing leaves the device unless you turn on an online feature (picture search
 or online speech recognition).
 
+> 🌐 **The app is accessible at [zongyaohuang.com/pinvisual](https://zongyaohuang.com/pinvisual)**,
+> with nothing to install. It works in any modern browser and can be added to a
+> phone's home screen. Use Chrome or Edge to connect to a board over Bluetooth.
+
 ## 📱 App Information
 
 - **Version:** 1.0.0
 - **Platforms:** iOS, Android and web
 - **Grid:** 5 × 6 (30 pins), set in `src/config/hardware.ts`
 - **Bundle ID (iOS) / Package (Android):** `com.sldp.pinvisual`
-- **Try it in a browser:** https://zongyaohuang.com/pinvisual
+- **Web app:** [zongyaohuang.com/pinvisual](https://zongyaohuang.com/pinvisual)
 
 ## ✨ Features
 
@@ -64,8 +67,8 @@ or online speech recognition).
 ## 🚧 Project Status
 
 The app works in the iOS simulator and in Chrome. Bluetooth has been tested
-against a simulated board but **not yet against real hardware**. Help testing on
-real devices is very welcome (see [docs/TESTING.md](docs/TESTING.md)).
+against a simulated board but **not yet against real hardware**. The checklist for
+real-device testing is in [docs/TESTING.md](docs/TESTING.md).
 
 | Feature | Status |
 |---|---|
@@ -121,121 +124,19 @@ real devices is very welcome (see [docs/TESTING.md](docs/TESTING.md)).
 - **AsyncStorage** for saved patterns
 - React Context for app state
 
-## 🚀 Getting Started
+## 💻 Running It Locally
 
-### Prerequisites
-
-- **Node.js 22.13 or newer** (24 recommended, see `.nvmrc`). Training the voice
-  model needs 22.18 or newer.
-- **npm**
-- For phones: Xcode and CocoaPods (iOS), Android Studio (Android), or a free
-  [Expo account](https://expo.dev/signup) to build in the cloud
-- For web Bluetooth: Chrome or Edge
-
-### Installation
+Requires Node.js 22.13 or newer.
 
 ```bash
-# Clone the repository
 git clone https://github.com/zyh-29/SLDP-PinVisual.git
-
-# Navigate to project directory
 cd SLDP-PinVisual
-
-# Install dependencies (also copies ONNX Runtime and Tesseract.js into public/)
 npm install
-
-# Start the development server
-npm start
+npm run web        # opens at http://localhost:8081
 ```
 
-Then press `w` for the browser, `i` for the iOS simulator, `a` for Android, or
-scan the QR code with Expo Go.
-
-### Environment Setup
-
-No `.env` file or API keys are needed. The only build setting is optional:
-
-| Variable | Used for |
-|---|---|
-| `WEB_BASE_URL` | Host the web app in a subfolder, e.g. `WEB_BASE_URL=/pinvisual npm run build:web` |
-
-### Running on a Phone
-
-Expo Go is the quickest way to try the app, but it **can't use Bluetooth**,
-Smart Cut-Out on phones or on-device speech recognition. For those you need a
-[development build](https://docs.expo.dev/develop/development-builds/introduction/):
-
-```bash
-# Build locally
-npm run ios                  # needs Xcode
-npm run android              # needs Android Studio
-
-# Or build in the cloud with EAS
-npx eas-cli@latest build --profile development --platform android   # or ios
-
-# Then start the dev server for the installed build
-npm run start:dev-client
-```
-
-The `ios/` and `android/` folders are generated from `app.json` and are not
-checked in. Don't edit them by hand; change `app.json` or a config plugin.
-
-### Using Your Own Expo Project
-
-`app.json` points at the original author's Expo account. If you forked the repo
-and want to use EAS:
-
-1. Remove `"owner"` and `extra.eas.projectId` from `app.json`
-2. Change `ios.bundleIdentifier` and `android.package` to your own
-3. Run `npx eas-cli@latest init`
-
-## 📜 Available Scripts
-
-### Development
-
-```bash
-npm start                  # Start Expo (Expo Go mode)
-npm run start:dev-client   # Start Expo for an installed development build
-npm run web                # Web dev server at http://localhost:8081
-npm run ios                # Build and run on iOS
-npm run android            # Build and run on Android
-npm run build:android:dev  # Android development APK with EAS
-```
-
-### Checks
-
-```bash
-npm run typecheck          # TypeScript
-npm run lint               # ESLint
-npm test                   # Jest unit tests
-npm run test:firmware      # Firmware protocol tests (needs a C++17 compiler)
-```
-
-### Build & Tools
-
-```bash
-npm run build:web          # Static web build in dist/, with offline support
-npm run train:voice        # Retrain the voice command model
-```
-
-## 🌐 Deploying the Web App
-
-The web app is a static site, so it runs on any static host.
-
-1. **Build:** `npm run build:web` (or `WEB_BASE_URL=/pinvisual npm run build:web`
-   for a subfolder)
-2. **Upload** everything in `dist/`, including the hidden `.nojekyll` file and
-   the `_expo`, `ort`, `models` and `tesseract` folders
-3. **Serve over https.** The camera, screen sharing and Bluetooth all need it.
-   In an `<iframe>`, add `allow="camera"`
-
-**Vercel:** import the repo and deploy. The included `vercel.json` builds for
-the `/pinvisual` subfolder to match the live site. To host at the root instead,
-set `buildCommand` to `npm run build:web` and remove `redirects` and `rewrites`.
-
-**Offline:** the build adds a service worker that saves the app (about 3 MB),
-then the cut-out model and graph-number reader in the background (about 26 MB).
-It's off on the dev server.
+Bluetooth on phones needs a [development build](https://docs.expo.dev/develop/development-builds/introduction/)
+(`npm run ios` / `npm run android`); Expo Go runs everything else.
 
 ## 🔌 Hardware
 
@@ -306,41 +207,6 @@ that can be made slow, lossy or faulty.
 - Screen readers announce each pin ("Row 2, column 3, raised"), summarise
   previews row by row, and announce send, reset and save results
 - Voice commands sit before the 30 pins, so a screen reader reaches them first
-
-## 📝 Development Guidelines
-
-- ✅ Add packages with `npx expo install <package>` so versions match SDK 58
-- ✅ Check the [SDK 58 docs](https://docs.expo.dev/versions/v58.0.0/); Expo APIs
-  change between SDKs
-- ✅ Run `npm run typecheck`, `npm run lint` and `npm test` before a pull request
-- ✅ Change the protocol in three places together: `docs/PROTOCOL.md`, the app
-  and the firmware, then run `npm run test:firmware`
-- ❌ Don't edit `ios/` or `android/` by hand
-- ❌ Don't send data off the device without a setting the user turns on
-
-### Known Issues
-
-- `react-native-ble-plx` 3.5.1 officially supports only up to Expo 51, and the
-  native build hasn't been compiled on SDK 58 yet. If it fails, switch the import
-  in `src/device/ble/BleDriver.ts` to `@sfourdrinier/react-native-ble-plx`
-  (same API, supports Expo 57+)
-
-## 🤝 Contributing
-
-Contributions are welcome, especially testing on real hardware and with screen
-reader users.
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-Bugs and ideas go in [GitHub Issues](https://github.com/zyh-29/SLDP-PinVisual/issues).
-
-## 📄 License
-
-PinVisual is released under the [MIT License](LICENSE).
 
 ## 🙏 Acknowledgments
 
