@@ -38,8 +38,8 @@ the camera and pictures to Image.
   browser, "choose photo" and "share screen" may need the button: browsers
   open those pickers only straight after a tap or key press.
 - **Search:** "search for house" lists matching saved patterns. "Find
-  pictures of a cat" searches Openverse and Wikimedia Commons (only with
-  **Online Picture Search** on in the Device tab), loads the first openly
+  pictures of a cat" searches Openverse and Wikimedia Commons (on by default;
+  **Online Picture Search** in the Device tab turns it off), loads the first openly
   licensed picture on the Image tab and says its credit; "next" and
   "previous" go through the results. Silhouettes come first (drawn ones, then
   photos against the light, and only ones whose title names the thing), so
@@ -110,8 +110,7 @@ fastest first. All of it runs on the device in about 0.05 ms.
    searched for as a picture and its pins shown, as if you had said "find
    pictures of …": "giraffe" or "I want to feel a cactus" shows a giraffe or a
    cactus. The answer starts "That isn't a command, so I searched for pictures
-   of …". This needs **Online Picture Search** on (otherwise the app says how to
-   turn it on), and doesn't happen while a yes-or-no question is waiting or when
+   of …". It's skipped when **Online Picture Search** is turned off, and doesn't happen while a yes-or-no question is waiting or when
    what's left is more than four words (likely talk, not a thing)
    (`searchTopic` in `understand.ts`).
 

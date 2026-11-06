@@ -18,9 +18,10 @@ draw a pattern, give it a picture, or say what you want, and it works out which
 pins should be up and which should be down. The pattern goes over Bluetooth Low
 Energy to an ESP32, which moves one servo per pin through PCA9685 servo boards.
 
-Everything runs on the device. There are no accounts and no backend, and
-nothing leaves the device unless you turn on an online feature (picture search
-or online speech recognition).
+Everything runs on the device. There are no accounts and no backend. The only
+thing sent online is picture search (the word you asked for goes to Openverse
+and Wikimedia Commons), which can be turned off in the Device tab, plus online
+speech recognition if you turn it on.
 
 > 🌐 **The app is accessible at [zongyaohuang.com/pinvisual](https://zongyaohuang.com/pinvisual)**,
 > with nothing to install. It works in any modern browser and can be added to a

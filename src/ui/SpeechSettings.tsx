@@ -58,7 +58,7 @@ export function SpeechSettings() {
       <Separator />
       <SwitchRow
         title="Online Picture Search"
-        hint="Lets find pictures of something search Openverse and Wikimedia Commons on the internet"
+        hint="Searches Openverse and Wikimedia Commons for pictures to show on the pins, when you ask or say something that isn't a command"
         value={prefs.onlinePictures}
         onChange={(v) => setPrefs({ onlinePictures: v })}
       />

@@ -1,5 +1,5 @@
 /**
- * Online picture search (only when the user turned on Online Picture Search): openly licensed pictures from
+ * Online picture search (unless the user turned off Online Picture Search): openly licensed pictures from
  * Openverse and Wikimedia Commons. Both are free, need no account or key, and allow pictures to be read from a web
  * page (CORS). All the searches run at once; one being slow or down doesn't stop the others.
  *
