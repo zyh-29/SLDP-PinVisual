@@ -106,6 +106,14 @@ fastest first. All of it runs on the device in about 0.05 ms.
    - It overrules the rules only when 97% sure they misread a sentence ("find
      me an image of a car" is a picture search, not a saved pattern).
 4. **The browser's AI**, where there is one (above).
+5. **A picture search.** If it's still not a command, the thing it names is
+   searched for as a picture and its pins shown, as if you had said "find
+   pictures of …": "giraffe" or "I want to feel a cactus" shows a giraffe or a
+   cactus. The answer starts "That isn't a command, so I searched for pictures
+   of …". This needs **Online Picture Search** on (otherwise the app says how to
+   turn it on), and doesn't happen while a yes-or-no question is waiting or when
+   what's left is more than four words (likely talk, not a thing)
+   (`searchTopic` in `understand.ts`).
 
 **Training.** `npm run train:voice` (Node 22.18 or newer) builds about 15,000
 example sentences from `scripts/voice-training-data.mjs` (each kind of command

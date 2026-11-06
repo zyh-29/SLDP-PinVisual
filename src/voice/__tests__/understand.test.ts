@@ -1,12 +1,27 @@
 import { classify, familiarity } from '../intent/model';
 import { WEIGHTS } from '../intent/weights';
-import { rewrite, tidy, understand } from '../understand';
+import { rewrite, searchTopic, tidy, understand } from '../understand';
 
 describe('tidy', () => {
   it('takes filler out anywhere and folds in known words', () => {
     expect(tidy('Could you just clear it now, please?')).toBe('clear it');
     expect(tidy('draw a hart')).toBe('draw a heart');
     expect(tidy('show me a pyramid')).toBe('show me a triangle');
+  });
+});
+
+describe('searchTopic', () => {
+  it('finds the thing named in a sentence that is not a command', () => {
+    expect(searchTopic('pizza')).toBe('pizza');
+    expect(searchTopic('I want to feel a giraffe')).toBe('giraffe');
+    expect(searchTopic('can you show me the Eiffel Tower please')).toBe('eiffel tower');
+    expect(searchTopic('what does a cactus look like')).toBe('cactus');
+    expect(searchTopic('play the trumpet')).toBe('play trumpet');
+  });
+
+  it('searches for nothing when no thing is named, or it is too long to be one', () => {
+    for (const s of ['', 'um', 'what is this', 'show me', 'x', 'i was telling my friend about the weekend trip'])
+      expect(searchTopic(s)).toBeNull();
   });
 });
 

@@ -16,7 +16,7 @@ import { credit, type Picture, searchPicturesFast } from './pictureSearch';
 import { PictureCheck } from './PictureCheck';
 import { cancelListening, finishListening, listen, recognitionSupport, type RecognitionSupport } from './recognizer';
 import { type Effect, type Pending, runCommand } from './runCommand';
-import { understand } from './understand';
+import { searchTopic, understand } from './understand';
 import { useVoicePrefs, type VoicePrefs } from './voicePrefs';
 
 export type VoicePhase = 'idle' | 'downloading' | 'listening' | 'thinking' | 'searching';
@@ -150,9 +150,9 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
    * Shows a search result on the Image tab. Results whose pins say nothing (two pins or fewer, or nearly all of
    * them: the conversion picked a detail, or the whole frame) are skipped quietly, up to SKIP_POOR in a row, going
    * the same way ("next" or "previous"). This one and the next few are checked at once, off screen, and the first
-   * useful one is shown: one wait instead of loading them on the tab one after another.
+   * useful one is shown: one wait instead of loading them on the tab one after another. `lead` is said first.
    */
-  const showPicture = async (list: Picture[], index: number, query: string, step = 1): Promise<void> => {
+  const showPicture = async (list: Picture[], index: number, query: string, step = 1, lead = ''): Promise<void> => {
     const h = await imageTab();
     if (!h) return say('The Image tab did not open.');
     const settings = h.pictureSettings();
@@ -177,10 +177,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     // The count only once it's final: slower sources may still be adding to the list.
     const r = latest.current.results;
     const of = r?.query === query && r.complete ? ` of ${r.pictures.length}` : '';
-    say(`Picture ${chosen + 1}${of}: ${credit(p)}. Say next for another, or use this pattern.`);
+    say(`${lead}Picture ${chosen + 1}${of}: ${credit(p)}. Say next for another, or use this pattern.`);
   };
 
-  const search = async (query: string, pictures: boolean) => {
+  const search = async (query: string, pictures: boolean, lead = '') => {
     const now = latest.current;
     const saved = pictures ? [] : await patternStore.list().then((r) => r.patterns.map((p) => p.name)).catch(() => [] as string[]);
     const q = query.toLowerCase();
@@ -207,10 +207,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
       if (!found.pictures.length) {
         const all = await found.complete.catch(() => [] as Picture[]);
         setPhase('idle');
-        if (!all.length) return say(`No pictures of ${query} were found. Try another word.`);
-        return showPicture(all, 0, query);
+        if (!all.length) return say(`${lead}No pictures of ${query} were found. Try another word.`);
+        return showPicture(all, 0, query, 1, lead);
       }
-      await showPicture(found.pictures, 0, query);
+      await showPicture(found.pictures, 0, query, 1, lead);
       setPhase('idle');
     } catch (e) {
       setPhase('idle');
@@ -307,6 +307,19 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         setPending({ suggestion });
         return say(`Did you mean: ${suggestion}? Say yes or no.`);
       }
+    }
+
+    // Still not a command: search for a picture of what it names ("a giraffe") and show its pins. Not while a
+    // question is waiting for a yes or no, where a misheard answer mustn't start a search.
+    const unheard = cmd.kind === 'unknown' && !now.pending ? cmd.heard : '';
+    const topic = unheard ? searchTopic(unheard) : null;
+    if (topic) {
+      if (!now.prefs.onlinePictures)
+        return say(
+          `I heard “${unheard}”, but that isn't a command. To look for a picture of ${topic} instead, ` +
+            'turn on Online Picture Search in the Device tab. Say help for the list.',
+        );
+      return search(topic, true, `That isn't a command, so I searched for pictures of ${topic}. `);
     }
 
     const onImage = now.pathname.startsWith('/image');

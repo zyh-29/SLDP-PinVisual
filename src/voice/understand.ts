@@ -10,6 +10,7 @@
  *       - Very sure: done.
  *       - Fairly sure: "Did you mean …?" (the app asks for a yes first).
  *       - Unsure: not a command (the browser's own AI may still be asked; see VoiceProvider).
+ * 4. Still not a command: what it names is searched for as a picture (searchTopic; see VoiceProvider).
  *    The model also overrules the rules when it's all but certain they misread a sentence ("find me an image of
  *    a car" is a picture search, not a saved pattern called "me an image of a car").
  */
@@ -270,6 +271,23 @@ export function rewrite(label: string, s: string, savedNames: readonly string[] 
 }
 
 const UNKNOWN = (text: string): Command => ({ kind: 'unknown', heard: text.trim() });
+
+/** Longest topic searched for when a sentence isn't a command: anything longer is likely talk, not a thing. */
+export const TOPIC_WORDS = 4;
+const TOPIC_DROP =
+  /\b(show|draw|display|make|give|get|find|search|look|looks|feel|see|want|wanna|like|need|me|my|i|you|a|an|the|some|of|for|it|is|this|that|what|whats|which|who|how|does|do|can|to|on|pictures?|photos?|images?|shapes?|drawings?|pins?|board)\b/g;
+
+/**
+ * What to search pictures for when a sentence isn't a command ("I want to feel a giraffe" → "giraffe"), or null
+ * when nothing is left or it's too long to be the name of a thing.
+ */
+export function searchTopic(text: string): string | null {
+  const s = tidy(text);
+  const looks = /\bwhat (?:does|do|is) (?:an? |the )?(.+?) looks? like\b/.exec(s);
+  const q = strip(looks?.[1] ?? s, TOPIC_DROP);
+  if (!/[a-z]{2}/.test(q) || q.split(' ').length > TOPIC_WORDS) return null;
+  return q;
+}
 
 /** What a sentence asks for. `savedNames`: the saved patterns, which can be opened by name. */
 export function understand(text: string, savedNames: readonly string[] = []): Understanding {
