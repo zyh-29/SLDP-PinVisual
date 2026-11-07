@@ -3,8 +3,6 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 
-import { GRID } from '@/config/hardware';
-import { cellsToString, countRaised, describePattern, type Pattern, togglePin } from '@/domain/pattern';
 import { viewMoved, viewSketch } from '@/imaging/cameraFrame';
 import { toRgb } from '@/imaging/foreground';
 import { fullRect, type Point, type Rect } from '@/imaging/geometry';
@@ -29,20 +27,25 @@ import { type CaptureWatch, carryRect, watchCapture } from '@/state/conversionLo
 import { useCameraLock, useLockTarget } from '@/state/useCameraLock';
 import { useBoardActions } from '@/state/useBoardActions';
 import { useLiveSend } from '@/state/useLiveSend';
-import { forNewPicture, NO_PAN, useConversionSettings } from '@/state/useConversionSettings';
+import { NO_PAN, useConversionSettings } from '@/state/useConversionSettings';
 import { type PickedImage, useImageConversion } from '@/state/useImageConversion';
-import { Button, Columns, Screen, Section, StatusBanner } from '@/ui/components';
+import { usePinEdits } from '@/state/usePinEdits';
+import { useReleaseBlobUri } from '@/state/useReleaseBlobUri';
+import { useSettledPins } from '@/state/useSettledPins';
+import { Columns, Screen, Section, StatusBanner } from '@/ui/components';
 import { ConversionSettings } from '@/ui/ConversionSettings';
 import { CropEditor } from '@/ui/CropEditor';
-import { CAMERA_HINT, ImageSourcePicker, PICKER_WIDTH, SCREEN_HINT } from '@/ui/ImageSourcePicker';
+import { ImageCropControls } from '@/ui/ImageCropControls';
+import { ImageSourcePicker, PICKER_WIDTH } from '@/ui/ImageSourcePicker';
 import { DropOverlay, LiveBadge } from '@/ui/ImageOverlays';
 import { ImageResult } from '@/ui/ImageResult';
-import { PixelImage } from '@/ui/PixelImage';
 import { LiveVideo } from '@/ui/LiveVideo';
+import { PinsSeePreview } from '@/ui/PinsSeePreview';
 import { SavePatternSheet } from '@/ui/SavePatternSheet';
-import { radius, space, useTheme } from '@/ui/theme';
+import { space } from '@/ui/theme';
 import { announce } from '@/voice/announce';
-import { useImageVoice, useVoice } from '@/voice/VoiceProvider';
+import { useImageTabVoice } from '@/voice/useImageTabVoice';
+import { useVoice } from '@/voice/VoiceProvider';
 import { VoiceBar, VoiceToggle } from '@/ui/VoicePanel';
 
 
@@ -85,18 +88,9 @@ const toView = (r: Rect, surface: SurfaceView | undefined) =>
   surface ? mapRect(r, surface.toFrame, { width: surface.frameWidth, height: surface.frameHeight }) : r;
 
 export default function ImageScreen() {
-  const t = useTheme();
   const { setPattern } = usePattern();
   const [picked, setPicked] = useState<PickedImage | null>(null);
-  // A captured or dropped photo (a blob: address) stays in the browser's memory until released: release each one
-  // once another picture has replaced it.
-  const pictureUri = picked?.uri;
-  const shownUri = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    const before = shownUri.current;
-    shownUri.current = pictureUri;
-    if (Platform.OS === 'web' && before && before !== pictureUri && before.startsWith('blob:')) URL.revokeObjectURL(before);
-  }, [pictureUri]);
+  useReleaseBlobUri(picked?.uri);
   const prefs = useConversionSettings();
   const { removeBackground, removeClutter, toleranceOverride, sensitivity, snap, cutoutOverride, linesOverride, graphRange, graphPan, thinLines } =
     prefs.settings;
@@ -109,11 +103,6 @@ export default function ImageScreen() {
   const [focus, setFocus] = useState<Focus | null>(null);
   const [dragging, setDragging] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
-  /** The user's pin edits and lock state, tied to the picture they were made on (see the pin lock below). */
-  const [editState, setEditState] = useState<{ picked: PickedImage; auto: string; pattern: Pattern | null; unlocked: boolean } | null>(
-    null,
-  );
-  /** null = automatic: axes and gridlines are removed when the image looks like a graph. */
   const [live, setLive] = useState<LiveCapture | null>(null);
   /** Live camera focus: 0 sharp, 1 refocusing, 2 can't get sharp. */
   const [focusTrouble, setFocusTrouble] = useState<0 | 1 | 2>(0);
@@ -121,8 +110,6 @@ export default function ImageScreen() {
   /** Live camera: the picture is essentially black (analysis paused). */
   const [tooDark, setTooDark] = useState(false);
   const cameraDark = live?.kind === 'camera' && tooDark;
-  /** Graphs: how much of the graph the pins show (around the middle of the graph), at its true proportions. */
-  /** The graph window moved with the arrows (units, right and up); back to the curve for each new graph. */
 
   // Stop screen sharing when the session is replaced or the screen goes away.
   useEffect(() => () => live?.stop(), [live]);
@@ -229,45 +216,16 @@ export default function ImageScreen() {
     frameStart.current = 0;
   }, [picked, live]);
 
-  // Pin lock. Locked (default): the pins follow the image. Unlocked: the user taps pins, and those edits win over
-  // every setting. Edits (and the unlock) belong to the picture they were made on: a new picture discards them and
-  // locks again. During a live share that means the screen changed enough to change the automatic pins.
-  const autoKey = result ? cellsToString(result) : '';
-  const edit = editState && (editState.picked === analysed || (live && editState.auto === autoKey)) ? editState : null;
-  const pinsUnlocked = !!edit?.unlocked;
-  /** What the user gets: their edited pins, or the automatic result. */
-  const shown = edit?.pattern ?? result;
+  // Pin lock: the user's pin edits, tied to the picture they were made on.
+  const pins = usePinEdits(analysed, result, !!live);
+  const { shown } = pins;
 
-  // Voice: a picture's pins are settled once it's loaded and nothing is still being worked out for it (Smart
-  // Cut-Out, the numbers on a graph's axes). Voice waits for this instead of watching the pins for a while.
+  // Voice waits for a picture's pins to settle: loaded, and nothing still being worked out for it.
   const settled = !!picked && !loading && !c.cuttingOut && !c.readingNumbers;
-  const settleWaiters = useRef<{ uri: string; resolve: (p: Pattern | null) => void }[]>([]);
-  useEffect(() => {
-    if (!settled || !picked) return;
-    const ready = settleWaiters.current.filter((w) => w.uri === picked.uri);
-    if (!ready.length) return;
-    settleWaiters.current = settleWaiters.current.filter((w) => w.uri !== picked.uri);
-    ready.forEach((w) => w.resolve(shown ?? null));
-  }, [settled, picked, shown]);
+  const waitForPins = useSettledPins(settled, picked?.uri, shown);
   // Send Live to Board: off until asked for, and only while live.
   const [liveSendOn, setLiveSendOn] = useState(false);
   const liveSend = useLiveSend(liveSendOn && !!live, live ? shown : null);
-  const toggleLock = () => {
-    if (!analysed) return;
-    const unlocked = !pinsUnlocked;
-    setEditState({ picked: analysed, auto: autoKey, pattern: edit?.pattern ?? null, unlocked });
-    announce(unlocked ? 'Pins unlocked. Tap a pin to raise or lower it.' : 'Pins locked');
-  };
-  const togglePinAt = (row: number, col: number) => {
-    if (!analysed || !shown || !pinsUnlocked) return;
-    setEditState({ picked: analysed, auto: autoKey, pattern: togglePin(shown, row, col), unlocked: true });
-  };
-  const resetPins = () => {
-    if (!analysed || !edit) return;
-    setEditState({ ...edit, picked: analysed, auto: autoKey, pattern: null });
-    announce('Pins reset to the image');
-  };
-
   const resetForNewImage = () => {
     lock.release();
     dropCapture();
@@ -275,7 +233,7 @@ export default function ImageScreen() {
     setFocus(null);
     c.resetGraph();
     prefs.resetForNewPicture();
-    setEditState(null);
+    pins.clear();
   };
 
   /** Photos, drops and pastes end up here. */
@@ -489,100 +447,28 @@ export default function ImageScreen() {
     router.navigate('/');
   };
 
-  const gridAspect = (GRID.cols * GRID.pinPitchRatio) / GRID.rows;
-
-  // Voice commands for this tab (see VoiceProvider): each answers with what happened.
   const voice = useVoice();
-  const noPicture = "There's no picture yet. Say start camera, choose photo, or graph, then an equation.";
-  useImageVoice({
-    drawEquation: (text) => drawEquation(text, true),
-    run: async (action) => {
-      switch (action) {
-        case 'camera':
-          if (!supportsCamera) return 'This device has no camera the app can use.';
-          if (live?.kind === 'camera') return 'The camera is already on.';
-          return (await startLive('camera')) ?? 'Camera on. Point it at something. It captures by itself once it locks on, or say capture.';
-        case 'capture':
-          if (live?.kind !== 'camera') return 'The camera is off. Say start camera first.';
-          return (await capturePhoto()) ?? 'Captured. Say what do the pins see, or use this pattern.';
-        case 'stopCamera':
-          if (live?.kind !== 'camera') return 'The camera is already off.';
-          stopLive();
-          return 'Camera off. The last picture stays.';
-        case 'flipCamera':
-          if (live?.kind !== 'camera') return 'The camera is off. Say start camera first.';
-          if (!live.canFlip) return 'This device has only one camera.';
-          await flipCamera();
-          return '';
-        case 'photo':
-          void pick();
-          // A browser opens its file picker only straight after a tap or key press, which speaking isn't.
-          return Platform.OS === 'web' ? 'Opening your photos. If nothing opens, press Choose Photo.' : 'Opening your photos.';
-        case 'shareScreen':
-          if (!supportsScreenCapture) return 'Screen sharing works in a desktop browser only.';
-          void startLive('screen');
-          return 'Choose the screen or window to share. If nothing opens, press Share Screen.';
-        case 'stopSharing':
-          if (live?.kind !== 'screen') return 'Nothing is being shared.';
-          stopLive();
-          return 'Stopped sharing. The last picture stays.';
-        case 'clearImage':
-          if (!picked) return 'There is no image to clear.';
-          clearImage();
-          return '';
-        case 'usePattern':
-          if (!shown) return noPicture;
-          takeResult();
-          return `Using these pins. ${countRaised(shown)} of ${shown.rows * shown.cols} raised. The Display tab shows them.`;
-        case 'describeResult':
-          return shown ? describePattern(shown) : noPicture;
-      }
-    },
-    setSetting: (setting, on) => {
-      const [key, label] = (
-        {
-          removeBackground: ['removeBackground', 'Remove Background'],
-          smartCutout: ['cutoutOverride', 'Smart Cut-Out'],
-          axes: ['linesOverride', 'Remove Axes and Grid'],
-          labels: ['removeClutter', 'Ignore Labels and Text'],
-          oneLine: ['thinLines', 'One-Pin Lines'],
-          snap: ['snap', 'Snap to Shape'],
-        } as const
-      )[setting];
-      prefs.set(key, on);
-      return `${label} ${on ? 'on' : 'off'}.`;
-    },
-    adjust: (setting, up) => {
-      if (setting === 'tolerance') {
-        const now = toleranceOverride ?? fg?.tolerance ?? 40;
-        const next = Math.max(8, Math.min(160, now + (up ? 10 : -10)));
-        prefs.set('toleranceOverride', next);
-        return `Tolerance ${next}. Higher treats more colours as background.`;
-      }
-      const next = Math.max(5, Math.min(95, sensitivity + (up ? 10 : -10)));
-      prefs.set('sensitivity', next);
-      return `Sensitivity ${next}. Higher raises more pins.`;
-    },
+  useImageTabVoice({
+    live,
+    hasPicture: !!picked,
+    shown,
+    autoTolerance: fg?.tolerance,
+    prefs,
+    startLive,
+    capturePhoto,
+    stopLive,
+    flipCamera,
+    pick,
+    clearImage,
+    usePattern: takeResult,
+    drawEquation,
     loadPicture: (uri) => load({ uri }),
-    pictureSettings: () => forNewPicture(prefs.settings),
-    settled: (uri) =>
-      new Promise((resolve) => {
-        if (settled && picked?.uri === uri) return resolve(shown ?? null);
-        const waiter = { uri, resolve };
-        settleWaiters.current.push(waiter);
-        // A picture that never settles (it failed to load, or another replaced it) mustn't hold voice up forever.
-        setTimeout(() => {
-          if (!settleWaiters.current.includes(waiter)) return;
-          settleWaiters.current = settleWaiters.current.filter((w) => w !== waiter);
-          resolve(null);
-        }, 8000);
-      }),
-    result: () => shown ?? null,
+    waitForPins,
     send: sendResult,
   });
 
   return (
-    <View style={styles.tool}>
+    <View style={styles.screen}>
       <Screen
         title="Image"
         // Native: hold the scroll view still while the crop box is dragged. Web: never toggle it, because hiding the
@@ -653,172 +539,42 @@ export default function ImageScreen() {
                     }}
                     onDragging={setDragging}
                   />
-                  {cameraDark ? (
-                    <StatusBanner
-                      tone="neutral"
-                      title="Too dark to see"
-                      message="Turn on a light, or point the camera at something lit. The pins keep their last picture meanwhile."
-                    />
-                  ) : live?.shared === 'screen' ? (
-                    <StatusBanner
-                      tone="neutral"
-                      title="Sharing the entire screen"
-                      message="PinVisual can see itself, and other windows, which confuses it. Stop Sharing, then share just the window with your graph or shape."
-                    />
-                  ) : cameraTrouble === 2 ? (
-                    <StatusBanner
-                      tone="neutral"
-                      title="Hard to focus"
-                      message="Hold the phone a little further back (about 15 cm or more), keep it still, and tap what you want sharp."
-                    />
-                  ) : null}
-                  <View style={styles.buttonRow}>
-                    <Button
-                      title="Auto Crop"
-                      icon="sparkles"
-                      variant="secondary"
-                      compact
-                      style={styles.tool}
-                      disabled={!manualCrop && !focus}
-                      onPress={() => {
-                        lock.release();
-                        dropCapture();
-                        setManualCrop(null);
-                        setFocus(null);
-                      }}
-                      accessibilityHint="Crops to the main subject again"
-                    />
-                    {live ? (
-                      // While live, Stop (below) already ends it; this slot frames the whole picture.
-                      <Button
-                        title={live.kind === 'camera' ? 'Whole View' : 'Whole Screen'}
-                        icon="fullscreen"
-                        variant="secondary"
-                        compact
-                        style={styles.tool}
-                        onPress={() => {
-                          dropCapture();
-                          setManualCrop(fullRect(picked.raster.width, picked.raster.height));
-                        }}
-                        accessibilityHint={`Uses the whole ${live.kind === 'camera' ? 'camera view' : 'shared screen'} instead of the automatic crop`}
-                      />
-                    ) : (
-                      <Button
-                        title="Clear Image"
-                        icon="close"
-                        variant="destructive"
-                        compact
-                        style={styles.tool}
-                        onPress={clearImage}
-                        accessibilityHint="Removes the image and returns to the start"
-                      />
-                    )}
-                  </View>
-                  {live?.kind === 'camera' ? (
-                    <>
-                      <View style={styles.buttonRow}>
-                        <Button
-                          title="Capture"
-                          icon="camera"
-                          compact
-                          style={styles.tool}
-                          onPress={capturePhoto}
-                          loading={loading}
-                          accessibilityLabel="Capture photo"
-                          accessibilityHint="Takes a photo of what the camera sees and turns the camera off"
-                        />
-                        <Button
-                          title="Stop Camera"
-                          variant="destructive"
-                          icon="stop"
-                          compact
-                          style={styles.tool}
-                          onPress={stopLive}
-                          accessibilityHint="Turns the camera off and keeps the last picture"
-                        />
-                      </View>
-                      {live.canFlip ? (
-                        <Button
-                          title="Flip Camera"
-                          variant="secondary"
-                          icon="flip"
-                          compact
-                          onPress={flipCamera}
-                          accessibilityHint={`Switches to the ${live.facing === 'user' ? 'back' : 'front'} camera`}
-                        />
-                      ) : null}
-                    </>
-                  ) : (
-                    <View style={styles.buttonRow}>
-                      <Button
-                        title={supportsScreenCapture || supportsCamera ? 'New Photo' : 'Choose Another Photo'}
-                        variant="secondary"
-                        icon="photo"
-                        compact
-                        style={styles.tool}
-                        onPress={pick}
-                        loading={loading}
-                      />
-                      {live ? (
-                        <Button title="Stop Sharing" variant="destructive" icon="stop" compact style={styles.tool} onPress={stopLive} />
-                      ) : (
-                        <>
-                          {supportsCamera ? (
-                            <Button
-                              title="Camera"
-                              variant="secondary"
-                              icon="camera"
-                              compact
-                              style={styles.tool}
-                              onPress={() => startLive('camera')}
-                              disabled={loading}
-                              accessibilityLabel="Live camera"
-                              accessibilityHint={CAMERA_HINT}
-                            />
-                          ) : null}
-                          {supportsScreenCapture ? (
-                            <Button
-                              title="Screen"
-                              accessibilityLabel="Share screen"
-                              variant="secondary"
-                              icon="screen"
-                              compact
-                              style={styles.tool}
-                              onPress={() => startLive('screen')}
-                              disabled={loading}
-                              accessibilityHint={SCREEN_HINT}
-                            />
-                          ) : null}
-                        </>
-                      )}
-                    </View>
-                  )}
+                  <ImageCropControls
+                    live={live}
+                    dark={tooDark}
+                    focusTrouble={focusTrouble}
+                    loading={loading}
+                    canAutoCrop={!!manualCrop || !!focus}
+                    onAutoCrop={() => {
+                      lock.release();
+                      dropCapture();
+                      setManualCrop(null);
+                      setFocus(null);
+                    }}
+                    onWholeView={() => {
+                      dropCapture();
+                      setManualCrop(fullRect(picked.raster.width, picked.raster.height));
+                    }}
+                    onClear={clearImage}
+                    onCapture={capturePhoto}
+                    onStopLive={stopLive}
+                    onFlip={flipCamera}
+                    onPick={pick}
+                    onCamera={supportsCamera ? () => startLive('camera') : undefined}
+                    onScreen={supportsScreenCapture ? () => startLive('screen') : undefined}
+                  />
                 </Section>
 
-                <Section title="What the pins see">
-                  <View style={[styles.frame, { aspectRatio: gridAspect, borderColor: t.separator }]}>
-                    {c.cleaned ? (
-                      <PixelImage
-                        pixels={c.cleaned}
-                        fit={c.stretch ? 'fill' : 'contain'}
-                        accessibilityLabel={removeBackground ? 'Cropped image with the background removed' : 'Cropped image'}
-                      />
-                    ) : null}
-                  </View>
-                  {c.cuttingOut ? (
-                    <StatusBanner tone="progress" title="Cutting out subject…" />
-                  ) : c.cutoutError ? (
-                    <StatusBanner tone="warning" title="Smart Cut-Out unavailable" message={c.cutoutError} />
-                  ) : removeBackground && !fg.subject ? (
-                    <StatusBanner tone="warning" title="No subject found" message={c.cutoutOn ? undefined : 'Try a lower Tolerance.'} />
-                  ) : c.landscape ? (
-                    <StatusBanner
-                      tone="neutral"
-                      title="Landscape"
-                      message="The pins show the skyline: the land raised, the sky lowered. Tap something in the picture to show just that."
-                    />
-                  ) : null}
-                </Section>
+                <PinsSeePreview
+                  pixels={c.cleaned}
+                  stretch={c.stretch}
+                  removeBackground={removeBackground}
+                  cuttingOut={c.cuttingOut}
+                  cutoutError={c.cutoutError}
+                  cutoutOn={c.cutoutOn}
+                  noSubject={removeBackground && !fg.subject}
+                  landscape={c.landscape}
+                />
               </>
             }
             right={
@@ -836,11 +592,11 @@ export default function ImageScreen() {
                 {shown ? (
                   <ImageResult
                     pattern={shown}
-                    unlocked={pinsUnlocked}
-                    edited={!!edit?.pattern}
-                    onToggleLock={toggleLock}
-                    onTogglePin={togglePinAt}
-                    onReset={resetPins}
+                    unlocked={pins.unlocked}
+                    edited={pins.edited}
+                    onToggleLock={pins.toggleLock}
+                    onTogglePin={pins.togglePinAt}
+                    onReset={pins.resetPins}
                     onUse={takeResult}
                     onSave={() => setSaveOpen(true)}
                     board={{ connected: board.connected, command: board.state.command, onSend: sendResult, onClear: () => void board.lowerPins(false) }}
@@ -872,16 +628,5 @@ export default function ImageScreen() {
 }
 
 const styles = StyleSheet.create({
-  buttonRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  // Equal widths, but never so narrow a label is cut off: they wrap to another line instead.
-  tool: { flexGrow: 1, flexBasis: 120 },
-  frame: {
-    width: '100%',
-    maxWidth: 480,
-    alignSelf: 'center',
-    borderRadius: radius.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
-  },
+  screen: { flexGrow: 1, flexBasis: 120 },
 });
