@@ -32,7 +32,6 @@ const ICONS = {
   plus: { ios: 'plus', android: 'add', web: 'add' },
   refresh: { ios: 'arrow.clockwise', android: 'refresh', web: 'refresh' },
   grid: { ios: 'circle.grid.3x3.fill', android: 'grid_on', web: 'grid_on' },
-  demo: { ios: 'square.grid.3x3.fill', android: 'apps', web: 'apps' },
   pin: { ios: 'smallcircle.filled.circle', android: 'radio_button_checked', web: 'radio_button_checked' },
   bookmarks: { ios: 'square.stack', android: 'bookmarks', web: 'bookmarks' },
   sparkles: { ios: 'sparkles', android: 'auto_awesome', web: 'auto_awesome' },

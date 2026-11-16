@@ -17,9 +17,6 @@ export class MockDriver implements DeviceDriver {
   firmware: MockFirmware | null = null;
   private firmwareListeners = new Set<() => void>();
 
-  /** The simulated board's grid (the app's 5 × 6 GRID unless a test builds a different board). */
-  constructor(private readonly grid: { rows: number; cols: number } = GRID) {}
-
   async availability() {
     return null;
   }
@@ -50,7 +47,7 @@ export class MockDriver implements DeviceDriver {
     await new Promise((r) => setTimeout(r, 400));
     const receivers = new Set<(bytes: Uint8Array) => void>();
     let connected = true;
-    const firmware = new MockFirmware({ rows: this.grid.rows, cols: this.grid.cols, behavior: this.behavior }, (bytes) => {
+    const firmware = new MockFirmware({ rows: GRID.rows, cols: GRID.cols, behavior: this.behavior }, (bytes) => {
       if (connected) receivers.forEach((r) => r(bytes));
     });
     this.firmware = firmware;
