@@ -49,8 +49,8 @@ interface VoiceValue {
 
 const VoiceContext = createContext<VoiceValue | null>(null);
 
-const PATHS = { display: '/', image: '/image', saved: '/saved', pinTest: '/pin-test', device: '/device' } as const satisfies Record<Tab, Href>;
-const TAB_NAMES: Record<Tab, string> = { display: 'Display', image: 'Image', saved: 'Saved', pinTest: 'Pin Test', device: 'Device' };
+const PATHS = { display: '/', image: '/image', braille: '/braille', saved: '/saved', pinTest: '/pin-test', device: '/device' } as const satisfies Record<Tab, Href>;
+const TAB_NAMES: Record<Tab, string> = { display: 'Display', image: 'Image', braille: 'Braille', saved: 'Saved', pinTest: 'Pin Test', device: 'Device' };
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**

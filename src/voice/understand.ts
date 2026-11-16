@@ -215,6 +215,8 @@ export function rewrite(label: string, s: string, savedNames: readonly string[] 
     case 'navigate': {
       const tab = /\b(pin test|pin testing|test|testing)\b/.test(s)
         ? 'pin test'
+        : /\bbraille\b/.test(s)
+          ? 'braille'
         : /\b(saved|library|my patterns|patterns)\b/.test(s)
           ? 'saved'
           : /\b(image|images|picture|pictures|photo|photos|camera)\b/.test(s)

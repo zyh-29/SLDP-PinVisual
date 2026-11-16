@@ -39,7 +39,7 @@ to Image.
   picture search ("start camera", "choose photo", "find pictures of a cat",
   "next"). These are answered as not commands; the voice model was retrained
   on them as examples of things that aren't commands.
-- **Going places:** "go to image", "go to display", "open device".
+- **Going places:** "go to image", "go to display", "go to braille", "open device".
 - **Say it your own way.** "Could you get rid of everything", "make the
   fourth column stick up", "draw me a parabola" all work. See "How commands are understood" below.
 - **Browser AI as a last resort:** where the browser has a built-in model

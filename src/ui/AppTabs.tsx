@@ -15,6 +15,10 @@ export function AppTabs() {
         <NativeTabs.Trigger.Label>Image</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf={{ default: 'photo', selected: 'photo.fill' }} md="image" />
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="braille">
+        <NativeTabs.Trigger.Label>Braille</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf={{ default: 'hand.point.up.braille', selected: 'hand.point.up.braille.fill' }} md="touch_app" />
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="saved">
         <NativeTabs.Trigger.Label>Saved</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf={{ default: 'square.stack', selected: 'square.stack.fill' }} md="bookmarks" />

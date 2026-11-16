@@ -14,7 +14,7 @@ export type ImageAction = 'clearImage' | 'usePattern' | 'describeResult';
 /** Image tab settings that are on or off. */
 export type ImageSetting = 'removeBackground' | 'axes' | 'labels' | 'oneLine' | 'snap';
 
-export type Tab = 'display' | 'image' | 'saved' | 'pinTest' | 'device';
+export type Tab = 'display' | 'image' | 'braille' | 'saved' | 'pinTest' | 'device';
 
 export type Command =
   | { kind: 'help' }
@@ -283,10 +283,10 @@ export function parseCommand(text: string, savedNames: readonly string[] = []): 
   if (/^(voice control off|turn off voice control|hide voice control|close voice control|stop voice control)$/.test(s)) return { kind: 'voiceOff' };
 
   // Going to a tab: "go to the image tab", "open saved", "show device"
-  const nav = /^(?:go to|open|show|switch to|take me to)\s+(?:the\s+)?(display|preview|image|images|picture|pictures|camera tab|saved|saved patterns|pin test|device|devices|settings|board settings)(?:\s+(?:tab|page|screen))?$/.exec(s);
+  const nav = /^(?:go to|open|show|switch to|take me to)\s+(?:the\s+)?(display|preview|image|images|picture|pictures|camera tab|braille|saved|saved patterns|pin test|device|devices|settings|board settings)(?:\s+(?:tab|page|screen))?$/.exec(s);
   if (nav) {
     const w = nav[1];
-    const tab: Tab = /display|preview/.test(w) ? 'display' : /image|picture|camera/.test(w) ? 'image' : /saved/.test(w) ? 'saved' : /pin test/.test(w) ? 'pinTest' : 'device';
+    const tab: Tab = /display|preview/.test(w) ? 'display' : /image|picture|camera/.test(w) ? 'image' : /braille/.test(w) ? 'braille' : /saved/.test(w) ? 'saved' : /pin test/.test(w) ? 'pinTest' : 'device';
     return { kind: 'navigate', tab };
   }
 

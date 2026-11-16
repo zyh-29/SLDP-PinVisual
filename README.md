@@ -44,6 +44,9 @@ Speech Recognition.
 - 🎙️ **Voice commands** - spoken or typed: "show a circle", "letter B", "graph y
   equals x squared", "send" ([full list](docs/VOICE.md))
 - 🔤 **Letters and digits** - A–Z and 0–9 drawn for the pins
+- ⠃ **Braille** - type a word or phrase and play it on the pins like a video,
+  one braille cell after another (uncontracted UEB), with pause, step, speed and
+  loop; a repeated cell drops the pins briefly so "ll" reads as two
 - 💾 **Saved patterns** with backup export and import
 
 ### Technical Features
@@ -70,6 +73,7 @@ real-device testing is in [docs/TESTING.md](docs/TESTING.md).
 | Drawing, Clear Grid, saving and loading | ✅ Works |
 | Graph Range, zoom, panning, typed equations | ✅ Works |
 | Letters and digits on the pins | ✅ Works |
+| Braille player | 🟡 Works against a simulated board; not yet read on the real pins |
 | Web layout (laptop, tablet, phone) | ✅ Works |
 | Protocol (framing, CRC, chunking, retries, ACKs) | ✅ Done, with unit tests |
 | Voice commands | 🟡 Works in Chrome by typing and with a stand-in recogniser; not yet tried with a real microphone, VoiceOver or TalkBack |
@@ -152,7 +156,7 @@ one servo" in the firmware README, then use the app's **Pin Test** tab.
 ```
 ./
 ├── src/
-│   ├── app/              # Expo Router screens: Display, Image, Saved, Device, Pin Test
+│   ├── app/              # Expo Router screens: Display, Image, Braille, Saved, Device, Pin Test
 │   ├── config/           # hardware.ts: grid size, BLE UUIDs, protocol timing
 │   ├── domain/           # Grid model, pin order, bit packing
 │   ├── protocol/         # Message encoding, CRC-16, chunking, ACKs and retries
