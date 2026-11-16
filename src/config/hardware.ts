@@ -45,6 +45,13 @@ export const BLE = {
   connectTimeoutMs: 10_000,
 } as const;
 
+/**
+ * How long after the board's acknowledgement a pin counts as still. The board acknowledges once a servo has
+ * finished its move (see docs/PROTOCOL.md); a continuous-rotation servo still coasts a little after its pulses
+ * stop. Anything timed on the pins (a braille cell's time) starts after this.
+ */
+export const PIN_SETTLE_MS = 100;
+
 /** Application-level protocol timing. */
 export const PROTOCOL = {
   version: 1,

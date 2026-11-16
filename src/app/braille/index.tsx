@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
-import { GRID } from '@/config/hardware';
+import { GRID, PIN_SETTLE_MS } from '@/config/hardware';
 import { sendWhenFree } from '@/device/sendWhenFree';
 import { type BrailleCell, cellPattern, describeCell, toBraille } from '@/domain/braille';
 import { cellsToString, createEmptyPattern } from '@/domain/pattern';
@@ -17,7 +17,10 @@ import { announce } from '@/voice/announce';
 
 /** Size of each pin in the overview of every cell. */
 const THUMB_PIN = 9;
-/** How long each cell stays up while playing, in seconds. */
+/**
+ * How long each cell stays up while playing, in seconds: counted from when the pins have finished moving (the
+ * board acknowledges once its servos have stopped, then PIN_SETTLE_MS), so even the shortest is all reading time.
+ */
 const SPEEDS = ['0.5', '1', '2', '3'] as const;
 type Speed = (typeof SPEEDS)[number];
 /** Between two identical cells (the "ll" in "hello") the pins drop for this long, so the second one is felt. */
@@ -26,8 +29,9 @@ const GAP_MS = 250;
 /**
  * Braille: type a word or a phrase and play it on the pins like a video, one braille cell after another
  * (uncontracted UEB), or step through it by hand. With a board connected each cell is sent as it's shown, and
- * while playing a cell's time starts once the board has it, so slow servos never cut a cell short. The Display
- * preview is left alone.
+ * while playing the next one is only sent once the board has acknowledged this one (after its servos have
+ * stopped), the pins have settled, and the cell has had its full time: the servos always finish moving first.
+ * The Display preview is left alone.
  */
 export default function BrailleScreen() {
   const t = useTheme();
@@ -93,9 +97,9 @@ export default function BrailleScreen() {
         setPlaying(false);
         announce('Finished');
       }
-    }, Number(speed) * 1000);
+    }, Number(speed) * 1000 + (connected ? PIN_SETTLE_MS : 0));
     return () => clearTimeout(timer);
-  }, [playing, ready, index, count, loop, speed, go, at.visit]);
+  }, [playing, ready, index, count, loop, speed, go, at.visit, connected]);
 
   const togglePlay = () => {
     tapFeedback();

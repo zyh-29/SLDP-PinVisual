@@ -123,9 +123,12 @@ Firmware reassembly rules:
 - Send exactly one ACK notification per complete, decodable message.
   The ACK is a normal message (type `0x80`) with the **same commandId** and the
   type being acknowledged. It is 10 bytes, so it fits a single notification.
-- Send `status = OK` **after** validating the message and issuing the servo
-  commands to the PCA9685 boards. Do not wait for the servos to finish moving
-  unless you want the app to wait too (keep it under the 3 s timeout).
+- Send `status = OK` **after** validating the message and once the servos have
+  **finished moving** (keep it under the 3 s timeout). The app times things
+  from the ACK, such as how long a braille cell stays up, so an early ACK would
+  start the clock while pins are still on their way. The single-servo sketch
+  (`pinvisual-esp32.ino`) acknowledges when its turn (`TURN_MS`) has finished;
+  a pin that's already in place is acknowledged at once.
 - If the CRC fails, you may reply with status `0x01` using the commandId from
   the header, or stay silent. The app retries either way.
 - **De-duplication (required):** the app retries with the **same commandId and

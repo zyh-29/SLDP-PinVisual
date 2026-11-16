@@ -1,5 +1,9 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
+import { PIN_SETTLE_MS } from '@/config/hardware';
+import { DeviceController } from '@/device/DeviceController';
+import { MOCK_DEVICE_ID, MOCK_DEVICE_NAME, MockDriver } from '@/device/__tests__/support/MockDriver';
+import { cellsToString } from '@/domain/pattern';
 import { DeviceProvider } from '@/state/DeviceProvider';
 import BrailleScreen from '@/app/braille/index';
 
@@ -66,6 +70,41 @@ describe('Braille tab', () => {
       expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
     } finally {
       jest.useRealTimers();
+    }
+  });
+
+  it('with a board: the next cell is only sent once the servos have stopped and the cell has had its full time', async () => {
+    // The simulated board acknowledges 150 ms after a pattern arrives, as the real one does once its servo's turn
+    // (TURN_MS) has finished.
+    const mock = new MockDriver();
+    const board = new DeviceController(mock);
+    await board.connect({ id: MOCK_DEVICE_ID, name: MOCK_DEVICE_NAME });
+    jest.useFakeTimers();
+    try {
+      const turnMs = mock.firmware!.ackDelayMs;
+      const received: { at: number; pins: string }[] = [];
+      mock.onFirmwareChange(() => {
+        const pins = cellsToString(mock.firmware!.simulatedPins);
+        if (received[received.length - 1]?.pins !== pins) received.push({ at: Date.now(), pins });
+      });
+      await render(
+        <DeviceProvider board={board}>
+          <BrailleScreen />
+        </DeviceProvider>,
+      );
+      // "ab": a (dot 1), then b (dots 1 2).
+      await fireEvent.changeText(screen.getByLabelText('Text to show in braille'), 'ab');
+      await fireEvent.press(screen.getByRole('radio', { name: '0.5 s' }));
+      await fireEvent.press(screen.getByRole('button', { name: 'Play' }));
+      for (let i = 0; i < 60; i++) await act(() => jest.advanceTimersByTimeAsync(50));
+
+      const cells = received.filter((r) => r.pins !== '000000000');
+      expect(cells.map((r) => r.pins)).toEqual(['100000000', '100100000']);
+      // Shortest speed: the servo's turn, then the settle time, then the whole half second on the pins.
+      expect(cells[1].at - cells[0].at).toBeGreaterThanOrEqual(turnMs + PIN_SETTLE_MS + 500);
+    } finally {
+      jest.useRealTimers();
+      await board.disconnect();
     }
   });
 

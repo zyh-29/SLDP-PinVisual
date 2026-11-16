@@ -9,8 +9,9 @@ const controller = new DeviceController(new BleDriver(), BLE.scanTimeoutMs);
 
 const DeviceContext = createContext<{ controller: DeviceController }>({ controller });
 
-export function DeviceProvider({ children }: { children: ReactNode }) {
-  return <DeviceContext.Provider value={{ controller }}>{children}</DeviceContext.Provider>;
+/** `board`: another controller, for tests (a simulated board). */
+export function DeviceProvider({ children, board = controller }: { children: ReactNode; board?: DeviceController }) {
+  return <DeviceContext.Provider value={{ controller: board }}>{children}</DeviceContext.Provider>;
 }
 
 export function useDevice(): { state: DeviceSnapshot; controller: DeviceController } {
