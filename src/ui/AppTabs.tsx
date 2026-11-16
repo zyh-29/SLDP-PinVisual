@@ -15,6 +15,10 @@ export function AppTabs() {
         <NativeTabs.Trigger.Label>Image</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf={{ default: 'photo', selected: 'photo.fill' }} md="image" />
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="demo">
+        <NativeTabs.Trigger.Label>Demo</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf={{ default: 'square.grid.3x3', selected: 'square.grid.3x3.fill' }} md="apps" />
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="saved">
         <NativeTabs.Trigger.Label>Saved</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf={{ default: 'square.stack', selected: 'square.stack.fill' }} md="bookmarks" />
