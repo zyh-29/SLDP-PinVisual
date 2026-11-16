@@ -8,21 +8,17 @@ import { useSyncExternalStore } from 'react';
  * - onlineRecognition: allow voice commands where the browser can only recognise speech on its maker's servers
  *   (Chrome on Android, Safari). Off by default: the app otherwise sends nothing anywhere.
  * - voiceControl: the voice panel is open on the Display tab (and its bar shows on the Image tab).
- * - onlinePictures: "find pictures of …" (and anything said that isn't a command) may search Openverse and
- *   Wikimedia Commons on the internet. On by default.
  */
 export interface VoicePrefs {
   speakResults: boolean;
   onlineRecognition: boolean;
   voiceControl: boolean;
-  onlinePictures: boolean;
 }
 
 export const VOICE_KEY = '@pinvisual/voice/v2';
-/** Settings saved before picture search was on by default. Every setting was saved at once, so its saved "off"
- * was usually just the old default: it's dropped when moving to VOICE_KEY, and the rest kept. */
+/** Where settings were saved before VOICE_KEY: moved over on first load. */
 const OLD_KEY = '@pinvisual/voice/v1';
-const DEFAULTS: VoicePrefs = { speakResults: false, onlineRecognition: false, voiceControl: false, onlinePictures: true };
+const DEFAULTS: VoicePrefs = { speakResults: false, onlineRecognition: false, voiceControl: false };
 const KEYS = Object.keys(DEFAULTS) as (keyof VoicePrefs)[];
 
 export function parseVoicePrefs(json: string | null): VoicePrefs {
@@ -49,12 +45,12 @@ export function setVoicePrefs(change: Partial<VoicePrefs>) {
   AsyncStorage.setItem(VOICE_KEY, JSON.stringify(current)).catch(() => {});
 }
 
-/** Settings saved under OLD_KEY, without picture search, as VOICE_KEY would hold them. */
+/** Settings saved under OLD_KEY as VOICE_KEY would hold them. */
 export function migrateVoicePrefs(old: string | null): string | null {
   if (!old) return null;
   try {
-    const { onlinePictures: _, ...rest } = JSON.parse(old) as Partial<VoicePrefs>;
-    return JSON.stringify(parseVoicePrefs(JSON.stringify(rest)));
+    JSON.parse(old);
+    return JSON.stringify(parseVoicePrefs(old));
   } catch {
     return null;
   }

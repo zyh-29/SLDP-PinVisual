@@ -14,12 +14,8 @@ import { type CropDragMode as Mode, dragCrop, type Rect } from '@/imaging/geomet
 import { radius, useTheme } from './theme';
 
 interface Props {
-  /** The image to crop. Ignored when `backdrop` is given. */
-  uri?: string;
-  /** Drawn instead of the image, e.g. a live screen-share video. Must match imageWidth x imageHeight in aspect ratio. */
-  backdrop?: ReactNode;
-  /** Shown in the top-left corner, e.g. a Live badge. */
-  badge?: ReactNode;
+  /** The image to crop. */
+  uri: string;
   /** Size of the coordinate space `crop` is in (the working raster). */
   imageWidth: number;
   imageHeight: number;
@@ -48,8 +44,6 @@ const HANDLE_DOT = 18;
 
 export function CropEditor({
   uri,
-  backdrop,
-  badge,
   imageWidth,
   imageHeight,
   crop,
@@ -129,7 +123,7 @@ export function CropEditor({
           accessible
           accessibilityRole="image"
           accessibilityLabel={`Selected image with crop box covering ${Math.round((r.width / imageWidth) * 100)}% of the width and ${Math.round((r.height / imageHeight) * 100)}% of the height. Use the crop buttons to change it.`}>
-          {backdrop ?? <Image source={{ uri }} contentFit="fill" style={StyleSheet.absoluteFill} accessible={false} />}
+          <Image source={{ uri }} contentFit="fill" style={StyleSheet.absoluteFill} accessible={false} />
           {/* The picture: tap anything to focus the smart crop on it */}
           {onTap ? (
             <DragZone
@@ -212,11 +206,6 @@ export function CropEditor({
               <View style={[styles.focusDot, { backgroundColor: t.tint }]} />
             </View>
           ) : null}
-          {badge ? (
-            <View pointerEvents="none" style={styles.badge}>
-              {badge}
-            </View>
-          ) : null}
         </View>
       ) : null}
     </View>
@@ -255,7 +244,6 @@ function DragZone({
 const styles = StyleSheet.create({
   stage: { borderRadius: radius.sm, overflow: 'hidden' },
   abs: { position: 'absolute' },
-  badge: { position: 'absolute', top: 8, left: 8 },
   box: { borderWidth: 2, borderColor: '#FFFFFF' },
   third: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.6)' },
   handle: { width: HANDLE_HIT, height: HANDLE_HIT, alignItems: 'center', justifyContent: 'center' },

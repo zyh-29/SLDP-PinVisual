@@ -8,7 +8,7 @@ need real devices and real people.
 The simulator can't check these:
 
 1. Permission prompts: Bluetooth, Android "Nearby devices", location on
-   Android 11 and older, and the photo library.
+   Android 11 and older, and the microphone.
 2. Scanning finds the ESP32 (named `PinVisual…`).
 3. Connecting finds the service and both characteristics.
 4. The Device tab shows the negotiated MTU.
@@ -26,7 +26,6 @@ The simulator can't check these:
 8. Power off the ESP32 mid-send: the app should show "Connection lost".
 9. Reset clears the preview only after the board acknowledges it.
 10. VoiceOver and TalkBack read each pin as "Row r, column c, raised/lowered".
-11. Real photos, transparent PNGs and very large images.
 
 ## With blind and low-vision users
 

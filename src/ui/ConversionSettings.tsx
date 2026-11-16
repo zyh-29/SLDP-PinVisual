@@ -1,19 +1,17 @@
 
-import { smartCutoutAvailable } from '@/imaging/segment';
 import type { ConversionPrefs } from '@/state/useConversionSettings';
 import type { useImageConversion } from '@/state/useImageConversion';
-import { Label, Section, Separator } from './components';
+import { Section, Separator } from './components';
 import { EquationInput } from './EquationInput';
 import { GraphRangeControl } from './GraphRangeControl';
 import { SliderRow, SwitchRow } from './SettingRows';
 import { announce } from '@/voice/announce';
 
-/** The Image tab's Conversion card: how the picture becomes pins. Rows appear only where they apply. */
+/** The Image tab's Conversion card: how the graph becomes pins. Rows appear only where they apply. */
 export function ConversionSettings({
   settings: s,
   set,
   conversion: c,
-  live,
   equation,
   onEquation,
   equationError,
@@ -21,7 +19,6 @@ export function ConversionSettings({
   settings: ConversionPrefs;
   set: <K extends keyof ConversionPrefs>(key: K, value: ConversionPrefs[K]) => void;
   conversion: ReturnType<typeof useImageConversion>;
-  live: boolean;
   /** The typed equation being shown, if the picture was drawn from one. */
   equation: string | null;
   onEquation: (text: string) => void;
@@ -43,9 +40,7 @@ export function ConversionSettings({
             graph={graph}
             range={s.graphRange}
             onChange={(v) => set('graphRange', v)}
-            readingNumbers={c.readingNumbers}
             pan={s.graphPan}
-            live={live}
             onPan={(p) => {
               set('graphPan', p);
               announce(
@@ -64,20 +59,6 @@ export function ConversionSettings({
       />
       {s.removeBackground ? (
         <>
-          {/* Always offered for a still picture: on by itself for photos with a busy background, and anyone can turn
-              it on or off whatever the app made of the picture. */}
-          {smartCutoutAvailable && !live ? (
-            <>
-              <Separator />
-              <SwitchRow
-                title="Smart Cut-Out"
-                hint="Uses on-device AI to separate the main subject from a busy background"
-                value={c.cutoutOn}
-                onChange={(v) => set('cutoutOverride', v)}
-              />
-              {__DEV__ && c.pictureCheck ? <PictureCheck check={c.pictureCheck} /> : null}
-            </>
-          ) : null}
           {fg.lines.length > 0 || s.linesOverride !== null ? (
             <>
               <Separator />
@@ -156,17 +137,3 @@ export function ConversionSettings({
   );
 }
 
-/**
- * Development builds only: what the app made of the picture and why, to check one it misjudges. Photo or not by
- * its grain (see pictureKind in smartCrop.ts), and Smart Cut-Out on by itself when a photo's edge is busy.
- */
-function PictureCheck({ check }: { check: NonNullable<ReturnType<typeof useImageConversion>['pictureCheck']> }) {
-  const grain = `grain ${check.grain.toFixed(2)} ${check.photo ? '≥' : '<'} ${check.photoGrain}`;
-  const edge = check.edgeNoise === null ? '' : `, edge ${check.edgeNoise.toFixed(0)} ${check.edgeNoise > check.busyEdge ? '>' : '≤'} ${check.busyEdge}`;
-  const auto = check.photo && check.edgeNoise !== null && check.edgeNoise > check.busyEdge ? 'Smart Cut-Out on by itself' : 'Smart Cut-Out off by itself';
-  return (
-    <Label variant="footnote" secondary>
-      {`Debug: ${check.photo ? 'photo' : 'screenshot or drawing'} (${grain}${edge}). ${auto}.`}
-    </Label>
-  );
-}

@@ -5,12 +5,11 @@ import type { CommandState } from '@/device/DeviceController';
 import { countRaised, type Pattern } from '@/domain/pattern';
 import { CommandStatus } from './CommandStatus';
 import { Button, Label, Section, Separator } from './components';
-import { SwitchRow } from './SettingRows';
 import { PinGrid } from './PinGrid';
 import { radius, space } from './theme';
 
 /**
- * The Image tab's Result card: the pins, the pin lock (and Reset after an edit), the live pin count, and
+ * The Image tab's Result card: the pins, the pin lock (and Reset after an edit), the pin count, and
  * Use This Pattern / Save, and Send to Board / Clear Board.
  */
 export function ImageResult({
@@ -23,7 +22,6 @@ export function ImageResult({
   onUse,
   onSave,
   board,
-  liveSend,
 }: {
   /** What the user gets: their edited pins, or the automatic ones. */
   pattern: Pattern;
@@ -37,8 +35,6 @@ export function ImageResult({
   onSave: () => void;
   /** Sending this pattern to the board, or lowering every pin, straight from the Image tab. */
   board: { connected: boolean; command: CommandState; onSend: () => void; onClear: () => void };
-  /** Live share or camera: the pins can follow it on the board. */
-  liveSend?: { on: boolean; onChange: (on: boolean) => void; connected: boolean; error: string | null };
 }) {
   const raised = countRaised(pattern);
   const total = GRID.rows * GRID.cols;
@@ -46,7 +42,7 @@ export function ImageResult({
     <Section title="Result">
       <PinGrid pattern={pattern} onToggle={unlocked ? onTogglePin : undefined} />
       {/* Under the grid, a toolbar laid out like the button row below it: the lock (and Reset after an edit)
-          span the same width as Use This Pattern, and the live pin count sits in the Save column. */}
+          span the same width as Use This Pattern, and the pin count sits in the Save column. */}
       <View style={styles.resultBar}>
         <View style={styles.resultTools}>
           <Button
@@ -100,29 +96,7 @@ export function ImageResult({
         />
       </View>
       <Separator />
-      <BoardButtons board={board} liveSending={!!liveSend?.on} />
-      {liveSend ? (
-        <>
-          <Separator />
-          {liveSend.connected ? (
-            <SwitchRow
-              title="Send Live to Board"
-              hint="The board's pins follow the live picture as it changes, about twice a second"
-              value={liveSend.on}
-              onChange={liveSend.onChange}
-            />
-          ) : (
-            <Label variant="footnote" secondary>
-              Connect a board on the Device tab to have its pins follow the live picture.
-            </Label>
-          )}
-          {liveSend.on && liveSend.error ? (
-            <Label variant="footnote" secondary accessibilityLiveRegion="polite">
-              Last update didn’t reach the board: {liveSend.error}
-            </Label>
-          ) : null}
-        </>
-      ) : null}
+      <BoardButtons board={board} />
     </Section>
   );
 }
@@ -130,15 +104,12 @@ export function ImageResult({
 /** Send to Board and Clear Board (labelled Send and Clear, to fit a phone), with the result of the last command under them. */
 function BoardButtons({
   board: { connected, command, onSend, onClear },
-  liveSending,
 }: {
   board: { connected: boolean; command: CommandState; onSend: () => void; onClear: () => void };
-  /** Send Live to Board is on: it keeps the board up to date, and its updates would fill the status below. */
-  liveSending: boolean;
 }) {
   const busy = command.status === 'sending';
-  const off = !connected || busy || liveSending;
-  const why = !connected ? 'Unavailable: no board connected.' : liveSending ? 'Unavailable while Send Live to Board is on.' : undefined;
+  const off = !connected || busy;
+  const why = !connected ? 'Unavailable: no board connected.' : undefined;
   return (
     <>
       <View style={styles.buttonRow}>
@@ -149,7 +120,7 @@ function BoardButtons({
           style={{ flex: 1 }}
           onPress={onSend}
           disabled={off}
-          loading={busy && !liveSending && command.kind === 'pattern'}
+          loading={busy && command.kind === 'pattern'}
           accessibilityHint={why ?? 'Sends these pins to the board and waits for acknowledgement.'}
         />
         <Button
@@ -160,7 +131,7 @@ function BoardButtons({
           style={{ flex: 1 }}
           onPress={onClear}
           disabled={off}
-          loading={busy && !liveSending && command.kind === 'reset'}
+          loading={busy && command.kind === 'reset'}
           accessibilityHint={why ?? 'Tells the board to lower every pin.'}
         />
       </View>
@@ -168,9 +139,9 @@ function BoardButtons({
         <Label variant="footnote" secondary>
           Send and Clear move the board’s pins. Connect a board on the Device tab first.
         </Label>
-      ) : !liveSending ? (
+      ) : (
         <CommandStatus command={command} connected={connected} onRetrySend={onSend} onRetryReset={onClear} />
-      ) : null}
+      )}
     </>
   );
 }

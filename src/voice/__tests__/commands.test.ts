@@ -93,35 +93,26 @@ describe('graph, Image tab, search and navigation commands', () => {
     ['y equals two x plus one', { kind: 'graph', said: 'y equals two x plus one' }],
     ['y = x^2 - 3', { kind: 'graph', said: 'y = x^2 - 3' }],
     ['draw x squared minus four', { kind: 'graph', said: 'x squared minus four' }],
-    ['start camera', { kind: 'image', action: 'camera' }],
-    ['turn on the camera', { kind: 'image', action: 'camera' }],
-    ['take a picture', { kind: 'image', action: 'capture' }],
-    ['capture', { kind: 'image', action: 'capture' }],
-    ['stop the camera', { kind: 'image', action: 'stopCamera' }],
-    ['flip camera', { kind: 'image', action: 'flipCamera' }],
-    ['choose a photo', { kind: 'image', action: 'photo' }],
-    ['share my screen', { kind: 'image', action: 'shareScreen' }],
-    ['stop sharing', { kind: 'image', action: 'stopSharing' }],
     ['clear the image', { kind: 'image', action: 'clearImage' }],
     ['use this pattern', { kind: 'image', action: 'usePattern' }],
     ['what do the pins see', { kind: 'image', action: 'describeResult' }],
     ['turn off remove background', { kind: 'setting', setting: 'removeBackground', on: false }],
-    ['smart cutout on', { kind: 'setting', setting: 'smartCutout', on: true }],
     ['one pin lines off', { kind: 'setting', setting: 'oneLine', on: false }],
     ['tolerance up', { kind: 'adjust', setting: 'tolerance', up: true }],
     ['lower the sensitivity', { kind: 'adjust', setting: 'sensitivity', up: false }],
     ['go to the image tab', { kind: 'navigate', tab: 'image' }],
     ['open device', { kind: 'navigate', tab: 'device' }],
     ['show saved', { kind: 'navigate', tab: 'saved' }],
-    ['search for house', { kind: 'search', query: 'house', pictures: false }],
-    ['find pictures of a cat', { kind: 'search', query: 'cat', pictures: true }],
-    ['show me a photo of the eiffel tower', { kind: 'search', query: 'eiffel tower', pictures: true }],
-    ['next', { kind: 'next', back: false }],
-    ['another one', { kind: 'next', back: false }],
-    ['previous', { kind: 'next', back: true }],
+    ['search for house', { kind: 'search', query: 'house' }],
+    ['clear the graph', { kind: 'image', action: 'clearImage' }],
     ['voice control off', { kind: 'voiceOff' }],
   ])('%s', (said, expected) => {
     expect(p(said)).toEqual(expected);
+  });
+
+  it('camera, photo and picture search commands are gone', () => {
+    for (const said of ['start camera', 'take a picture', 'choose a photo', 'share my screen', 'next']) expect(p(said).kind).toBe('unknown');
+    expect(p('smart cutout on').kind).toBe('unknown');
   });
 
   it('shapes and letters still win over graphs without maths in them', () => {

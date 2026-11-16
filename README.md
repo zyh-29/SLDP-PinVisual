@@ -14,14 +14,13 @@
 
 PinVisual is a React Native / Expo app for a **tactile pin display**, built so
 blind and low-vision people can feel pictures, shapes, letters and graphs. You
-draw a pattern, give it a picture, or say what you want, and it works out which
+draw a pattern, type a graph's equation, or say what you want, and it works out which
 pins should be up and which should be down. The pattern goes over Bluetooth Low
 Energy to an ESP32, which moves one servo per pin through PCA9685 servo boards.
 
 Everything runs on the device. There are no accounts and no backend. The only
-thing sent online is picture search (the word you asked for goes to Openverse
-and Wikimedia Commons), which can be turned off in the Device tab, plus online
-speech recognition if you turn it on.
+thing that can go online is speech recognition, and only if you turn on Online
+Speech Recognition.
 
 > 🌐 **The app is accessible at [zongyaohuang.com/pinvisual](https://zongyaohuang.com/pinvisual)**,
 > with nothing to install. It works in any modern browser and can be added to a
@@ -31,7 +30,7 @@ speech recognition if you turn it on.
 
 - **Version:** 1.0.0
 - **Platforms:** iOS, Android and web
-- **Grid:** 5 × 6 (30 pins), set in `src/config/hardware.ts`
+- **Grid:** 3 × 3 (9 pins), set in `src/config/hardware.ts` (a 5 × 6 layout is kept there, on hold)
 - **Bundle ID (iOS) / Package (Android):** `com.sldp.pinvisual`
 - **Web app:** [zongyaohuang.com/pinvisual](https://zongyaohuang.com/pinvisual)
 
@@ -40,11 +39,8 @@ speech recognition if you turn it on.
 ### Core Features
 
 - ✏️ **Draw on the grid** and send the pattern to the board
-- 🖼️ **Picture to pins** - photos, drawings, graphs, shared screens and the live
-  camera, with automatic background removal, smart cropping and shape snapping
-  ([how it works](docs/IMAGING.md))
-- 📈 **Graphs and equations** - type `y = x^2 - 3` or point the camera at a graph;
-  pick the range, zoom, pan and hear a description
+- 📈 **Graphs and equations** - type or say `y = x^2 - 3`; pick the range, zoom,
+  pan and hear a description ([how it works](docs/IMAGING.md))
 - 🎙️ **Voice commands** - spoken or typed: "show a circle", "letter B", "graph y
   equals x squared", "send" ([full list](docs/VOICE.md))
 - 🔤 **Letters and digits** - A–Z and 0–9 drawn for the pins
@@ -52,10 +48,8 @@ speech recognition if you turn it on.
 
 ### Technical Features
 
-- 🔒 **On-device everything** - image processing, subject cut-out and voice
-  understanding run locally
-- 🧠 **Smart Cut-Out** - Apple Vision (iOS 17+), ML Kit (Android), U²-Net with
-  ONNX Runtime Web (browser)
+- 🔒 **On-device everything** - graph drawing and voice understanding run
+  locally
 - 🗣️ **Built-in voice model** - a small fastText-style network (177 KB) that
   understands commands phrased many ways, with no download
 - 📡 **Reliable Bluetooth protocol** - framing, CRC-16, chunking, ACKs, retries
@@ -74,21 +68,16 @@ real-device testing is in [docs/TESTING.md](docs/TESTING.md).
 | Feature | Status |
 |---|---|
 | Drawing, Clear Grid, saving and loading | ✅ Works |
-| Picture to pins, shape snapping, tap to pick | ✅ Works on the web; not yet run through on a phone |
-| Graph Range, zoom, panning, typed equations | ✅ Works. Axis numbers are read on the web only; on phones one grid square counts as one unit |
+| Graph Range, zoom, panning, typed equations | ✅ Works |
 | Letters and digits on the pins | ✅ Works |
 | Web layout (laptop, tablet, phone) | ✅ Works |
 | Protocol (framing, CRC, chunking, retries, ACKs) | ✅ Done, with unit tests |
-| Smart Cut-Out | 🟡 Works on the web; iOS and Android need a development build |
-| Live camera, lock and capture (web) | 🟡 Works in Chrome; not yet tried on a real phone |
 | Voice commands | 🟡 Works in Chrome by typing and with a stand-in recogniser; not yet tried with a real microphone, VoiceOver or TalkBack |
-| Picture search (Openverse, Wikimedia Commons) | 🟡 Wikimedia works; Openverse untested live |
 | Backup export and import | 🟡 Works on the web; phone share sheet untested |
-| Send Pattern, Reset, Send Live | 🟡 Tested against a simulated board only |
+| Send Pattern, Reset | 🟡 Tested against a simulated board only |
 | Bluetooth on phones, Web Bluetooth | 🟡 Written, never run against a board |
 | On-device AI suggestions, Speak Results | 🟡 Written; tested with stand-ins only |
 | Board firmware (ESP32 + PCA9685) | 🟡 Protocol code passes its tests; not yet flashed to an ESP32 |
-| Letter recognition from a picture | ⬜ Not started |
 | Pin position feedback | ⬜ Not possible: the hardware has no position sensors |
 
 ## 🛠️ Technology Stack
@@ -106,13 +95,10 @@ real-device testing is in [docs/TESTING.md](docs/TESTING.md).
 - **react-native-ble-plx** (Bluetooth on phones) and **Web Bluetooth** (Chrome, Edge)
 - **ESP32 + PCA9685** firmware in `firmware/` (Arduino, C++)
 
-### Imaging & AI
+### Graphs
 
-- **ONNX Runtime Web** + **U²-Net** small model (browser subject cut-out)
-- **Apple Vision** / **Google ML Kit** through a local Expo module (`modules/subject-segmentation`)
-- **Tesseract.js** (reads graph axis numbers on the web)
-- Hand-written image pipeline: lighting correction, GrabCut-style refinement,
-  ORB feature tracking, shape fitting
+- Hand-written equation parser and plotter, and a graph-to-pins pipeline
+  (smart crop, background removal, one-pin line tracing, shape fitting)
 
 ### Voice & Accessibility
 
@@ -170,18 +156,16 @@ one servo" in the firmware README, then use the app's **Pin Test** tab.
 │   ├── config/           # hardware.ts: grid size, BLE UUIDs, protocol timing
 │   ├── domain/           # Grid model, pin order, bit packing
 │   ├── protocol/         # Message encoding, CRC-16, chunking, ACKs and retries
-│   ├── device/           # Bluetooth drivers (phone + web), DeviceController, LiveSender
-│   ├── imaging/          # Picture to pins pipeline (see docs/IMAGING.md)
+│   ├── device/           # Bluetooth drivers (phone + web), DeviceController
+│   ├── imaging/          # Graph to pins pipeline (see docs/IMAGING.md)
 │   ├── voice/            # Voice commands and on-device intent model (see docs/VOICE.md)
 │   ├── storage/          # Saved patterns and backup files
 │   ├── state/            # React providers and hooks
 │   ├── ui/               # Theme, components, tab bar and sidebar
 │   └── offline/          # Service worker registration (web)
-├── modules/
-│   └── subject-segmentation/  # Local Expo module: Apple Vision + ML Kit
 ├── firmware/             # ESP32 sketch and its protocol tests
-├── scripts/              # Web build steps, engine copy, voice model training
-├── public/               # Static web files, including the U²-Net model
+├── scripts/              # Web build steps, voice model training
+├── public/               # Static web files
 └── docs/                 # Protocol, imaging, voice and testing docs
 ```
 
@@ -193,7 +177,7 @@ that can be made slow, lossy or faulty.
 
 | Doc | What's in it |
 |---|---|
-| [docs/IMAGING.md](docs/IMAGING.md) | How a picture becomes pins: lighting, background, cropping, landscapes, graphs, live camera, screen sharing |
+| [docs/IMAGING.md](docs/IMAGING.md) | How a graph becomes pins |
 | [docs/VOICE.md](docs/VOICE.md) | Every voice command, how sentences are understood, retraining and measuring the model |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | The Bluetooth protocol between app and board |
 | [docs/TESTING.md](docs/TESTING.md) | Manual checklists for real phones, real boards and blind testers |
@@ -207,14 +191,8 @@ that can be made slow, lossy or faulty.
   shrinking
 - Screen readers announce each pin ("Row 2, column 3, raised"), summarise
   previews row by row, and announce send, reset and save results
-- Voice commands sit before the 30 pins, so a screen reader reaches them first
+- Voice commands sit before the pins, so a screen reader reaches them first
 
 ## 🙏 Acknowledgments
 
 - Built with [Expo](https://expo.dev) and [React Native](https://reactnative.dev)
-- Subject cut-out model: [U²-Net](https://github.com/xuebinqin/U-2-Net) (Apache-2.0)
-- Browser inference: [ONNX Runtime Web](https://github.com/microsoft/onnxruntime) (MIT)
-- Graph numbers: [Tesseract.js](https://github.com/naptha/tesseract.js) (Apache-2.0)
-- Picture search: [Openverse](https://openverse.org) and
-  [Wikimedia Commons](https://commons.wikimedia.org); the app reads out each
-  picture's credit and license

@@ -21,7 +21,6 @@ jest.mock('expo-router', () => ({
   useFocusEffect: jest.fn(),
   usePathname: () => '/image',
 }));
-jest.mock('expo-image-picker', () => ({ launchImageLibraryAsync: jest.fn() }));
 
 const showImage = () =>
   render(
@@ -42,17 +41,17 @@ const drawEquation = async (text: string) => {
 };
 
 describe('Image tab', () => {
-  it('starts by offering a photo or an equation', async () => {
+  it('starts by asking for an equation, with no photo or camera', async () => {
     await showImage();
-    expect(screen.getByRole('button', { name: /^Choose Photo/ })).toBeTruthy();
     expect(screen.getByLabelText('Equation')).toBeTruthy();
+    expect(screen.queryByText(/Choose Photo|Live Camera|Share Screen/)).toBeNull();
   });
 
   it('turns a typed equation into pins, locked to the picture', async () => {
     await showImage();
     await drawEquation('y = x');
     expect(screen.getByRole('header', { name: 'WHAT THE PINS SEE' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Clear Image' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Clear Graph' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Auto Crop' })).toBeDisabled();
     // Locked: the result grid is a single picture, not separate pin buttons.
     expect(screen.queryAllByLabelText(/^Row \d+, column \d+$/)).toHaveLength(0);
@@ -66,14 +65,14 @@ describe('Image tab', () => {
     expect(screen.getByLabelText('Equation')).toBeTruthy();
   });
 
-  it('lets the user edit pins once unlocked, then goes back to the start on Clear Image', async () => {
+  it('lets the user edit pins once unlocked, then goes back to the start on Clear Graph', async () => {
     await showImage();
     await drawEquation('y = x');
     await fireEvent.press(screen.getByRole('button', { name: 'Pins locked' }));
     expect(screen.getAllByLabelText(/^Row \d+, column \d+$/)).toHaveLength(GRID.rows * GRID.cols);
 
-    await fireEvent.press(screen.getByRole('button', { name: 'Clear Image' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Clear Graph' }));
     expect(screen.queryByRole('header', { name: 'WHAT THE PINS SEE' })).toBeNull();
-    expect(screen.getByRole('button', { name: /^Choose Photo/ })).toBeTruthy();
+    expect(screen.getByLabelText('Equation')).toBeTruthy();
   });
 });

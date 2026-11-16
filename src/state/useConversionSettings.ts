@@ -16,8 +16,6 @@ export interface ConversionPrefs {
   /** Higher raises more pins. A pin is raised when at least (100 - sensitivity)% of it is subject. */
   sensitivity: number;
   snap: boolean;
-  /** null = automatic: Smart Cut-Out runs when the background is busy. */
-  cutoutOverride: boolean | null;
   /** null = automatic: axes and gridlines are removed when the image looks like a graph. */
   linesOverride: boolean | null;
   graphRange: GraphRange;
@@ -35,7 +33,6 @@ const DEFAULTS: ConversionPrefs = {
   toleranceOverride: null,
   sensitivity: 100 - Math.round(DEFAULT_PIN_FILL * 100),
   snap: true,
-  cutoutOverride: null,
   linesOverride: null,
   graphRange: AUTO_RANGE,
   graphPan: NO_PAN,
@@ -44,7 +41,7 @@ const DEFAULTS: ConversionPrefs = {
 
 /** Settings that belong to one picture: a new picture goes back to automatic. */
 export function forNewPicture(p: ConversionPrefs): ConversionPrefs {
-  return { ...p, linesOverride: null, cutoutOverride: null, toleranceOverride: null, graphPan: NO_PAN };
+  return { ...p, linesOverride: null, toleranceOverride: null, graphPan: NO_PAN };
 }
 
 export function useConversionSettings() {

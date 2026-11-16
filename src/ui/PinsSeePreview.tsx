@@ -2,7 +2,7 @@ import type { ComponentProps } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { GRID } from '@/config/hardware';
-import { Section, StatusBanner } from './components';
+import { Section } from './components';
 import { PixelImage } from './PixelImage';
 import { radius, useTheme } from './theme';
 
@@ -11,17 +11,10 @@ interface Props {
   pixels: ComponentProps<typeof PixelImage>['pixels'] | null;
   /** Stretch to the grid's shape instead of fitting inside it. */
   stretch: boolean;
-  removeBackground: boolean;
-  cuttingOut: boolean;
-  cutoutError?: string | null;
-  cutoutOn: boolean;
-  /** Background removal found nothing to keep. */
-  noSubject: boolean;
-  landscape: boolean;
 }
 
-/** The "What the pins see" section of the Image tab: the picture as the pins sample it, and what happened to it. */
-export function PinsSeePreview({ pixels, stretch, removeBackground, cuttingOut, cutoutError, cutoutOn, noSubject, landscape }: Props) {
+/** The "What the pins see" section of the Image tab: the graph as the pins sample it. */
+export function PinsSeePreview({ pixels, stretch }: Props) {
   const t = useTheme();
   const gridAspect = (GRID.cols * GRID.pinPitchRatio) / GRID.rows;
   return (
@@ -31,23 +24,10 @@ export function PinsSeePreview({ pixels, stretch, removeBackground, cuttingOut, 
           <PixelImage
             pixels={pixels}
             fit={stretch ? 'fill' : 'contain'}
-            accessibilityLabel={removeBackground ? 'Cropped image with the background removed' : 'Cropped image'}
+            accessibilityLabel="Cropped graph"
           />
         ) : null}
       </View>
-      {cuttingOut ? (
-        <StatusBanner tone="progress" title="Cutting out subject…" />
-      ) : cutoutError ? (
-        <StatusBanner tone="warning" title="Smart Cut-Out unavailable" message={cutoutError} />
-      ) : noSubject ? (
-        <StatusBanner tone="warning" title="No subject found" message={cutoutOn ? undefined : 'Try a lower Tolerance.'} />
-      ) : landscape ? (
-        <StatusBanner
-          tone="neutral"
-          title="Landscape"
-          message="The pins show the skyline: the land raised, the sky lowered. Tap something in the picture to show just that."
-        />
-      ) : null}
     </Section>
   );
 }

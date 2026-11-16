@@ -28,9 +28,7 @@ export function keyOf(c: Command): string {
     case 'describeRow':
       return `row:${c.row}`;
     case 'search':
-      return c.pictures ? `pictures:${c.query}` : `searchSaved:${c.query}`;
-    case 'next':
-      return c.back ? 'previous' : 'next';
+      return `searchSaved:${c.query}`;
     case 'unknown':
     case 'savedUnknown':
       return 'none';

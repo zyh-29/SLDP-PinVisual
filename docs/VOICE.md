@@ -9,8 +9,8 @@ On iPhone, VoiceOver's two-finger double-tap on either tab opens it and starts
 listening. Typing is there for noisy rooms, for speech the recogniser doesn't
 follow, and for browsers without speech recognition.
 
-Each command goes to the tab it belongs to: pin pictures to Display; graphs,
-the camera and pictures to Image.
+Each command goes to the tab it belongs to: pin pictures to Display; graphs
+to Image.
 
 - **What you can say:** "show a circle" (also square, triangle, diamond,
   cross, plus, heart, smile, checkerboard, a line, arrow up/down/left/right;
@@ -31,31 +31,17 @@ the camera and pictures to Image.
   - "over" divides by the next term: "one over two x" is 1/(2x), "one over x
     plus one" is 1/x + 1.
   Typed maths ("y = x^2 - 3") works too.
-- **The Image tab:** "start camera", "capture", "stop camera", "flip camera",
-  "choose photo", "share screen", "stop sharing", "clear image", "use this
-  pattern", "what do the pins see", "remove background on/off", "smart
-  cut-out on", "one pin lines off", "tolerance up", "sensitivity down". In a
-  browser, "choose photo" and "share screen" may need the button: browsers
-  open those pickers only straight after a tap or key press.
-- **Search:** "search for house" lists matching saved patterns. "Find
-  pictures of a cat" searches Openverse and Wikimedia Commons (on by default;
-  **Online Picture Search** in the Device tab turns it off), loads the first openly
-  licensed picture on the Image tab and says its credit; "next" and
-  "previous" go through the results. Silhouettes come first (drawn ones, then
-  photos against the light, and only ones whose title names the thing), so
-  the pins show one solid shape rather than a busy scene; ordinary photos
-  follow. A result whose pins say nothing (two or fewer, or nearly all 30) is
-  skipped, up to three in a row.
-  The first answer comes as soon as the best source has replied, usually
-  Wikimedia's drawings in about half a second, without waiting for a slow
-  one. Slower sources add to the list for "next", and the total ("of 24") is
-  said once it's final. The next few results are converted off screen at
-  the same time, with the Image tab's own settings, so useless ones are
-  skipped without loading each on the tab (`src/voice/PictureCheck.tsx`).
+- **The Image tab:** "clear graph", "use this pattern", "what do the pins
+  see", "remove background on/off", "one pin lines off", "tolerance up",
+  "sensitivity down".
+- **Search:** "search for house" lists matching saved patterns.
+- **Gone with the 3 × 3 board:** the camera, photos, screen sharing and
+  picture search ("start camera", "choose photo", "find pictures of a cat",
+  "next"). These are answered as not commands; the voice model was retrained
+  on them as examples of things that aren't commands.
 - **Going places:** "go to image", "go to display", "open device".
 - **Say it your own way.** "Could you get rid of everything", "make the
-  fourth column stick up", "turn the camera on", "I want to feel a picture of
-  a tree" all work. See "How commands are understood" below.
+  fourth column stick up", "draw me a parabola" all work. See "How commands are understood" below.
 - **Browser AI as a last resort:** where the browser has a built-in model
   (Chrome on a computer with Gemini Nano downloaded), a sentence neither the
   rules nor the voice model understood is rewritten as a command, then
@@ -92,12 +78,12 @@ fastest first. All of it runs on the device in about 0.05 ms.
    "pyramid", "ball").
 3. **The voice model** (`src/voice/intent/`): a small neural network in the
    style of fastText. It reads the words, word pairs and three-letter pieces
-   of words (so "sqare" or "camra" still land), and says which of 39 kinds of
+   of words (so "sqare" or "leter" still land), and says which of 29 kinds of
    command the sentence is, and how sure it is. It's about 130,000 numbers
-   stored as bytes (177 KB in the app) and needs no download, runtime or
+   stored as bytes (181 KB in the app) and needs no download, runtime or
    internet.
-   - The model only picks the kind. The details (row 2, the letter B, what to
-     search for) are read from the sentence and checked by the rules, so the
+   - The model only picks the kind. The details (row 2, the letter B, which
+     saved pattern) are read from the sentence and checked by the rules, so the
      model can't make up a row number or a search.
    - 80% sure or more: done. 40–80%: "Did you mean …? Say yes or no."
      Less: not a command.
@@ -108,18 +94,10 @@ fastest first. All of it runs on the device in about 0.05 ms.
      lists come from the training sentences (`anchors` in `weights.ts`), and
      a word with a letter dropped or added still counts ("captur"). Without
      one, the sentence is naming a thing, not giving a command, so a word that
-     merely looks like a command ("flower" and "lower") is searched for as a
-     picture instead.
-   - It overrules the rules only when 97% sure they misread a sentence ("find
-     me an image of a car" is a picture search, not a saved pattern).
-4. **The browser's AI**, where there is one (above).
-5. **A picture search.** If it's still not a command, the thing it names is
-   searched for as a picture and its pins shown, as if you had said "find
-   pictures of …": "giraffe" or "I want to feel a cactus" shows a giraffe or a
-   cactus. The answer starts "That isn't a command, so I searched for pictures
-   of …". It's skipped when **Online Picture Search** is turned off, and doesn't happen while a yes-or-no question is waiting or when
-   what's left is more than four words (likely talk, not a thing)
-   (`searchTopic` in `understand.ts`).
+     merely looks like a command ("flower" and "lower") isn't acted on.
+   - It overrules the rules only when 97% sure they misread a sentence.
+4. **The browser's AI**, where there is one (above). If it's still not a
+   command, the answer says what was heard and points to "help".
 
 **Training.** `npm run train:voice` (Node 22.18 or newer) builds about 15,000
 example sentences from `scripts/voice-training-data.mjs` (each kind of command
@@ -130,18 +108,17 @@ phrasing, add it to the lists there and retrain.
 **Measuring.** `src/voice/__tests__/voicePhrases.ts` holds about 350 natural
 phrasings, and none of them is used for training. Run
 `VOICE_REPORT=1 npx jest understand.eval` for the report. When the model was
-built:
+retrained for the 3 × 3 board (camera, photo and picture search phrases now
+expected to be "not a command"):
 
 | Phrases | Rules alone | With the model |
 |---|---|---|
-| Tuning set (189) | 69% understood | 98% understood, 2% asked, 0 wrong |
-| Exam set (95, scored before any fixes) | 49% | 96% at first; 98% after fixes |
-| Fresh set (62, written after tuning, scored once) | 50% | 97% at first; 98% after one fix ("capital letter r") |
+| Tuning set (189) | 75% understood | 99% understood, 1% asked, 0 wrong |
+| Exam set (95) | 61% | 99%, 0 wrong |
+| Fresh set (62) | 56% | 100%, 0 wrong |
 
-The one fresh phrase still acted on wrongly is "what is for dinner", which
-reads the board aloud. That's harmless, but it shows the model can be fooled
-by sentences that sound like commands. The test fails if understanding drops
-below these levels or more than one phrase per set is acted on wrongly.
+The test fails if understanding drops below 95% (93% for the fresh set), below
+the rules alone, or more than one phrase per set is acted on wrongly.
 
 ## Speak Results
 

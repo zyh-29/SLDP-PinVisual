@@ -1,43 +1,26 @@
 /**
- * The Image tab's conversion pipeline: from a picture (or a live screen share) and the user's settings to the
- * pins. Smart Cut-Out, smart crop (with tap to focus and graph windows), background removal, shape snapping and
- * pin sampling. The screen keeps the settings and the pin lock; this hook only derives.
+ * The Image tab's conversion pipeline: from a graph drawn from an equation and the user's settings to the pins.
+ * Smart crop (with tap to focus and graph windows), background removal, shape snapping and pin sampling. The
+ * screen keeps the settings and the pin lock; this hook only derives.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { useMemo } from 'react';
 
 import { GRID } from '@/config/hardware';
 import type { Pattern } from '@/domain/pattern';
-import { readAxisNumbers } from '@/imaging/axisNumbers';
-import { type SteadyPins, steadyPins } from '@/imaging/cameraFrame';
-import { holdGraphPins, nextGraphScale, onlyInside, rectInside, searchAreaAround } from './conversionLogic';
-import type { SurfaceView } from '@/imaging/surface';
+import { onlyInside, rectInside } from './conversionLogic';
 import { type RasterImage, toGrayscale } from '@/imaging/convert';
-import { DEFAULT_MIN_PIECE_RATIO, estimateBackground, findForeground } from '@/imaging/foreground';
+import { DEFAULT_MIN_PIECE_RATIO, findForeground } from '@/imaging/foreground';
 import { clip, fullRect, type Rect } from '@/imaging/geometry';
-import { type GraphScale, labelBands, scaleFromGrid, scaleFromLabels } from '@/imaging/graph';
+import type { GraphScale } from '@/imaging/graph';
 import type { GraphRange } from '@/imaging/graphRange';
-import type { LiveCapture } from '@/imaging/imageInput';
-import { cellSizePx, fillGrid, inkFromGray, inkFromMask, patternFromSamples, renderCrop, sampleCrop, thickenThinLines, traceLinePins } from '@/imaging/pinSampling';
-import { cropPixels, pasteMask, sameBox, uncutPhoto } from '@/imaging/screenPhoto';
-import { findSky, findSkyInside, isLandscape, landMask, skylineBand } from '@/imaging/scene';
-import { segmentSubject, smartCutoutAvailable } from '@/imaging/segment';
+import { cellSizePx, inkFromGray, inkFromMask, patternFromSamples, renderCrop, sampleCrop, thickenThinLines, traceLinePins } from '@/imaging/pinSampling';
 import { detectShape, fillHoles, renderShape } from '@/imaging/shapes';
-import { type Focus, type GraphView, keepPieceAt, PHOTO_GRAIN, pictureKind, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
+import { type Focus, type GraphView, type SmartCropOptions, smartSubject } from '@/imaging/smartCrop';
 
 export interface PickedImage {
   uri: string;
-  /**
-   * Live camera looking at a flat surface: the picture is that surface flattened (surface.ts), and this maps it
-   * to the camera view shown behind the crop box.
-   */
-  surface?: SurfaceView;
-  /** Taken with the live camera (Capture): a real-world picture, whatever it shows. */
-  fromCamera?: boolean;
-  /** Drawn from a typed equation (equation.ts): its scale is known exactly, so no numbers are read. */
+  /** Drawn from a typed equation (equation.ts): its scale is known exactly. */
   equation?: { text: string; scale: GraphScale };
-  /** Downscaled PNG on the device, for Smart Cut-Out (phones). */
-  fileUri?: string;
   raster: RasterImage;
   rgb: Uint8ClampedArray;
 }
@@ -53,11 +36,9 @@ export interface ConversionSettings {
   /** A pin is raised when at least this share (0..1) of it is subject. */
   pinFill: number;
   snap: boolean;
-  /** null = automatic: Smart Cut-Out runs when the background is busy. */
-  cutoutOverride: boolean | null;
   /** null = automatic (smart crop). */
   manualCrop: Rect | null;
-  /** A tapped point (or, with the live camera, where its locked item is now): the smart crop focuses on what's there. */
+  /** A tapped point: the smart crop focuses on what's there. */
   focus: Focus | null;
   /** null = automatic: axes and gridlines are removed when the image looks like a graph. */
   linesOverride: boolean | null;
@@ -66,30 +47,10 @@ export interface ConversionSettings {
   thinLines: boolean;
   /** The graph window moved by the user (graph units, right and up). */
   graphPan: { x: number; y: number };
-  /** Live camera: the locked item's width now (frame pixels, as tracked), so a graph's scale follows the zoom. */
-  trackedWidth: number | null;
-  /**
-   * Live camera: where the locked item is now. The smart crop then only searches around it (the item and a wide
-   * margin) instead of the whole picture: most of each frame's cost, so this keeps slow phones smooth.
-   */
-  trackedBox: Rect | null;
-  /**
-   * Live camera: `picked` is the frame kept when the lock settled (see watchCapture), not the newest one. Its pins
-   * are used as they are (no averaging with other frames), and its numbers are read from its own pixels.
-   */
-  frozen: boolean;
 }
 
-/** Above this edge unevenness a photo's background is busy enough to switch Smart Cut-Out on by itself. */
-const BUSY_BACKGROUND = 28;
-
-export function useImageConversion(picked: PickedImage | null, live: LiveCapture | null, s: ConversionSettings) {
-  const { removeBackground, removeClutter, toleranceOverride, pinFill, snap, cutoutOverride, manualCrop, focus, linesOverride, graphRange, graphPan, thinLines, trackedWidth, trackedBox, frozen } = s;
-  const [cutout, setCutout] = useState<{ for: PickedImage; mask: Float32Array | null; error?: string } | null>(null);
-  /** Graphs: pixels per unit, read from the axis numbers (or the grid). Kept across live frames while the zoom is unchanged. */
-  const [graphScale, setGraphScale] = useState<GraphScale | null>(null);
-  /** The grid (spacing) whose numbers are being, or were, read: each zoom level is read once. */
-  const scaleRequest = useRef<string | null>(null);
+export function useImageConversion(picked: PickedImage | null, s: ConversionSettings) {
+  const { removeBackground, removeClutter, toleranceOverride, pinFill, snap, manualCrop, focus, linesOverride, graphRange, graphPan, thinLines } = s;
 
   const w = picked?.raster.width ?? 0;
   const h = picked?.raster.height ?? 0;
@@ -97,156 +58,28 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   const minPieceRatio = removeClutter ? DEFAULT_MIN_PIECE_RATIO : 0;
   const removeLines = linesOverride ?? 'auto';
 
-  // Smart Cut-Out (AI subject segmentation, on-device) only for photos with a busy background. Screenshots,
-  // graphs and drawings (no photographic grain) never get it automatically: the AI keeps one solid object and
-  // would throw away thin curves.
-  // Not on every live frame (no point paying for it each time), but on the frame the camera keeps once it has
-  // settled on something (Capture): from then on it's a still picture, so a car or a mountain is judged properly.
-  const still = !live || frozen;
-  const kind = useMemo(() => (picked && still ? pictureKind(picked.rgb, w, h) : null), [picked, still, w, h]);
-  const photoLike = !!kind?.photo;
-  // Anything the camera took is a real-world photo, whatever its grain (a phone's processing, or a browser's video
-  // pipeline, can smooth a frame until it looks like a drawing to pictureKind).
-  const realPhoto = photoLike || ((!!picked?.fromCamera || live?.kind === 'camera') && still && !picked?.surface);
-  /** How busy the background along the picture's edge is (see estimateBackground). */
-  const edgeNoise = useMemo(() => (picked && realPhoto ? estimateBackground(picked.rgb, w, h).noise : null), [picked, realPhoto, w, h]);
-  const busyPhoto = edgeNoise !== null && edgeNoise > BUSY_BACKGROUND;
-  // Live camera: is it looking at a busy real-world scene (a street, a landscape), where there may be no one item to
-  // lock onto? Then the Image tab keeps a frame once the view holds still, and judges it as a photo (see busyScene).
-  const liveScene = useMemo(
-    () => (picked && live?.kind === 'camera' && !frozen && !picked.surface ? estimateBackground(picked.rgb, w, h).noise > BUSY_BACKGROUND : false),
-    [picked, live, frozen, w, h],
-  );
-  const cutoutOn = removeBackground && smartCutoutAvailable && still && (cutoutOverride ?? busyPhoto);
-  const cuttingOut = cutoutOn && cutout?.for !== picked;
-  const cutoutMask = cutoutOn && cutout?.for === picked ? (cutout.mask ?? undefined) : undefined;
-  // A tap with Smart Cut-Out on: of the subjects it found (two people, a cat and a dog), keep the tapped one.
-  const cutSubject = useMemo(
-    () => (cutoutMask && focus ? keepPieceAt(cutoutMask, w, h, focus) : cutoutMask),
-    [cutoutMask, focus, w, h],
-  );
-  // Landscapes (mountains, hills, a skyline): no one object to cut out, so the land against the sky is shown, cropped
-  // around the ridge (scene.ts). Decided once the cut-out has had its say: a car under the sky is an object, the land
-  // itself is a landscape. A tap on something picks that instead.
-  // Only for busy photos: a landscape's edge is never plain (a photo of a page, with the desk below it, is not sky
-  // and land).
-  const sky = useMemo(
-    () =>
-      picked && busyPhoto && removeBackground && !manualCrop
-        ? // A print or a screen the camera straightened: look inside its own border or bezel.
-          picked.surface
-          ? findSkyInside(picked.rgb, w, h, 0.05)
-          : findSky(picked.rgb, w, h)
-        : null,
-    [picked, busyPhoto, removeBackground, manualCrop, w, h],
-  );
-  // A tap picks what was tapped; the camera's lock (a focus that's not a tap) doesn't.
-  const landscape = !!sky && !cuttingOut && !focus?.tap && isLandscape(sky, cutoutMask ?? null);
-  const land = useMemo(() => (landscape && sky ? landMask(sky) : null), [landscape, sky]);
-  const band = useMemo(() => (landscape && sky ? skylineBand(sky) : null), [landscape, sky]);
-  const subjectMask = land ?? cutSubject;
-  useEffect(() => {
-    if (!cutoutOn || !picked || cutout?.for === picked) return;
-    let cancelled = false;
-    segmentSubject({ rgb: picked.rgb, width: picked.raster.width, height: picked.raster.height, fileUri: picked.fileUri })
-      .then((mask) => !cancelled && setCutout({ for: picked, mask }))
-      .catch((e) => !cancelled && setCutout({ for: picked, mask: null, error: e instanceof Error ? e.message : String(e) }));
-    return () => {
-      cancelled = true;
-    };
-  }, [cutoutOn, picked, cutout]);
-
-  // Smart crop: what part of the image should become pins (coloured curves, a shape, the object on a card).
-  // A flattened screen or page is a flat picture even though the camera made it look like a photo.
-  const flatSurface = !!picked?.surface;
-  // A camera picture (live, captured, or any real-world photo): backgrounds with several colours and shadows, and
-  // wood grain or cloth patterns that are not graph curves.
-  const camera = live?.kind === 'camera' || !!picked?.fromCamera || photoLike;
-  const smartOptions = useMemo<SmartCropOptions>(
-    () => ({ tolerance, minPieceRatio, removeLines, flatSurface, camera }),
-    [tolerance, minPieceRatio, removeLines, flatSurface, camera],
-  );
+  // Smart crop: what part of the image should become pins (the curves, or a shape).
+  const smartOptions = useMemo<SmartCropOptions>(() => ({ tolerance, minPieceRatio, removeLines }), [tolerance, minPieceRatio, removeLines]);
   const graphView = useMemo<GraphView>(
     () => ({
       range: graphRange,
-      scale: graphScale ?? picked?.equation?.scale ?? null,
+      scale: picked?.equation?.scale ?? null,
       rows: GRID.rows,
       cols: GRID.cols,
       pinPitchRatio: GRID.pinPitchRatio,
-      // The camera stays locked on one graph while it moves closer or further: keep its scale, resized.
-      anyZoom: live?.kind === 'camera',
-      targetWidth: live?.kind === 'camera' ? (trackedWidth ?? undefined) : undefined,
-      // A shared screen being zoomed: the scale follows the grid frame by frame.
-      followZoom: live?.kind === 'screen',
       pan: graphPan,
     }),
-    [graphRange, graphScale, picked, live, trackedWidth, graphPan],
+    [graphRange, picked, graphPan],
   );
-  // Locked on an item: only around it (see searchAreaAround).
-  const searchArea = useMemo(() => searchAreaAround(trackedBox, w, h, focus), [trackedBox, w, h, focus]);
   const smart = useMemo(
-    () => (picked && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, searchArea, focus ?? undefined, graphView) : null),
-    [picked, subjectMask, w, h, smartOptions, focus, graphView, searchArea],
+    () => (picked ? smartSubject(picked.rgb, w, h, smartOptions, undefined, focus ?? undefined, graphView) : null),
+    [picked, w, h, smartOptions, focus, graphView],
   );
-  // Graphs: read the numbers on the axes (once per zoom level) to know where e.g. x = 5 is. Until then the whole
-  // curve shows; if they can't be read, one major grid square counts as one unit.
   const graph = !manualCrop ? smart?.graph : undefined;
-  const scaleKey = graph ? `${Math.round(graph.axes.majorX ?? 0)}x${Math.round(graph.axes.majorY ?? 0)}` : null;
-  // Whole and Auto are measured on the curve itself: no numbers to read.
-  const wholeCurve = graphRange.kind !== 'window';
-  const readingNumbers = !!graph && !wholeCurve && !graph.scale;
-  // A scale carried through a zoom (followZoom) is checked against the numbers once the zoom has settled.
-  const checkingScale = !!graph?.scale?.followed && !wholeCurve;
-  useEffect(() => {
-    if ((!readingNumbers && !checkingScale) || !graph || !scaleKey || !picked || scaleRequest.current === scaleKey) return;
-    const { axes } = graph;
-    // A flattened page (camera on a screen) is read from its own pixels: the bands are in its coordinates. So is a
-    // kept frame: the video has moved on since.
-    const source = picked.surface || frozen ? { pixels: { rgb: picked.rgb, width: w, height: h } } : live ? { video: live.video } : { uri: picked.uri };
-    const read = () => {
-      scaleRequest.current = scaleKey;
-      readAxisNumbers(source, w, labelBands(axes))
-        .then((readings) => scaleFromLabels(axes, readings))
-        .catch(() => null)
-        .then((found) => {
-          // A newer request (another zoom level or picture) wins.
-          if (scaleRequest.current !== scaleKey) return;
-          // Checking a followed scale: only numbers that were read replace it. The grid's guess (one square, one
-          // unit) would undo what following the zoom kept.
-          if (checkingScale) {
-            if (found) setGraphScale(found);
-            return;
-          }
-          const s = found ?? scaleFromGrid(axes);
-          // Remember how wide the locked graph was, so the scale can follow the camera's zoom from now on.
-          setGraphScale(s && trackedWidth ? { ...s, atWidth: trackedWidth } : s);
-        });
-    };
-    if (readingNumbers) {
-      read();
-      return;
-    }
-    // Still zooming: every frame is another zoom level. Read once the grid has held still for a moment.
-    const t = setTimeout(read, 700);
-    return () => clearTimeout(t);
-  }, [readingNumbers, checkingScale, graph, scaleKey, picked, live, w, h, trackedWidth, frozen]);
-  // Carry the scale on to the next frame (see nextGraphScale; React's "adjust state while rendering" pattern).
-  const nextScale = nextGraphScale(graphScale, graph?.scale, trackedWidth, !!graphView.followZoom);
-  if (nextScale) setGraphScale(nextScale);
-  // A busy photo on a screen or in a screenshot (a picture on a web page): colour-based removal finds the photo but
-  // can't cut it from its own background, so Smart Cut-Out is run on the photo alone (see screenPhoto.ts). In the
-  // browser, where it works from the pixels; Smart Cut-Out turned off by the user turns this off too.
-  const [screenCut, setScreenCut] = useState<{ box: Rect; width: number; height: number; mask: Float32Array | null } | null>(null);
-  const screenCutAllowed =
-    Platform.OS === 'web' && smartCutoutAvailable && removeBackground && !camera && !picked?.equation && !manualCrop && cutoutOverride !== false;
-  const photoBox = screenCutAllowed && !subjectMask && smart?.kind === 'shape' ? smart.box : null;
-  /** The cut made for this photo (a live frame later: the same box), whether or not it found a subject. */
-  const cutForPhoto = !!(photoBox && screenCut && screenCut.width === w && screenCut.height === h && sameBox(screenCut.box, photoBox, w, h));
-  const screenPhotoMask = cutForPhoto ? (screenCut?.mask ?? undefined) : undefined;
-  // Inside the user's own box the same logic picks the subject, so stray UI caught by the box is ignored.
+  // Inside the user's own box the same logic picks the subject, so stray marks caught by the box are ignored.
   const smartInCrop = useMemo(
-    () => (picked && manualCrop && !subjectMask ? smartSubject(picked.rgb, w, h, smartOptions, manualCrop) : null),
-    [picked, manualCrop, subjectMask, w, h, smartOptions],
+    () => (picked && manualCrop ? smartSubject(picked.rgb, w, h, smartOptions, manualCrop) : null),
+    [picked, manualCrop, w, h, smartOptions],
   );
   const chosen = manualCrop ? (smartInCrop?.kind === 'none' ? null : smartInCrop) : smart;
   const fullImage = useMemo(() => fullRect(w, h), [w, h]);
@@ -255,8 +88,8 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   const region = chosen?.context ?? manualCrop ?? fullImage;
   // Graph curves mean axes and gridlines around them should go.
   const lines = linesOverride ?? (chosen?.kind === 'curves' || smart?.kind === 'curves' ? true : 'auto');
-  // The subject's pixels when they are known exactly: the AI cut-out, or the graph curves' own pixels.
-  const knownSubject = subjectMask ?? screenPhotoMask ?? (removeBackground ? chosen?.mask : undefined);
+  // The subject's pixels when they are known exactly: the graph curves' own pixels.
+  const knownSubject = removeBackground ? chosen?.mask : undefined;
   const fg = useMemo(
     () =>
       picked
@@ -267,76 +100,34 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
             region,
             backgroundRegions: manualCrop ? [autoContext] : undefined,
             subjectMask: knownSubject,
-            camera,
-            // Shapes and objects: the GrabCut-style second opinion, told which object the smart crop picked.
             refine: true,
             subjectBox: chosen?.kind === 'shape' ? chosen.box : undefined,
           })
         : null,
-    [picked, w, h, tolerance, minPieceRatio, lines, region, manualCrop, autoContext, knownSubject, camera, chosen],
+    [picked, w, h, tolerance, minPieceRatio, lines, region, manualCrop, autoContext, knownSubject, chosen],
   );
-  // A photo on a screen, its background not cut yet (colour-based removal kept the whole rectangle).
-  const photoUncut = useMemo(
-    () => !!(photoBox && !cutForPhoto && picked && fg && uncutPhoto(picked.rgb, w, h, photoBox, fg.mask)),
-    [photoBox, cutForPhoto, picked, fg, w, h],
-  );
-  // Cut it out. Keyed by the box, not the frame: a live screen sends a new frame whenever anything on it changes
-  // (a clock), and the cut-out takes longer than that.
-  const photoKey = photoUncut && photoBox ? `${w}x${h}:${Math.round(photoBox.x)},${Math.round(photoBox.y)},${Math.round(photoBox.width)},${Math.round(photoBox.height)}` : null;
-  const latest = useRef({ picked, photoBox });
-  useEffect(() => {
-    latest.current = { picked, photoBox };
-  });
-  useEffect(() => {
-    const { picked: p, photoBox: box } = latest.current;
-    if (!photoKey || !p || !box) return;
-    let cancelled = false;
-    const width = p.raster.width;
-    const height = p.raster.height;
-    const crop = cropPixels(p.rgb, width, height, box);
-    segmentSubject({ rgb: crop.rgb, width: crop.width, height: crop.height })
-      .then((m) => !cancelled && setScreenCut({ box, width, height, mask: m ? pasteMask(m, crop.box, width, height) : null }))
-      .catch(() => !cancelled && setScreenCut({ box, width, height, mask: null }));
-    return () => {
-      cancelled = true;
-    };
-  }, [photoKey]);
 
-  const autoBox = band ?? (smart ? smart.box : (fg?.subject ?? fullImage));
+  const autoBox = smart ? smart.box : (fg?.subject ?? fullImage);
   /** The crop box shown to the user (a graph window can reach past the picture when zoomed in; see graphWindow). */
   const crop = manualCrop ?? clip(autoBox, fullImage);
   /** What the pins use: the chosen subject's tight box (inside the user's box, if any), so empty margins don't waste pins. */
-  // A photo cut out on a screen: just the subject, not the photo's whole rectangle.
-  const subjectBox = (screenPhotoMask ? fg?.subject : null) ?? chosen?.box ?? (manualCrop ? (fg?.subject ?? manualCrop) : autoBox);
-  // An object cut out of a photo (a car, a person): stretched to fill the pins, up to a limit (see fillGrid). Its
-  // outline, not its exact proportions, is what makes it recognisable on a few dozen pins.
-  const photoObject = removeBackground && !!cutSubject && !landscape && !manualCrop;
-  const sampleBox = useMemo(
-    () => (photoObject ? fillGrid(subjectBox, GRID.rows, GRID.cols, GRID.pinPitchRatio) : subjectBox),
-    [photoObject, subjectBox],
-  );
+  const sampleBox = chosen?.box ?? (manualCrop ? (fg?.subject ?? manualCrop) : autoBox);
   // Graphs have arbitrary x and y scales, so they stretch to use every pin.
-  // Landscapes too: a ridge's shape matters, not the photo's proportions.
-  const stretch = removeBackground && (!!fg?.linesRemoved || (chosen ?? smart)?.kind === 'curves' || landscape || photoObject);
+  const stretch = removeBackground && (!!fg?.linesRemoved || (chosen ?? smart)?.kind === 'curves');
 
   // Shapes (not graphs): close drawn outlines, then look for a clean triangle, square, circle...
-  // Not for an object cut out of a photo: a car is not a hexagon, however close its outline comes.
-  const shapesApply = removeBackground && !stretch && !cutSubject;
+  const shapesApply = removeBackground && !stretch;
   const filledMask = useMemo(() => (fg && shapesApply ? fillHoles(fg.mask, w, h, sampleBox) : null), [fg, shapesApply, w, h, sampleBox]);
   const shape = useMemo(() => (filledMask ? detectShape(filledMask, w, h, sampleBox) : null), [filledMask, w, h, sampleBox]);
-  const pinMask = useMemo(
-    // Shapes are always shown filled: on a few dozen pins a solid shape is the easiest to feel.
-    () => filledMask ?? fg?.mask ?? null,
-    [filledMask, fg],
-  );
+  // Shapes are always shown filled: on a few pins a solid shape is the easiest to feel.
+  const pinMask = filledMask ?? fg?.mask ?? null;
 
-  // A graph window reaching past the plot (zoomed in): only the plot counts, so the pins off it stay down
-  // instead of showing the graphing tool's buttons or side panel.
+  // A graph window reaching past the plot (zoomed in): only the plot counts, so the pins off it stay down.
   const plotOnly = graph?.window && !rectInside(graph.window, graph.axes.plot) ? graph.axes.plot : null;
   const ink = useMemo(() => {
     if (!picked || !fg || !pinMask) return null;
     let out: Float32Array;
-    // Remove Background off: darkness instead (worked out only then; most pictures never need it).
+    // Remove Background off: darkness instead.
     if (!removeBackground) out = inkFromGray(toGrayscale(picked.raster));
     else {
       const cell = cellSizePx(sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch);
@@ -351,75 +142,23 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
   // Graph curves: a line one pin wide, following the curve's centre.
   const curves = (chosen ?? smart)?.kind === 'curves';
   const traced = thinLines && removeBackground && curves && !!pinMask;
-  const frameResult = useMemo<Pattern | null>(() => {
+  const result = useMemo<Pattern | null>(() => {
     if (traced && pinMask) return traceLinePins(pinMask, w, h, sampleBox, GRID.rows, GRID.cols, GRID.pinPitchRatio, stretch, plotOnly ?? undefined);
     if (shape && snap && shapesApply) return renderShape(shape, GRID.rows, GRID.cols, GRID.pinPitchRatio, 'filled', pinFill);
     return samples ? patternFromSamples(samples, GRID.rows, GRID.cols, pinFill, false) : null;
   }, [traced, pinMask, w, h, sampleBox, stretch, plotOnly, shape, snap, shapesApply, pinFill, samples]);
-
-  // Live camera: noise and a moving hand change a few pins on every frame, so each pin is averaged over the last
-  // frames and only flips once it has clearly changed (cameraFrame.ts). Folded in once per new frame result
-  // (React's "adjust state while rendering" pattern, so the pins never lag a render behind). A kept frame is
-  // used as it is: it was chosen to agree with the averaged pins, and settings changes must show at once.
-  const steadyOn = live?.kind === 'camera' && !frozen;
-  const [steady, setSteady] = useState<{ from: Pattern | null; state: SteadyPins | null }>({ from: null, state: null });
-  // Live share or camera, zoomed to another level: until its numbers are read the scale is unknown and the whole
-  // curve would fill the board for a moment. The last graph window's pins are held instead, so the curve keeps its
-  // size on the board through the zoom.
-  const [heldGraph, setHeldGraph] = useState<Pattern | null>(null);
-  const hold = holdGraphPins(heldGraph, frameResult, {
-    live: !!live,
-    graph: !!graph,
-    windowed: !!graph?.window,
-    readingNumbers,
-    wholeCurve,
-  });
-  if (hold.held !== undefined) setHeldGraph(hold.held);
-  const shown = hold.shown;
-  let result = shown;
-  if (steadyOn && shown) {
-    if (steady.from !== shown) {
-      const state = steadyPins(steady.state, shown);
-      setSteady({ from: shown, state });
-      result = state.pattern;
-    } else if (steady.state) result = steady.state.pattern;
-  } else if (!steadyOn && steady.state) setSteady({ from: null, state: null });
 
   const cleaned = useMemo(
     () => (picked && fg ? renderCrop(picked.rgb, w, h, removeBackground ? pinMask : null, sampleBox) : null),
     [picked, fg, pinMask, w, h, removeBackground, sampleBox],
   );
 
-  /** A new picture or share: the graph's scale must be read again. */
-  const resetGraph = () => {
-    setGraphScale(null);
-    setHeldGraph(null);
-    scaleRequest.current = null;
-  };
-
   return {
     width: w,
     height: h,
-    busyPhoto,
-    /**
-     * Why the picture was taken for a photo or not, and Smart Cut-Out switched on or not (shown in development
-     * builds, to check a picture the app misjudges): its grain against PHOTO_GRAIN, and how busy its edge is
-     * against BUSY_BACKGROUND.
-     */
-    pictureCheck: kind ? { ...kind, photoGrain: PHOTO_GRAIN, edgeNoise, busyEdge: BUSY_BACKGROUND } : null,
-    cutoutOn: cutoutOn || !!screenPhotoMask,
-    cuttingOut: cuttingOut || photoUncut,
-    cutoutError: cutoutOn ? cutout?.error : undefined,
-    /** Live camera: this frame is a busy real-world scene (a street, a landscape), not a page or a screen. */
-    busyScene: liveScene,
-    /** A landscape: the pins show the skyline (the land against the sky). */
-    landscape,
-    /** The subject is known exactly (cut-out or curve pixels), so Tolerance doesn't apply. */
+    /** The subject is known exactly (curve pixels), so Tolerance doesn't apply. */
     subjectKnown: !!knownSubject,
     graph,
-    readingNumbers,
-    /** The item the smart crop picked (a graph's plot, a shape), for the camera to lock onto. */
-    target: !manualCrop && smart && smart.kind !== 'none' ? smart.target : null,
     fg,
     crop,
     stretch,
@@ -431,10 +170,7 @@ export function useImageConversion(picked: PickedImage | null, live: LiveCapture
     shape,
     /** The automatic pins. */
     result,
-    /** This frame's own pins, before averaging with earlier frames (live camera). */
-    framePins: shown,
     /** "What the pins see": the crop, background removed (RGB pixels). */
     cleaned,
-    resetGraph,
   };
 }

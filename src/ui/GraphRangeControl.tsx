@@ -36,21 +36,15 @@ export function GraphRangeControl({
   graph,
   range,
   onChange,
-  readingNumbers,
   pan,
   onPan,
-  live,
 }: {
   graph: GraphInfo;
   range: GraphRange;
   onChange: (range: GraphRange) => void;
-  /** The axis numbers are still being read (the whole curve shows meanwhile). */
-  readingNumbers: boolean;
   /** How far the window was moved (units, right and up). */
   pan: { x: number; y: number };
   onPan: (pan: { x: number; y: number }) => void;
-  /** A live share or camera: the summary changes all the time, so it isn't announced by itself. */
-  live?: boolean;
 }) {
   const t = useTheme();
   const [text, setText] = useState(() => graphRangeText(range));
@@ -65,8 +59,7 @@ export function GraphRangeControl({
   const parsed = parseGraphRange(text);
   const typed = 'range' in parsed ? parsed.range : null;
 
-  // The latest callback, so a parent re-rendering (a live share does, several times a second) doesn't restart the
-  // timer below.
+  // The latest callback, so a parent re-rendering doesn't restart the timer below.
   const latest = useRef({ onChange, range });
   useEffect(() => {
     latest.current = { onChange, range };
@@ -109,21 +102,19 @@ export function GraphRangeControl({
     range.kind === 'auto' && features
       ? `Shown where the curve turns and bends${span(features)}: the whole curve would squash them flat. Type whole to feel all of it.`
       : null;
-  const summary = wavesNote ?? featuresNote ?? (!readingNumbers && !wholeCurve ? describeGraph(graph) : null);
+  const summary = wavesNote ?? featuresNote ?? (!wholeCurve ? describeGraph(graph) : null);
   const shown = wholeCurve
     ? waves
       ? `${waves.shown} of ${waves.total} waves`
       : features
         ? 'Turns and bends'
         : 'Whole curve'
-    : readingNumbers
-      ? 'Reading numbers…'
-      : win && scale && axes.originX !== null
-        ? `x ${graphNumber((win.x - axes.originX) / scale.pxPerUnitX, scale.unitsPerMajorX)} to ${graphNumber(
-            (win.x + win.width - axes.originX) / scale.pxPerUnitX,
-            scale.unitsPerMajorX,
-          )}`
-        : graphRangeLabel(range);
+    : win && scale && axes.originX !== null
+      ? `x ${graphNumber((win.x - axes.originX) / scale.pxPerUnitX, scale.unitsPerMajorX)} to ${graphNumber(
+          (win.x + win.width - axes.originX) / scale.pxPerUnitX,
+          scale.unitsPerMajorX,
+        )}`
+      : graphRangeLabel(range);
   return (
     <View style={{ gap: space.sm }}>
       <View style={settingStyles.header}>
@@ -133,7 +124,7 @@ export function GraphRangeControl({
         </Label>
       </View>
       {summary ? (
-        <Label variant="footnote" secondary accessibilityLiveRegion={live ? 'none' : 'polite'}>
+        <Label variant="footnote" secondary accessibilityLiveRegion="polite">
           {summary}
         </Label>
       ) : null}

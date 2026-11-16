@@ -5,9 +5,6 @@ node_modules/
 
 # Expo
 .expo/
-# Copied from node_modules by scripts/copy-ort.mjs
-public/ort/
-public/tesseract/
 dist/
 web-build/
 expo-env.d.ts

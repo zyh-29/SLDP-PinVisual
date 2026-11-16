@@ -9,26 +9,26 @@ const auto = togglePin(createEmptyPattern(2, 2), 0, 0);
 const pictureA = { name: 'A' };
 const pictureB = { name: 'B' };
 
-type Props = { picture: object | null; result: Pattern | null; live: boolean };
+type Props = { picture: object | null; result: Pattern | null };
 const setup = (initial: Props) =>
-  renderHook(({ picture, result, live }: Props) => usePinEdits(picture, result, live), { initialProps: initial });
+  renderHook(({ picture, result }: Props) => usePinEdits(picture, result), { initialProps: initial });
 
 describe('usePinEdits', () => {
   it('starts locked, showing the automatic pins', async () => {
-    const { result } = await setup({ picture: pictureA, result: auto, live: false });
+    const { result } = await setup({ picture: pictureA, result: auto });
     expect(result.current.unlocked).toBe(false);
     expect(result.current.shown).toBe(auto);
   });
 
   it('ignores pin taps while locked', async () => {
-    const { result } = await setup({ picture: pictureA, result: auto, live: false });
+    const { result } = await setup({ picture: pictureA, result: auto });
     await act(() => result.current.togglePinAt(1, 1));
     expect(result.current.shown).toBe(auto);
     expect(result.current.edited).toBe(false);
   });
 
   it('lets the user change pins once unlocked, and reset them to the picture', async () => {
-    const { result } = await setup({ picture: pictureA, result: auto, live: false });
+    const { result } = await setup({ picture: pictureA, result: auto });
     await act(() => result.current.toggleLock());
     await act(() => result.current.togglePinAt(1, 1));
     expect(result.current.edited).toBe(true);
@@ -40,7 +40,7 @@ describe('usePinEdits', () => {
   });
 
   it('keeps edits when locked again', async () => {
-    const { result } = await setup({ picture: pictureA, result: auto, live: false });
+    const { result } = await setup({ picture: pictureA, result: auto });
     await act(() => result.current.toggleLock());
     await act(() => result.current.togglePinAt(1, 1));
     await act(() => result.current.toggleLock());
@@ -49,31 +49,16 @@ describe('usePinEdits', () => {
   });
 
   it('drops edits and locks again for a new picture', async () => {
-    const { result, rerender } = await setup({ picture: pictureA, result: auto, live: false });
+    const { result, rerender } = await setup({ picture: pictureA, result: auto });
     await act(() => result.current.toggleLock());
     await act(() => result.current.togglePinAt(1, 1));
-    await rerender({ picture: pictureB, result: auto, live: false });
+    await rerender({ picture: pictureB, result: auto });
     expect(result.current.unlocked).toBe(false);
     expect(result.current.shown).toBe(auto);
   });
 
-  it('while live, keeps edits across frames until the automatic pins change', async () => {
-    const { result, rerender } = await setup({ picture: pictureA, result: auto, live: true });
-    await act(() => result.current.toggleLock());
-    await act(() => result.current.togglePinAt(1, 1));
-
-    // A new frame with the same automatic pins: the edit stays.
-    await rerender({ picture: pictureB, result: togglePin(createEmptyPattern(2, 2), 0, 0), live: true });
-    expect(result.current.edited).toBe(true);
-
-    // The view changed enough to change the pins: start over.
-    await rerender({ picture: { name: 'C' }, result: createEmptyPattern(2, 2), live: true });
-    expect(result.current.edited).toBe(false);
-    expect(result.current.unlocked).toBe(false);
-  });
-
   it('forgets everything on clear', async () => {
-    const { result } = await setup({ picture: pictureA, result: auto, live: false });
+    const { result } = await setup({ picture: pictureA, result: auto });
     await act(() => result.current.toggleLock());
     await act(() => result.current.togglePinAt(1, 1));
     await act(() => result.current.clear());

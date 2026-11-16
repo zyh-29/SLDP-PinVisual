@@ -221,7 +221,6 @@ export function examples(seed = 1, perLabel = 400, { noise = true } = {}) {
     setting: () => {
       const s = pick([
         ['remove background', 'background removal', 'the background', 'background'],
-        ['smart cutout', 'smart cut out', 'cut out', 'the cutout'],
         ['remove axes', 'the axes', 'axes', 'grid lines', 'the gridlines'],
         ['ignore labels', 'labels', 'the labels', 'text', 'the text'],
         ['one pin lines', 'thin lines', 'one pin wide lines'],
@@ -232,7 +231,7 @@ export function examples(seed = 1, perLabel = 400, { noise = true } = {}) {
         `${pick(['turn on', 'turn off', 'enable', 'disable', 'switch on', 'switch off'])} ${what}`,
         `${what} ${pick(['on', 'off'])}`,
         `turn ${what} ${pick(['on', 'off'])}`,
-        pick(['remove the background', 'keep the background', 'remove the axes', 'hide the grid lines', 'show the axes', 'ignore the labels', 'ignore text', 'make the lines thin', 'snap to shape', 'cut out the subject', 'no background', 'hide the axes', 'get rid of the background', 'keep the labels', 'thick lines', 'dont snap']),
+        pick(['remove the background', 'keep the background', 'remove the axes', 'hide the grid lines', 'show the axes', 'ignore the labels', 'ignore text', 'make the lines thin', 'snap to shape', 'no background', 'hide the axes', 'get rid of the background', 'keep the labels', 'thick lines', 'dont snap']),
       ]);
     },
     adjust: () =>
@@ -288,13 +287,18 @@ export function examples(seed = 1, perLabel = 400, { noise = true } = {}) {
     return w.join(' ');
   };
 
+  // Commands the app no longer has (the camera, photos, screen sharing and picture search went with the 3 x 3
+  // board): their sentences are kept, as examples of things that aren't commands, so they're never mistaken for
+  // one that is.
+  const REMOVED = new Set(['camera', 'capture', 'stopCamera', 'flipCamera', 'photo', 'shareScreen', 'stopSharing', 'pictures', 'next', 'previous']);
   const out = [];
-  for (const [label, gen] of Object.entries(GEN)) {
-    const n = label === 'none' ? perLabel * 4 : perLabel;
+  for (const [kind, gen] of Object.entries(GEN)) {
+    const label = REMOVED.has(kind) ? 'none' : kind;
+    const n = kind === 'none' ? perLabel * 4 : perLabel;
     for (let i = 0; i < n; i++) {
       const s = gen();
       // Bare yes/no/stop-style words aren't wrapped in "please … thanks": they'd stop being the short answers they are.
-      const text = ['yes', 'no', 'stop', 'none', 'repeat'].includes(label) ? s : wrap(s);
+      const text = ['yes', 'no', 'stop', 'none', 'repeat'].includes(kind) ? s : wrap(s);
       out.push([noise ? noisy(text) : text, label]);
     }
   }

@@ -10,9 +10,7 @@
  *       - Very sure: done.
  *       - Fairly sure: "Did you mean …?" (the app asks for a yes first).
  *       - Unsure: not a command (the browser's own AI may still be asked; see VoiceProvider).
- * 4. Still not a command: what it names is searched for as a picture (searchTopic; see VoiceProvider).
- *    The model also overrules the rules when it's all but certain they misread a sentence ("find me an image of
- *    a car" is a picture search, not a saved pattern called "me an image of a car").
+ *    The model also overrules the rules when it's all but certain they misread a sentence.
  */
 import { type Command, LETTER_NAMES, matchName, normalise, parseCommand, shapeIn, toNumber } from './commands';
 import { anchored, classify, familiarity, type Intent } from './intent/model';
@@ -78,9 +76,7 @@ export function labelOf(c: Command): string {
     case 'savedUnknown':
       return 'openSaved';
     case 'search':
-      return c.pictures ? 'pictures' : 'searchSaved';
-    case 'next':
-      return c.back ? 'previous' : 'next';
+      return 'searchSaved';
     case 'unknown':
       return 'none';
     default:
@@ -103,16 +99,7 @@ const FIXED: Record<string, string> = {
   redo: 'redo',
   send: 'send',
   reset: 'reset',
-  next: 'next',
-  previous: 'previous',
   voiceOff: 'turn off voice control',
-  camera: 'start camera',
-  capture: 'capture',
-  stopCamera: 'stop camera',
-  flipCamera: 'flip camera',
-  photo: 'choose photo',
-  shareScreen: 'share screen',
-  stopSharing: 'stop sharing',
   clearImage: 'clear image',
   usePattern: 'use this pattern',
   describeResult: 'what do the pins see',
@@ -215,14 +202,6 @@ export function rewrite(label: string, s: string, savedNames: readonly string[] 
         .trim();
       return q ? `search for ${q}` : null;
     }
-    case 'pictures': {
-      const looks = /\bwhat (?:does|do) (?:an? |the |some )?(.+?) looks? like\b/.exec(s) ?? /\blooks? like (?:an? |the )?(.+)$/.exec(s);
-      const of = /\b(?:of|for)\s+(?:an?\s+|the\s+|some\s+)?(.+)$/.exec(s);
-      const q = (looks?.[1] ?? of?.[1] ?? strip(s, /\b(find|show|me|search|get|look|up|pictures?|photos?|images?|drawings?|online|internet|web|the|a|an|some|i|want|to|feel|see|google)\b/g))
-        .replace(/\b(online|on the internet|on the web|pictures?|photos?|images?)$/, '')
-        .trim();
-      return q ? `find pictures of ${q}` : null;
-    }
     case 'graph': {
       let eq = s;
       const y = /\b(y|f of x) (equals|is)\b.*$/.exec(s);
@@ -250,7 +229,6 @@ export function rewrite(label: string, s: string, savedNames: readonly string[] 
     case 'setting': {
       const which: [RegExp, string, RegExp][] = [
         [/background/, 'remove background', /\b(keep|show|with|leave)\b/],
-        [/\bcut ?out\b/, 'smart cutout', /\b(dont|no|stop)\b/],
         [/\b(axes|axis|grid ?lines)\b/, 'remove axes', /\b(show|keep)\b/],
         [/\b(labels?|text|words)\b/, 'ignore labels', /\b(keep|show|read|include)\b/],
         [/\b(thin|thick|one pin|lines?)\b/, 'one pin lines', /\bthick\b/],
@@ -274,23 +252,6 @@ export function rewrite(label: string, s: string, savedNames: readonly string[] 
 
 const UNKNOWN = (text: string): Command => ({ kind: 'unknown', heard: text.trim() });
 
-/** Longest topic searched for when a sentence isn't a command: anything longer is likely talk, not a thing. */
-export const TOPIC_WORDS = 4;
-const TOPIC_DROP =
-  /\b(show|draw|display|make|give|get|find|search|look|looks|feel|see|want|wanna|like|need|me|my|i|you|a|an|the|some|of|for|it|is|this|that|what|whats|which|who|how|does|do|can|to|on|pictures?|photos?|images?|shapes?|drawings?|pins?|board)\b/g;
-
-/**
- * What to search pictures for when a sentence isn't a command ("I want to feel a giraffe" → "giraffe"), or null
- * when nothing is left or it's too long to be the name of a thing.
- */
-export function searchTopic(text: string): string | null {
-  const s = tidy(text);
-  const looks = /\bwhat (?:does|do|is) (?:an? |the )?(.+?) looks? like\b/.exec(s);
-  const q = strip(looks?.[1] ?? s, TOPIC_DROP);
-  if (!/[a-z]{2}/.test(q) || q.split(' ').length > TOPIC_WORDS) return null;
-  return q;
-}
-
 /** What a sentence asks for. `savedNames`: the saved patterns, which can be opened by name. */
 export function understand(text: string, savedNames: readonly string[] = []): Understanding {
   const ruled = parseCommand(text, savedNames);
@@ -299,7 +260,7 @@ export function understand(text: string, savedNames: readonly string[] = []): Un
   const top = ranked[0];
 
   // The model's reading, filled in and checked by the rules. It only counts when the sentence has a word of that
-  // kind of command: otherwise the sentence names a thing (any thing), which is searched for as a picture.
+  // kind of command.
   const modelReading = () => {
     if (!top || top.label === 'none' || !anchored(tidied, top.label)) return null;
     const canonical = rewrite(top.label, tidied, savedNames);

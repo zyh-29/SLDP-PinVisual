@@ -34,7 +34,7 @@
       "shortName": "PinVisual",
       "themeColor": "#F2F2F7",
       "backgroundColor": "#F2F2F7",
-      "description": "Turn images into raised-pin patterns for a tactile display."
+      "description": "Turn shapes, letters and graphs into raised-pin patterns for a tactile display."
     },
     "plugins": [
       "expo-router",
@@ -61,14 +61,6 @@
         }
       ],
       [
-        "expo-image-picker",
-        {
-          "photosPermission": "PinVisual uses your photos to turn a picture into a raised-pin pattern.",
-          "cameraPermission": false,
-          "microphonePermission": "PinVisual uses the microphone for voice commands, such as \"show a circle\" or \"send\"."
-        }
-      ],
-      [
         "expo-speech-recognition",
         {
           "microphonePermission": "PinVisual uses the microphone for voice commands, such as \"show a circle\" or \"send\".",
@@ -78,8 +70,7 @@
             "com.google.android.googlequicksearchbox"
           ]
         }
-      ],
-      "./modules/subject-segmentation/app.plugin.js"
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

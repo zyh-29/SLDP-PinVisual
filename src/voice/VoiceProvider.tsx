@@ -2,24 +2,21 @@ import { type Href, router, useFocusEffect, usePathname } from 'expo-router';
 import { createContext, type ReactNode, type RefObject, useCallback, useContext, useEffect, useRef, useState } from 'react';
 
 import { GRID } from '@/config/hardware';
-import { countRaised, type Pattern } from '@/domain/pattern';
+import type { Pattern } from '@/domain/pattern';
 import { usePattern } from '@/state/PatternProvider';
 import { useBoardActions } from '@/state/useBoardActions';
 import { patternStore } from '@/state/useSavedPatterns';
-import type { ConversionPrefs } from '@/state/useConversionSettings';
 import { isCompatible, toPattern } from '@/storage/patternStore';
 import { aiStatus, aiSuggest } from './aiFallback';
 import { announce, lastAnnouncement, screenReaderOn, stopSpeaking } from './announce';
 import { type Command, HINT_WORDS, type ImageAction, type ImageSetting, matchName, parseCommand, type Tab } from './commands';
 import { listeningCue } from './cue';
-import { credit, type Picture, searchPicturesFast } from './pictureSearch';
-import { PictureCheck } from './PictureCheck';
 import { cancelListening, finishListening, listen, recognitionSupport, type RecognitionSupport } from './recognizer';
 import { type Effect, type Pending, runCommand } from './runCommand';
-import { searchTopic, understand } from './understand';
+import { understand } from './understand';
 import { useVoicePrefs, type VoicePrefs } from './voicePrefs';
 
-export type VoicePhase = 'idle' | 'downloading' | 'listening' | 'thinking' | 'searching';
+export type VoicePhase = 'idle' | 'downloading' | 'listening' | 'thinking';
 
 /** What the Image tab lets voice do while it's open (see useImageVoice). Each returns what to say, or an error. */
 export interface ImageVoiceHandler {
@@ -28,12 +25,6 @@ export interface ImageVoiceHandler {
   run(action: ImageAction): Promise<string>;
   setSetting(setting: ImageSetting, on: boolean): string;
   adjust(setting: 'tolerance' | 'sensitivity', up: boolean): string;
-  /** Loads a picture by address; null when loaded, else why not. */
-  loadPicture(uri: string): Promise<string | null>;
-  /** The Image tab's conversion settings as a newly loaded picture would get them (for checking search results). */
-  pictureSettings(): ConversionPrefs;
-  /** The pins for the picture at `uri` once they're final (nothing still being worked out); null if it never settles. */
-  settled(uri: string): Promise<Pattern | null>;
   /** The Image tab's pins (for "send" and "what's on the board" while it's open). */
   result(): Pattern | null;
   send(): void;
@@ -47,8 +38,6 @@ interface VoiceValue {
   support: RecognitionSupport | null;
   prefs: VoicePrefs;
   setPrefs: (change: Partial<VoicePrefs>) => void;
-  /** The picture search result on show, for its credit. */
-  picture: Picture | null;
   toggleListening: () => void;
   runText: (text: string) => void;
   confirm: () => void;
@@ -63,12 +52,10 @@ const VoiceContext = createContext<VoiceValue | null>(null);
 const PATHS = { display: '/', image: '/image', saved: '/saved', pinTest: '/pin-test', device: '/device' } as const satisfies Record<Tab, Href>;
 const TAB_NAMES: Record<Tab, string> = { display: 'Display', image: 'Image', saved: 'Saved', pinTest: 'Pin Test', device: 'Device' };
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-/** Search results in a row skipped for making no useful pins, before one is shown anyway. */
-const SKIP_POOR = 3;
 
 /**
  * Voice commands for the whole app: one conversation shared by the Display tab's panel and the Image tab's bar.
- * Every command goes to the tab it belongs to: pins to Display, graphs, the camera and pictures to Image.
+ * Every command goes to the tab it belongs to: pins to Display, graphs to Image.
  */
 export function VoiceProvider({ children }: { children: ReactNode }) {
   const { pattern, setPattern, undo, redo, canUndo, redoCount } = usePattern();
@@ -80,8 +67,6 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const [reply, setReply] = useState('');
   const [pending, setPending] = useState<Pending>(null);
   const [support, setSupport] = useState<RecognitionSupport | null>(null);
-  /** The picture search being gone through. `complete`: every source has answered, so the count is final. */
-  const [results, setResults] = useState<{ query: string; pictures: Picture[]; index: number; complete?: boolean } | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -93,10 +78,10 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Commands take seconds (listening, the AI, the internet): they act on the app as it is when they finish.
-  const latest = useRef({ pattern, canUndo, redoCount, pending, pathname, board, results, prefs, setPattern, undo, redo });
+  // Commands take seconds (listening, the AI): they act on the app as it is when they finish.
+  const latest = useRef({ pattern, canUndo, redoCount, pending, pathname, board, setPattern, undo, redo });
   useEffect(() => {
-    latest.current = { pattern, canUndo, redoCount, pending, pathname, board, results, prefs, setPattern, undo, redo };
+    latest.current = { pattern, canUndo, redoCount, pending, pathname, board, setPattern, undo, redo };
   });
 
   // The Image tab's handler while it's open, and anyone waiting for it to open.
@@ -123,99 +108,16 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     announce(text);
   };
 
-  // Search results being checked off screen (PictureCheck, rendered below): what pins each would make.
-  const [checks, setChecks] = useState<{ uri: string; settings: ConversionPrefs }[]>([]);
-  const checkWaiters = useRef(new Map<string, (pins: Pattern | null) => void>());
-  const checked = useCallback((uri: string, pins: Pattern | null) => {
-    const resolve = checkWaiters.current.get(uri);
-    if (!resolve) return;
-    checkWaiters.current.delete(uri);
-    setChecks((c) => c.filter((x) => x.uri !== uri));
-    resolve(pins);
-  }, []);
-  /** The pins a picture would make on the Image tab with its current settings, worked out off screen. */
-  const checkPicture = (uri: string, settings: ConversionPrefs) =>
-    new Promise<Pattern | null>((resolve) => {
-      const before = checkWaiters.current.get(uri);
-      checkWaiters.current.set(uri, (pins) => {
-        before?.(pins);
-        resolve(pins);
-      });
-      if (!before) setChecks((c) => [...c, { uri, settings }]);
-      // A picture that never finishes loading counts as no use.
-      setTimeout(() => checked(uri, null), 10_000);
-    });
-
-  /**
-   * Shows a search result on the Image tab. Results whose pins say nothing (two pins or fewer, or nearly all of
-   * them: the conversion picked a detail, or the whole frame) are skipped quietly, up to SKIP_POOR in a row, going
-   * the same way ("next" or "previous"). This one and the next few are checked at once, off screen, and the first
-   * useful one is shown: one wait instead of loading them on the tab one after another. `lead` is said first.
-   */
-  const showPicture = async (list: Picture[], index: number, query: string, step = 1, lead = ''): Promise<void> => {
-    const h = await imageTab();
-    if (!h) return say('The Image tab did not open.');
-    const settings = h.pictureSettings();
-    const n = Math.min(SKIP_POOR + 1, list.length);
-    const order = Array.from({ length: n }, (_, k) => (((index + k * step) % list.length) + list.length) % list.length);
-    const pending = order.map((i) => checkPicture(list[i].uri, settings));
-    let chosen = order[n - 1];
-    for (let k = 0; k < n; k++) {
-      const pins = await pending[k];
-      const raised = pins ? countRaised(pins) : 0;
-      if (pins && raised > 2 && raised < pins.rows * pins.cols - 1) {
-        chosen = order[k];
-        break;
-      }
-    }
-    const p = list[chosen];
-    setResults((r) => (r?.query === query && r.pictures.length >= list.length ? { ...r, index: chosen } : { query, pictures: list, index: chosen }));
-    const err = await h.loadPicture(p.uri);
-    if (err) return say(`That picture could not be loaded. ${list.length > 1 ? 'Say next for another.' : ''}`.trim());
-    // Answer once the tab shows the pins (read through the ref: the tab's handler is renewed on every render).
-    await (image.current?.current ?? h).settled(p.uri);
-    // The count only once it's final: slower sources may still be adding to the list.
-    const r = latest.current.results;
-    const of = r?.query === query && r.complete ? ` of ${r.pictures.length}` : '';
-    say(`${lead}Picture ${chosen + 1}${of}: ${credit(p)}. Say next for another, or use this pattern.`);
-  };
-
-  const search = async (query: string, pictures: boolean, lead = '') => {
-    const now = latest.current;
-    const saved = pictures ? [] : await patternStore.list().then((r) => r.patterns.map((p) => p.name)).catch(() => [] as string[]);
+  /** Saved patterns whose name matches what was said. */
+  const search = async (query: string) => {
+    const saved = await patternStore.list().then((r) => r.patterns.map((p) => p.name)).catch(() => [] as string[]);
     const q = query.toLowerCase();
     const matches = saved.filter((n) => n.toLowerCase().includes(q) || matchName(query, [n]));
-    if (matches.length && !pictures) {
-      return say(
-        `${matches.length === 1 ? 'One saved pattern matches' : `${matches.length} saved patterns match`}: ${matches.join(', ')}. ` +
-          `Say open saved, then the name.${now.prefs.onlinePictures ? ` Or say find pictures of ${query}.` : ''}`,
-      );
-    }
-    if (!now.prefs.onlinePictures)
-      return say(
-        `${pictures ? '' : `No saved pattern matches ${query}. `}Searching for pictures uses the internet, so it is off. ` +
-          'To use it, turn on Online Picture Search in the Device tab.',
-      );
-    setPhase('searching');
-    try {
-      // The first results arrive as soon as the best source has answered; slower sources add to the list for "next".
-      const found = await searchPicturesFast(query);
-      found.complete.then(
-        (all) => setResults((r) => (r?.query === query ? { ...r, pictures: all.length > r.pictures.length ? all : r.pictures, complete: true } : r)),
-        () => {},
-      );
-      if (!found.pictures.length) {
-        const all = await found.complete.catch(() => [] as Picture[]);
-        setPhase('idle');
-        if (!all.length) return say(`${lead}No pictures of ${query} were found. Try another word.`);
-        return showPicture(all, 0, query, 1, lead);
-      }
-      await showPicture(found.pictures, 0, query, 1, lead);
-      setPhase('idle');
-    } catch (e) {
-      setPhase('idle');
-      say(e instanceof Error ? e.message : String(e));
-    }
+    if (!matches.length) return say(`No saved pattern matches ${query}.`);
+    say(
+      `${matches.length === 1 ? 'One saved pattern matches' : `${matches.length} saved patterns match`}: ${matches.join(', ')}. ` +
+        'Say open saved, then the name.',
+    );
   };
 
   const doEffect = async (effect: Effect | undefined, outReply: string) => {
@@ -260,13 +162,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         router.navigate(PATHS[effect.tab]);
         return say(`${TAB_NAMES[effect.tab]} tab.`);
       case 'search':
-        return search(effect.query, effect.pictures);
-      case 'next': {
-        const r = now.results;
-        if (!r?.pictures.length) return say('There is no picture search to go through. Say find pictures of, then something.');
-        const i = (r.index + (effect.back ? -1 : 1) + r.pictures.length) % r.pictures.length;
-        return showPicture(r.pictures, i, r.query, effect.back ? -1 : 1);
-      }
+        return search(effect.query);
       case 'voiceOff':
         say(outReply);
         cancelListening();
@@ -307,19 +203,6 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         setPending({ suggestion });
         return say(`Did you mean: ${suggestion}? Say yes or no.`);
       }
-    }
-
-    // Still not a command: search for a picture of what it names ("a giraffe") and show its pins. Not while a
-    // question is waiting for a yes or no, where a misheard answer mustn't start a search.
-    const unheard = cmd.kind === 'unknown' && !now.pending ? cmd.heard : '';
-    const topic = unheard ? searchTopic(unheard) : null;
-    if (topic) {
-      if (!now.prefs.onlinePictures)
-        return say(
-          `I heard “${unheard}”, but that isn't a command. To look for a picture of ${topic} instead, ` +
-            'turn on Online Picture Search in the Device tab. Say help for the list.',
-        );
-      return search(topic, true, `That isn't a command, so I searched for pictures of ${topic}. `);
     }
 
     const onImage = now.pathname.startsWith('/image');
@@ -380,7 +263,6 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     support,
     prefs,
     setPrefs,
-    picture: results ? results.pictures[results.index] : null,
     toggleListening: () => void toggleListening(),
     runText: (text) => {
       if (text.trim()) void run([text]);
@@ -397,9 +279,6 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   return (
     <VoiceContext.Provider value={value}>
       {children}
-      {checks.map((c) => (
-        <PictureCheck key={c.uri} uri={c.uri} settings={c.settings} onDone={checked} />
-      ))}
     </VoiceContext.Provider>
   );
 }

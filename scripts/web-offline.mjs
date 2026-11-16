@@ -30,8 +30,6 @@ if (!html.includes('rel="manifest"')) {
   fs.writeFileSync(page, html);
 }
 
-// Engines are big (about 30 MB) and only needed for Smart Cut-Out and reading graph numbers: saved after the app.
-const ENGINE_DIRS = new Set(['models', 'ort', 'tesseract']);
 // Not part of the app: the service worker itself, copies of index.html for other addresses, host and OS files,
 // and source maps (only for debugging).
 const skip = (rel) =>
@@ -46,7 +44,7 @@ const walk = (dir) => {
     if (entry.isDirectory()) walk(full);
     else {
       const hash = crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex').slice(0, 16);
-      files.push([rel, hash, ENGINE_DIRS.has(rel.split('/')[0]) ? 'engine' : 'app']);
+      files.push([rel, hash]);
     }
   }
 };
@@ -62,6 +60,5 @@ if (sw.includes('self.__FILES__') || sw.includes('self.__VERSION__')) {
 }
 fs.writeFileSync(path.join(dist, 'sw.js'), sw);
 
-const mb = (kind) =>
-  (files.filter((f) => f[2] === kind).reduce((n, [rel]) => n + fs.statSync(path.join(dist, rel)).size, 0) / 1e6).toFixed(1);
-console.log(`web-offline: sw.js version ${version}: ${mb('app')} MB of app, ${mb('engine')} MB of engines`);
+const mb = (files.reduce((n, [rel]) => n + fs.statSync(path.join(dist, rel)).size, 0) / 1e6).toFixed(1);
+console.log(`web-offline: sw.js version ${version}: ${mb} MB`);

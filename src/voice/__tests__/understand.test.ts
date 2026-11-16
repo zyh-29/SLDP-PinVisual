@@ -1,27 +1,12 @@
 import { classify, familiarity } from '../intent/model';
 import { WEIGHTS } from '../intent/weights';
-import { rewrite, searchTopic, tidy, understand } from '../understand';
+import { rewrite, tidy, understand } from '../understand';
 
 describe('tidy', () => {
   it('takes filler out anywhere and folds in known words', () => {
     expect(tidy('Could you just clear it now, please?')).toBe('clear it');
     expect(tidy('draw a hart')).toBe('draw a heart');
     expect(tidy('show me a pyramid')).toBe('show me a triangle');
-  });
-});
-
-describe('searchTopic', () => {
-  it('finds the thing named in a sentence that is not a command', () => {
-    expect(searchTopic('pizza')).toBe('pizza');
-    expect(searchTopic('I want to feel a giraffe')).toBe('giraffe');
-    expect(searchTopic('can you show me the Eiffel Tower please')).toBe('eiffel tower');
-    expect(searchTopic('what does a cactus look like')).toBe('cactus');
-    expect(searchTopic('play the trumpet')).toBe('play trumpet');
-  });
-
-  it('searches for nothing when no thing is named, or it is too long to be one', () => {
-    for (const s of ['', 'um', 'what is this', 'show me', 'x', 'i was telling my friend about the weekend trip'])
-      expect(searchTopic(s)).toBeNull();
   });
 });
 
@@ -33,17 +18,15 @@ describe('understand', () => {
 
   it('understands natural wording through the voice model', () => {
     expect(understand('get rid of everything')).toMatchObject({ how: 'model', command: { kind: 'clear' } });
-    expect(understand('turn the camera on')).toMatchObject({ command: { kind: 'image', action: 'camera' } });
     expect(understand('make the fourth column stick up').command).toEqual({ kind: 'line', action: 'raise', axis: 'column', index: 4 });
   });
 
   it('reads the details from the sentence, not the model', () => {
     expect(understand('lift the pin in the second row third column').command).toEqual({ kind: 'pin', action: 'raise', row: 2, col: 3 });
-    expect(understand('i want to feel a picture of a tree').command).toEqual({ kind: 'search', query: 'tree', pictures: true });
   });
 
-  it('never acts on things that are not commands', () => {
-    for (const s of ['what time is it', 'pizza', 'hello there', 'blah blah', 'the weather is nice', 'um', ''])
+  it('never acts on things that are not commands, or commands the app no longer has', () => {
+    for (const s of ['what time is it', 'pizza', 'hello there', 'blah blah', 'the weather is nice', 'um', '', 'turn the camera on', 'take a picture', 'find pictures of a cat', 'next one'])
       expect(understand(s).command.kind).toBe('unknown');
   });
 
@@ -52,23 +35,16 @@ describe('understand', () => {
     const things = ['grenade', 'a grenade', 'show me a grenade', 'a giraffe please', 'the eiffel tower', 'flower', 'banana', 'a cake',
       'frog', 'ship', 'house', 'a tree', 'shark', 'statue', 'a crab', 'show me a rocket'];
     for (const s of things) {
-      // Not a command, or a search for the thing: never "capture", "next" and so on.
       const u = understand(s);
-      expect(['unknown', 'search']).toContain(u.command.kind);
+      expect(u.command.kind).toBe('unknown');
       expect(u.confirm).toBeUndefined();
     }
-    expect(understand('find pictures of a grenade').command).toEqual({ kind: 'search', query: 'grenade', pictures: true });
   });
 
   it("doesn't trust the model with words it never learned", () => {
     expect(familiarity('pizza')).toBe(0);
     expect(familiarity('show a sqare')).toBe(1); // a near misspelling counts
     expect(understand('pizza').intent).toBeUndefined();
-  });
-
-  it('a saved pattern that does not exist gives way to the model', () => {
-    // The rules alone read this as opening a saved pattern called "the back camera".
-    expect(understand('use the back camera').command).toMatchObject({ kind: 'image', action: 'flipCamera' });
   });
 });
 

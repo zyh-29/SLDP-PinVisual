@@ -259,7 +259,40 @@ export function traceLinePins(
     return false;
   };
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) if (touched[r * cols + c] >= minPixels && !near(r, c)) cells[r * cols + c] = 1;
-  return { rows, cols, cells };
+  return { rows, cols, cells: withoutCorners(cells, rows, cols) };
+}
+
+/**
+ * A line one pin wide has no square corners: a raised pin whose only raised neighbours are one beside it and one
+ * above or below it adds nothing, since those two already touch at their corners. On a few pins this matters most:
+ * a parabola on 3 × 3 is a V (its arms down to the middle pin of the bottom row), not a U with a flat bottom row.
+ * Two such pins next to each other (a staircase) are both kept, or the line would break; so are pins with a third
+ * neighbour (a branch or a crossing).
+ */
+function withoutCorners(cells: PinValue[], rows: number, cols: number): PinValue[] {
+  const on = (r: number, c: number) => r >= 0 && r < rows && c >= 0 && c < cols && cells[r * cols + c] === 1;
+  const corner = (r: number, c: number) => {
+    if (!on(r, c)) return false;
+    let side = 0;
+    let vertical = 0;
+    let others = 0;
+    for (let dr = -1; dr <= 1; dr++)
+      for (let dc = -1; dc <= 1; dc++) {
+        if ((dr === 0 && dc === 0) || !on(r + dr, c + dc)) continue;
+        if (dr === 0) side++;
+        else if (dc === 0) vertical++;
+        else others++;
+      }
+    return side === 1 && vertical === 1 && others === 0;
+  };
+  const out = cells.slice();
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      if (!corner(r, c)) continue;
+      const besideCorner = corner(r - 1, c) || corner(r + 1, c) || corner(r, c - 1) || corner(r, c + 1);
+      if (!besideCorner) out[r * cols + c] = 0;
+    }
+  return out;
 }
 
 /**

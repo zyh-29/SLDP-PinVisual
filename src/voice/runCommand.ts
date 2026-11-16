@@ -35,8 +35,7 @@ export type Effect =
   | { type: 'setting'; setting: ImageSetting; on: boolean }
   | { type: 'adjust'; setting: 'tolerance' | 'sensitivity'; up: boolean }
   | { type: 'navigate'; tab: Tab }
-  | { type: 'search'; query: string; pictures: boolean }
-  | { type: 'next'; back: boolean }
+  | { type: 'search'; query: string }
   | { type: 'voiceOff' }
   | { type: 'run'; text: string };
 
@@ -192,9 +191,7 @@ export function runCommand(cmd: Command, ctx: VoiceContext): Outcome {
     case 'navigate':
       return { reply: '', pending: null, effect: { type: 'navigate', tab: cmd.tab } };
     case 'search':
-      return { reply: '', pending: null, effect: { type: 'search', query: cmd.query, pictures: cmd.pictures } };
-    case 'next':
-      return { reply: '', pending: null, effect: { type: 'next', back: cmd.back } };
+      return { reply: '', pending: null, effect: { type: 'search', query: cmd.query } };
     case 'voiceOff':
       return { reply: 'Voice control off. Press Voice Control on the Display tab to turn it back on.', pending: null, effect: { type: 'voiceOff' } };
 

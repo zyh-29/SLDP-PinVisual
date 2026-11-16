@@ -2,7 +2,6 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { credit } from '@/voice/pictureSearch';
 import { useVoice } from '@/voice/VoiceProvider';
 import { Button, Label, tapFeedback } from './components';
 import { Icon } from './Icon';
@@ -29,7 +28,6 @@ const PLACEHOLDER = {
   listening: 'Listening…',
   downloading: 'Getting voice ready…',
   thinking: 'Working out what you meant…',
-  searching: 'Searching for pictures…',
 } as const;
 
 /**
@@ -44,7 +42,7 @@ export function VoiceToggle() {
       accessibilityRole="switch"
       accessibilityLabel="Voice Control"
       accessibilityState={{ checked: on }}
-      accessibilityHint="Shows a command field: speak or type things like show a circle, graph y equals x squared, or start camera."
+      accessibilityHint="Shows a command field: speak or type things like show a circle, or graph y equals x squared."
       onPress={() => {
         tapFeedback();
         voice.setPrefs({ voiceControl: !on });
@@ -68,7 +66,7 @@ function CommandField() {
   const [text, setText] = useState('');
   const { phase } = voice;
   const listening = phase === 'listening';
-  const busy = phase === 'downloading' || phase === 'thinking' || phase === 'searching';
+  const busy = phase === 'downloading' || phase === 'thinking';
   const submit = () => {
     if (!text.trim()) return;
     voice.runText(text);
@@ -126,17 +124,13 @@ function CommandField() {
   );
 }
 
-/**
- * What was heard, the answer, and Yes / Cancel when something waits for a yes. `pictureUri`: the Image tab's
- * picture, whose credit is shown when it came from picture search.
- */
-function Conversation({ pictureUri }: { pictureUri?: string }) {
+/** What was heard, the answer, and Yes / Cancel when something waits for a yes. */
+function Conversation() {
   const t = useTheme();
   const voice = useVoice();
-  const { heard, reply, pending, picture } = voice;
+  const { heard, reply, pending } = voice;
   const yesTitle = pending === 'send' ? 'Yes, Send' : pending === 'reset' ? 'Yes, Lower Pins' : 'Yes';
-  const credited = picture && picture.uri === pictureUri;
-  if (!heard && !reply && !pending && !credited) return null;
+  if (!heard && !reply && !pending) return null;
   return (
     <View style={[styles.card, { backgroundColor: t.card }]}>
       {heard || reply ? (
@@ -151,11 +145,6 @@ function Conversation({ pictureUri }: { pictureUri?: string }) {
           ) : null}
           {reply ? <Label variant="body">{reply}</Label> : null}
         </View>
-      ) : null}
-      {credited ? (
-        <Label variant="footnote" secondary>
-          Picture: {credit(picture)}
-        </Label>
       ) : null}
       {pending ? (
         <View style={styles.actions}>
@@ -177,7 +166,7 @@ function Conversation({ pictureUri }: { pictureUri?: string }) {
  * it), then the conversation. Shown while Voice Control is on (the header's Voice button), on the Display and Image
  * tabs. It comes before everything else on the page, so a screen reader reaches it first.
  */
-export function VoiceBar({ pictureUri }: { pictureUri?: string }) {
+export function VoiceBar() {
   const voice = useVoice();
   const { note } = useSpeakable();
   if (!voice.prefs.voiceControl) return null;
@@ -189,7 +178,7 @@ export function VoiceBar({ pictureUri }: { pictureUri?: string }) {
           {note}
         </Label>
       ) : null}
-      <Conversation pictureUri={pictureUri} />
+      <Conversation />
     </View>
   );
 }

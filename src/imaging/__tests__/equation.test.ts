@@ -1,6 +1,6 @@
 import { EQUATION_PLOT, parseEquation, renderEquation } from '../equation';
 import { toRgb } from '../foreground';
-import { type GraphRange, parseGraphRange } from '../graphRange';
+import { AUTO_RANGE, type GraphRange, parseGraphRange } from '../graphRange';
 import { traceLinePins } from '../pinSampling';
 import { smartSubject } from '../smartCrop';
 
@@ -53,6 +53,23 @@ describe('typed equations', () => {
     expect(g.window!.width / ppu).toBeCloseTo(10, 0);
     const pins = traceLinePins(r.mask!, W, H, r.box, 5, 8, 1, true);
     expect(pins.cells.filter(Boolean).length).toBeGreaterThan(6);
+  });
+
+  it.each([
+    ['auto', AUTO_RANGE],
+    ['whole curve', { kind: 'whole' } as GraphRange],
+  ])('y = x² on the 3 × 3 board (%s): a V, its arms down to the middle pin of the bottom row', (_name, range) => {
+    const { raster, scale } = renderEquation(parseEquation('x^2'));
+    const { width: W, height: H } = EQUATION_PLOT;
+    const r = smartSubject(toRgb(raster), W, H, { tolerance: 'auto', minPieceRatio: 0.15, removeLines: 'auto' }, undefined, undefined, {
+      range,
+      scale,
+      rows: 3,
+      cols: 3,
+      pinPitchRatio: 1,
+    });
+    const pins = traceLinePins(r.mask!, W, H, r.box, 3, 3, 1, true).cells;
+    expect(pins.join('')).toBe(['101', '101', '010'].join(''));
   });
 
   it('a curve far from the x-axis is moved into view', () => {

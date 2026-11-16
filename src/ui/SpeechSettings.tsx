@@ -32,8 +32,7 @@ export function SpeechSettings() {
       footer={
         `Speak Results reads results aloud with this device's voice. Leave it off if you use VoiceOver, TalkBack or ` +
         `another screen reader: it reads them already. Voice commands are recognised on this device where it can. ` +
-        `Online Speech Recognition lets devices that can't do that send what you say to ${maker} to be recognised. ` +
-        `Online Picture Search sends what you search for to Openverse and Wikimedia Commons, which return openly licensed pictures.`
+        `Online Speech Recognition lets devices that can't do that send what you say to ${maker} to be recognised.`
       }>
       <SwitchRow
         title="Voice Control"
@@ -54,13 +53,6 @@ export function SpeechSettings() {
         hint={`Allows voice commands on devices that can only recognise speech online. What you say is sent to ${maker}.`}
         value={prefs.onlineRecognition}
         onChange={(v) => setPrefs({ onlineRecognition: v })}
-      />
-      <Separator />
-      <SwitchRow
-        title="Online Picture Search"
-        hint="Searches Openverse and Wikimedia Commons for pictures to show on the pins, when you ask or say something that isn't a command"
-        value={prefs.onlinePictures}
-        onChange={(v) => setPrefs({ onlinePictures: v })}
       />
       {ai ? (
         <>
