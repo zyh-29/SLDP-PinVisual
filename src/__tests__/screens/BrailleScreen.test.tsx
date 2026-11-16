@@ -100,6 +100,8 @@ describe('Braille tab', () => {
 
       const cells = received.filter((r) => r.pins !== '000000000');
       expect(cells.map((r) => r.pins)).toEqual(['100000000', '100100000']);
+      // The right column never comes up.
+      for (const r of received) expect([r.pins[2], r.pins[5], r.pins[8]]).toEqual(['0', '0', '0']);
       // Shortest speed: the servo's turn, then the settle time, then the whole half second on the pins.
       expect(cells[1].at - cells[0].at).toBeGreaterThanOrEqual(turnMs + PIN_SETTLE_MS + 500);
     } finally {

@@ -152,14 +152,16 @@ function wordAt(chars: string[], i: number): { start: number; allCaps: boolean }
 }
 
 /**
- * Where a cell's dots go on the grid: the dots' three rows in the middle three rows, and their two columns either
- * side of the middle on a 3-column grid (a pin apart, so the two columns are easy to tell apart), else the middle
- * two columns. Null when the grid is smaller than a cell.
+ * Where a cell's dots go on the grid: the dots' three rows in the middle three rows, and their two columns side by
+ * side, as in printed braille. On a 3-column grid that's the left and middle columns (dots 1 2 3 left, 4 5 6 in
+ * the middle) and the right column stays down; on wider grids, the middle two columns. Null when the grid is
+ * smaller than a cell.
  */
 export function dotPositions(rows: number, cols: number): Record<Dot, { row: number; col: number }> | null {
   if (rows < 3 || cols < 2) return null;
   const top = Math.floor((rows - 3) / 2);
-  const [left, right] = cols === 3 ? [0, 2] : [Math.floor((cols - 2) / 2), Math.floor((cols - 2) / 2) + 1];
+  const left = cols === 3 ? 0 : Math.floor((cols - 2) / 2);
+  const right = left + 1;
   return {
     1: { row: top, col: left },
     2: { row: top + 1, col: left },

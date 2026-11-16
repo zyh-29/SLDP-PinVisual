@@ -44,10 +44,10 @@ describe('text to braille (UEB, uncontracted)', () => {
 });
 
 describe('a braille cell on the pins', () => {
-  it('on 3 × 3: the two dot columns a pin apart', () => {
+  it('on 3 × 3: dots 1 2 3 in the left column, 4 5 6 in the middle one, the right column always down', () => {
     const p = cellPattern({ dots: [1, 2, 5], name: 'h' }, 3, 3);
-    expect(p.cells.join('')).toBe(['100', '101', '000'].join(''));
-    expect(cellPattern({ dots: [1, 2, 3, 4, 5, 6], name: 'all' }, 3, 3).cells.join('')).toBe('101101101');
+    expect(p.cells.join('')).toBe(['100', '110', '000'].join(''));
+    expect(cellPattern({ dots: [1, 2, 3, 4, 5, 6], name: 'all' }, 3, 3).cells.join('')).toBe('110110110');
   });
 
   it('on a bigger grid: in the middle', () => {
