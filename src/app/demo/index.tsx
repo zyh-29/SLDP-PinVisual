@@ -2,7 +2,8 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
-import { boardShowsDemo, DEMO_SIZE, demoToBoard, emptyDemo } from '@/domain/demo';
+import { GRID } from '@/config/hardware';
+import { boardShowsDemo, emptyDemo } from '@/domain/demo';
 import { countRaised, type Pattern, togglePin } from '@/domain/pattern';
 import { useBoardActions } from '@/state/useBoardActions';
 import { CommandStatus } from '@/ui/CommandStatus';
@@ -13,8 +14,8 @@ import { MIN_TOUCH, radius, space, useTheme } from '@/ui/theme';
 import { announce } from '@/voice/announce';
 
 /**
- * Demo: a 3 × 3 grid of pins. Tapping a pin flips it; with a board connected the grid is sent straight away, using
- * the board's top-left 3 × 3 corner (every other pin goes down). The Display preview is left alone.
+ * Demo: the whole board (3 × 3) on its own. Tapping a pin flips it; with a board connected the grid is sent straight
+ * away. The Display preview is left alone.
  */
 export default function DemoScreen() {
   const t = useTheme();
@@ -28,7 +29,7 @@ export default function DemoScreen() {
 
   const send = (p: Pattern) => {
     setLastSent(p);
-    void sendPattern(demoToBoard(p));
+    void sendPattern(p);
   };
   const apply = (next: Pattern) => {
     setDemo(next);
@@ -51,9 +52,11 @@ export default function DemoScreen() {
         left={
           <Section padded>
             <View>
-              <Label variant="headline">3 × 3 Grid</Label>
+              <Label variant="headline">
+                {GRID.rows} × {GRID.cols} Grid
+              </Label>
               <Label variant="footnote" secondary>
-                {raised} of {DEMO_SIZE * DEMO_SIZE} raised · top-left of the board
+                {raised} of {GRID.rows * GRID.cols} raised
               </Label>
             </View>
             <PinGrid pattern={demo} onToggle={(r, c) => apply(togglePin(demo, r, c))} disabled={sending} />
@@ -115,8 +118,7 @@ export default function DemoScreen() {
               onRetryReset={() => send(emptyDemo())}
             />
             <Label variant="footnote" secondary style={{ marginHorizontal: space.lg }}>
-              Tap a pin to raise or lower it. With a board connected the grid is sent straight away to the board’s
-              top-left corner; every other pin goes down.
+              Tap a pin to raise or lower it. With a board connected it’s sent straight away.
             </Label>
           </View>
         }

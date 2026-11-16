@@ -1,4 +1,5 @@
-import { GRID } from '@/config/hardware';
+import { GRID_5X6 as GRID } from '@/config/hardware';
+// Tuned to the 5 × 6 board (on hold), so these cases stay fixed whatever grid the app uses.
 import { DEFAULT_MIN_PIECE_RATIO, findForeground, strokeWidth, toRgb } from '../foreground';
 import { evenLight, measureLight } from '../lighting';
 import { cellSizePx, inkFromMask, patternFromSamples, sampleCrop, thickenThinLines } from '../pinSampling';

@@ -166,7 +166,7 @@ export default function DeviceScreen() {
       </View>
 
       <Section title="Protocol" padded={false}>
-        <Row title="Grid" detail={`${GRID.rows} rows × ${GRID.cols} columns (provisional)`} />
+        <Row title="Grid" detail={`${GRID.rows} rows × ${GRID.cols} columns`} />
         <Separator inset={space.lg} />
         <Row title="Protocol version" detail={`v${PROTOCOL.version} · ack timeout ${PROTOCOL.ackTimeoutMs / 1000} s · ${PROTOCOL.maxAttempts} attempts`} />
         <Separator inset={space.lg} />

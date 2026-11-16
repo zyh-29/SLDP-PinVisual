@@ -3,7 +3,8 @@
  * so once the screen shows less than that, the part off screen is empty pins rather than the visible part being
  * stretched over all of them.
  */
-import { GRID } from '@/config/hardware';
+import { GRID_5X6 as GRID } from '@/config/hardware';
+// Tuned to the 5 × 6 board (on hold), so these cases stay fixed whatever grid the app uses.
 import type { Pattern } from '@/domain/pattern';
 import { toRgb } from '../foreground';
 import { followZoom, type GraphAxes, type GraphScale } from '../graph';

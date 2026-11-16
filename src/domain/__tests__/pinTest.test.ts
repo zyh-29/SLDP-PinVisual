@@ -9,8 +9,8 @@ describe('Pin Test: one pin at a time', () => {
     const first = singlePin(1, true);
     expect(countRaised(first)).toBe(1);
     expect(getPin(first, 0, 0)).toBe(1);
-    const eighth = singlePin(8, true);
-    expect(getPin(eighth, 1, 1)).toBe(1);
+    const secondRow = singlePin(GRID.cols + 2, true);
+    expect(getPin(secondRow, 1, 1)).toBe(1);
     expect(getPin(singlePin(PIN_COUNT, true), GRID.rows - 1, GRID.cols - 1)).toBe(1);
   });
 
@@ -20,7 +20,7 @@ describe('Pin Test: one pin at a time', () => {
 
   it('where a pin is, and its servo (16 channels a board, from I²C 0x40)', () => {
     expect(pinInfo(2)).toEqual({ row: 1, col: 2, gpio: null, servo: { board: 0, i2cAddress: 0x40, channel: 1 } });
-    expect(pinInfo(8)).toMatchObject({ row: 2, col: 2 });
+    expect(pinInfo(GRID.cols + 2)).toMatchObject({ row: 2, col: 2 });
     expect(pinInfo(17).servo).toEqual({ board: 1, i2cAddress: 0x41, channel: 0 });
   });
 

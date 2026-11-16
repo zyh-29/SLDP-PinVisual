@@ -6,16 +6,20 @@
  * See docs/PROTOCOL.md for how the firmware must interpret these values.
  */
 
-/** Pin grid layout. PROVISIONAL: 5 rows x 6 columns = 30 pins. */
-export const GRID = {
-  rows: 5,
-  cols: 6,
-  /**
-   * Horizontal pin pitch divided by vertical pin pitch. 1 = square spacing.
-   * Used by image conversion so pictures are not stretched on the pins.
-   */
-  pinPitchRatio: 1,
-} as const;
+/**
+ * The 5 rows x 6 columns (30 pin) board. ON HOLD: the 3 x 3 board is in use. To go back, set GRID to GRID_5X6 below
+ * and PV_ROWS / PV_COLS to 5 / 6 in firmware/pinvisual-esp32/config.h.
+ */
+export const GRID_5X6 = { rows: 5, cols: 6, pinPitchRatio: 1 } as const;
+
+/** The 3 x 3 (9 pin) board in use now. */
+export const GRID_3X3 = { rows: 3, cols: 3, pinPitchRatio: 1 } as const;
+
+/**
+ * Pin grid layout every tab uses. `pinPitchRatio` is horizontal pin pitch divided by vertical pin pitch (1 = square
+ * spacing); image conversion uses it so pictures are not stretched on the pins.
+ */
+export const GRID: { readonly rows: number; readonly cols: number; readonly pinPitchRatio: number } = GRID_3X3;
 
 /** Upper bounds the protocol supports (1 byte each for rows / cols). */
 export const GRID_LIMITS = { maxRows: 64, maxCols: 64 } as const;

@@ -1,4 +1,5 @@
-import { GRID } from '@/config/hardware';
+import { GRID_5X6 as GRID } from '@/config/hardware';
+// Tuned to the 5 × 6 board (on hold), so these cases stay fixed whatever grid the app uses.
 import { createEmptyPattern, togglePin } from '@/domain/pattern';
 import { MockFirmware, type MockBehavior } from '@/device/__tests__/support/MockFirmware';
 import type { Transport } from '@/device/types';

@@ -7,8 +7,9 @@
 #include <stdint.h>
 
 // ---- Grid (must match GRID in src/config/hardware.ts) ----
-#define PV_ROWS 5
-#define PV_COLS 6
+// The 3 x 3 board is in use. The 5 x 6 board is on hold: set 5 and 6 here and GRID = GRID_5X6 in the app to go back.
+#define PV_ROWS 3
+#define PV_COLS 3
 
 // ---- Bluetooth (must match BLE in src/config/hardware.ts) ----
 // The app lists devices whose name starts with "PinVisual" first.
