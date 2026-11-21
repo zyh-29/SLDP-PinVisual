@@ -138,8 +138,8 @@ Bluetooth on phones needs a [development build](https://docs.expo.dev/develop/de
 | Grid size, BLE UUIDs, timing | `src/config/hardware.ts` |
 | Real phone and board test checklist | [docs/TESTING.md](docs/TESTING.md) |
 
-Start with one continuous-rotation servo on PCA9685 channel 0. Follow the
-firmware wiring and serial test, then use the app's **Pin Test** tab.
+Wire the 3 × 3 board to PCA9685 channels 0–8. Follow the firmware serial test,
+then send patterns from the app's **Display** tab.
 
 ### How the App Talks to the Board
 

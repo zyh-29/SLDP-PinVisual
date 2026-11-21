@@ -7,8 +7,8 @@
  */
 
 /**
- * The 5 rows x 6 columns (30 pin) board. ON HOLD: the 3 x 3 board is in use. To go back, set GRID to GRID_5X6 below
- * and PV_ROWS / PV_COLS to 5 / 6 in firmware/pinvisual-esp32/config.h.
+ * The 5 rows x 6 columns (30 pin) layout. The 3 x 3 board is in use. Returning to 5 x 6 requires ESP32 firmware
+ * that can drive multiple PCA9685 boards, as well as a matching grid size in the app and firmware.
  */
 export const GRID_5X6 = { rows: 5, cols: 6, pinPitchRatio: 1 } as const;
 

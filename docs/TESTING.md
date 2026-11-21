@@ -14,10 +14,11 @@ The simulator can't check these:
 4. The Device tab shows the negotiated MTU.
 5. Send: the firmware receives the right bytes (see the test vectors in
    [PROTOCOL.md](PROTOCOL.md)) and the app shows "Board received pattern".
-6. On the single-servo prototype, open **Pin Test** and raise and lower the
-   top-left pin. The servo is on PCA9685 channel 0. See the
-   [firmware wiring](../firmware/README.md). The tab sends the usual 3 × 3
-   pattern without changing the Display preview.
+6. Open **Pin Test** and raise and lower the top-left pin on PCA9685
+   channel 0. In **Display**, send each corner individually and then all nine
+   pins together. Verify the [firmware wiring](../firmware/README.md) and
+   check that the pins rise and lower in left-to-right column order, with
+   at most two moving together.
 7. Retries: with ACKs turned off in the firmware, the app should try three
    times and then offer Retry.
 8. Power off the ESP32 mid-send: the app should show "Connection lost".

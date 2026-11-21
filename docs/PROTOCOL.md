@@ -126,9 +126,10 @@ Firmware reassembly rules:
 - Send `status = OK` **after** validating the message and once the servos have
   **finished moving** (keep it under the 3 s timeout). The app times things
   from the ACK, such as how long a braille cell stays up, so an early ACK would
-  start the clock while pins are still on their way. The single-servo sketch
-  (`pinvisual-esp32.ino`) acknowledges after the configured turn time and stop command;
-  a pin that's already in place is acknowledged at once.
+  start the clock while pins are still on their way. The 3 × 3 sketch moves
+  changed pins column by column, with up to two servos per group and a 100 ms
+  pause between groups. It acknowledges after the last group stops. A pattern
+  that matches the current positions is acknowledged at once.
 - If the CRC fails, you may reply with status `0x01` using the commandId from
   the header, or stay silent. The app retries either way.
 - **De-duplication (required):** the app retries with the **same commandId and
@@ -204,7 +205,7 @@ bool pin_raised(const uint8_t *bitmap, int index) {
 ## 9. Open questions for the hardware team
 
 - Final grid size and pin pitch (update `GRID` in `src/config/hardware.ts`).
-- For a multi-servo build, decide how many servos can move at once within the
-  power budget and the 3 s ACK timeout. The current sketch moves one servo.
-- Decide how to establish a known pin position at power-up. The single-servo
-  prototype assumes the pin starts lowered and leaves it in place on disconnect.
+- Verify that the power supply can drive two servos at a time on the 3 × 3
+  board.
+- Decide how to establish a known pin position at power-up. The current sketch
+  assumes all pins start lowered and leaves them in place on disconnect.

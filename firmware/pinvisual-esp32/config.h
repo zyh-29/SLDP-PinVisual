@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 // ---- Grid (must match GRID in src/config/hardware.ts) ----
-// The 3 x 3 board is in use. The 5 x 6 board is on hold: set 5 and 6 here and GRID = GRID_5X6 in the app to go back.
+// The 3 x 3 board uses one driver. The 5 x 6 board needs support for multiple drivers.
 #define PV_ROWS 3
 #define PV_COLS 3
 
@@ -21,22 +21,22 @@
 #define PV_MTU 185
 
 // ---- Servo boards (PCA9685) ----
-// Pin i goes to board i / 16, channel i % 16. Board b is at I2C address PV_FIRST_I2C_ADDRESS + b
-// (set with the A0-A5 solder jumpers: the first board has none bridged, the second has A0 bridged, ...).
+// The PCA9685 at 0x40 drives pins in row order on channels 0 through 8.
 #define PV_FIRST_I2C_ADDRESS 0x40
 #define PV_CHANNELS_PER_BOARD 16
-// I2C wires. 21 and 22 are the usual SDA and SCL on an ESP32 DevKit; other boards (ESP32-S3, C3) differ.
-#define PV_I2C_SDA 21
+// Use D32 for SDA and D22 for SCL on this prototype.
+#define PV_I2C_SDA 32
 #define PV_I2C_SCL 22
 // Hobby servos expect a pulse every 20 ms (50 Hz).
 #define PV_SERVO_HZ 50
 // Nominal PCA9685 oscillator frequency. Adjust if measured pulses differ from the requested widths.
 #define PV_OSCILLATOR_HZ 25000000
 
-// ---- Single continuous-rotation servo prototype ----
-// PV_TEST_PIN is the grid pin controlled by the sketch (0 = top-left).
-// Match PIN_TEST in src/config/hardware.ts so the app shows the correct wiring.
+// ---- Continuous-rotation servos ----
+// Serial u/d defaults to this grid pin (0 = top-left). Direct GPIO mode also uses it.
 #define PV_TEST_PIN 0
+// Time the servo spins to move the pin between its lowered and raised positions.
+#define PV_SERVO_TURN_MS 350
 #define PV_DIRECT_GPIO 18
-// 1 = drive the test servo through the PCA9685. 0 = drive it through GPIO18.
+// 1 = drive the full grid on the PCA9685. 0 = drive the test pin through GPIO18.
 #define PV_SERVO_BOARDS 1
