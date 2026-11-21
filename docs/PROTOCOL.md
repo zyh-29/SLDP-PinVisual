@@ -127,7 +127,7 @@ Firmware reassembly rules:
   **finished moving** (keep it under the 3 s timeout). The app times things
   from the ACK, such as how long a braille cell stays up, so an early ACK would
   start the clock while pins are still on their way. The single-servo sketch
-  (`pinvisual-esp32.ino`) acknowledges when its turn (`TURN_MS`) has finished;
+  (`pinvisual-esp32.ino`) acknowledges after the configured turn time and stop command;
   a pin that's already in place is acknowledged at once.
 - If the CRC fails, you may reply with status `0x01` using the commandId from
   the header, or stay silent. The app retries either way.
@@ -204,12 +204,7 @@ bool pin_raised(const uint8_t *bitmap, int index) {
 ## 9. Open questions for the hardware team
 
 - Final grid size and pin pitch (update `GRID` in `src/config/hardware.ts`).
-- Should the ACK wait until servos finish moving? (If so, keep it under 3 s or
-  raise `ackTimeoutMs`.)
-- Power budget: moving every servo at once may brown out the supply. The
-  firmware moves them in groups (`PV_MOVE_GROUP`, `PV_MOVE_PAUSE_MS` in
-  `config.h`): 30 pins in groups of 6 take about 0.1 s, well inside the 3 s
-  ACK timeout.
-- Should the board lower all pins on disconnect or power-up? The firmware lowers
-  them on power-up and keeps them on disconnect; both are settings in
-  `config.h`.
+- For a multi-servo build, decide how many servos can move at once within the
+  power budget and the 3 s ACK timeout. The current sketch moves one servo.
+- Decide how to establish a known pin position at power-up. The single-servo
+  prototype assumes the pin starts lowered and leaves it in place on disconnect.

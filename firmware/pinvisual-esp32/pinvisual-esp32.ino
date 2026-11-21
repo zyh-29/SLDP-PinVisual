@@ -1,150 +1,211 @@
-// PinVisual, 1 pin + Bluetooth, for a 360 (continuous-rotation) servo. Signal on D18.
-// App: Raise Pin -> turns one way for TURN_MS, then stops. Lower/Reset -> turns back the other way, then stops.
-// The app is told a pattern arrived (the acknowledgement) only once the turn has finished, so it never sends the
-// next one while the pin is still moving: the app's timing (a braille cell's time on the pins) starts from a pin
-// that is in place.
-// Serial Monitor: u = up, d = down, t150 = set turn time to 150 ms (to tune the angle).
+// PinVisual 3 x 3 prototype. Only the servo for PV_TEST_PIN is installed.
+#include <BLE2902.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
-#include <BLE2902.h>
-#include "config.h"  // PV_ROWS x PV_COLS: the grid the app sends (3 x 3)
+#include <atomic>
+#include <freertos/queue.h>
 
-#define SERVICE_UUID "7a1e0001-3c4b-4f2a-9b8e-5d6c7b8a9f01"
-#define COMMAND_UUID "7a1e0002-3c4b-4f2a-9b8e-5d6c7b8a9f01"
-#define ACK_UUID     "7a1e0003-3c4b-4f2a-9b8e-5d6c7b8a9f01"
-const int SERVO_PIN = 18;
-const int SPIN_UP_US = 1400;    // turn direction for UP (1500 = stop). Swap the two if it turns the wrong way.
-const int SPIN_DOWN_US = 1600;  // turn direction for DOWN
-unsigned long TURN_MS = 150;    // how long each turn lasts: longer = bigger angle
+#include "config.h"
+#include "protocol.h"
 
-bool pinUp = false;             // the board assumes the pin starts DOWN
-bool moving = false;
-unsigned long moveStart = 0;
-// The command whose acknowledgement waits for the turn to finish.
-bool ackPending = false;
-uint16_t pendingId = 0;
-uint8_t pendingType = 0;
+#if PV_SERVO_BOARDS
+#include <Adafruit_PWMServoDriver.h>
+#include <Wire.h>
+#endif
 
+namespace {
+
+constexpr int kUpUs = 1400;
+constexpr int kDownUs = 1600;
+constexpr unsigned long kMaxTurnMs = 2000;  // Leave time for the BLE ACK within the app's 3 s timeout.
+constexpr uint8_t kAddress = PV_FIRST_I2C_ADDRESS + PV_TEST_PIN / PV_CHANNELS_PER_BOARD;
+constexpr uint8_t kChannel = PV_TEST_PIN % PV_CHANNELS_PER_BOARD;
+static_assert(PV_TEST_PIN >= 0 && PV_TEST_PIN < PV_ROWS * PV_COLS, "Invalid test pin");
+
+class TestServo : public pinvisual::PinOutput {
+ public:
+  void begin() {
+#if PV_SERVO_BOARDS
+    if (!Wire.begin(PV_I2C_SDA, PV_I2C_SCL) || !driver_.begin()) {
+      Serial.printf("PCA9685 0x%02X not detected (SDA GPIO%d, SCL GPIO%d)\n", kAddress, PV_I2C_SDA, PV_I2C_SCL);
+      return;
+    }
+    driver_.setOscillatorFrequency(PV_OSCILLATOR_HZ);
+    driver_.setPWMFreq(PV_SERVO_HZ);
+    ready_ = stop();
+    if (ready_) Serial.printf("PCA9685 0x%02X detected, servo on channel %u\n", kAddress, kChannel);
+#else
+    ready_ = ledcAttach(PV_DIRECT_GPIO, PV_SERVO_HZ, 16) && stop();
+    if (ready_) Serial.printf("Servo signal on GPIO%d\n", PV_DIRECT_GPIO);
+#endif
+    if (!ready_) Serial.println("Servo output initialization failed");
+  }
+
+  bool show(const uint8_t* bitmap, uint8_t, uint8_t) override {
+    return move(pinvisual::pinRaised(bitmap, PV_TEST_PIN));
+  }
+
+  bool lowerAll() override { return move(false); }
+
+  bool move(bool up) {
+    if (!ready_) {
+      Serial.println("Servo output unavailable. Check wiring and restart the ESP32.");
+      return false;
+    }
+    if (up == pinUp_) return true;
+
+    if (!writePulse(up ? kUpUs : kDownUs)) {
+      stop();
+      return outputFault();
+    }
+    Serial.printf("Turning %s for %lu ms\n", up ? "UP" : "DOWN", turnMs_);
+    // Runs in loop(), outside the BLE callback. The protocol sends its ACK after stop().
+    delay(turnMs_);
+    if (!stop()) return outputFault();
+    pinUp_ = up;
+    Serial.printf("Stopped: pin %s\n", up ? "UP" : "DOWN");
+    return true;
+  }
+
+  void retryStop() {
+    if (stopPending_) stop();
+  }
+
+  void serialCommand(const String& line) {
+    if (line == "u") move(true);
+    if (line == "d") move(false);
+    if (line == "s") {
+      Serial.printf("Servo output %s. Assumed pin position %s. Turn time %lu ms.\n",
+                    ready_ ? "ready" : "unavailable", pinUp_ ? "UP" : "DOWN", turnMs_);
+    }
+    if (line.startsWith("t")) {
+      const long ms = line.substring(1).toInt();
+      if (ms >= 20 && ms <= static_cast<long>(kMaxTurnMs)) {
+        turnMs_ = ms;
+        Serial.printf("Turn time %lu ms\n", turnMs_);
+      } else {
+        Serial.printf("Use t20 through t%lu to set the turn time in ms\n", kMaxTurnMs);
+      }
+    }
+  }
+
+ private:
+  bool writePulse(uint32_t us) {
+#if PV_SERVO_BOARDS
+    // Convert the pulse width to the PCA9685's 4096 ticks per frame.
+    const uint16_t ticks = (us * PV_SERVO_HZ * 4096 + 500000) / 1000000;
+    return driver_.setPWM(kChannel, 0, ticks) == 0;
+#else
+    return ledcWrite(PV_DIRECT_GPIO, us * PV_SERVO_HZ * 65535 / 1000000);
+#endif
+  }
+
+  bool stop() {
+#if PV_SERVO_BOARDS
+    stopPending_ = driver_.setPWM(kChannel, 0, 4096) != 0;  // Full off: no pulses.
+#else
+    stopPending_ = !ledcWrite(PV_DIRECT_GPIO, 0);
+#endif
+    return !stopPending_;
+  }
+
+  bool outputFault() {
+    ready_ = false;
+    Serial.println("Servo output write failed. Check wiring, place the pin DOWN and restart the ESP32.");
+    return false;
+  }
+
+#if PV_SERVO_BOARDS
+  Adafruit_PWMServoDriver driver_{kAddress};
+#endif
+  bool ready_ = false;
+  bool stopPending_ = false;
+  bool pinUp_ = false;  // No feedback. Start with the mechanism physically lowered.
+  unsigned long turnMs_ = 150;
+};
+
+struct CommandWrite {
+  size_t length;
+  uint8_t bytes[PV_MTU - 3];
+};
+
+TestServo servo;
+pinvisual::Board board(PV_ROWS, PV_COLS, servo);
+QueueHandle_t writes;
 BLECharacteristic* ackChar;
-uint8_t rx[64];
-volatile int rxLen = 0;   // set by Bluetooth, handled in loop()
-volatile bool restartAdv = false;
-uint16_t lastId = 0;
-
-void setServo(int us) { ledcWrite(SERVO_PIN, (uint32_t)us * 65535 / 20000); }
-void stopServo() { ledcWrite(SERVO_PIN, 0); moving = false; }  // no pulses = stopped
-
-// Starts turning the pin; false when it's already there (nothing to wait for).
-bool movePin(bool up) {
-  if (up == pinUp) return false;  // already there: don't turn again
-  pinUp = up;
-  setServo(up ? SPIN_UP_US : SPIN_DOWN_US);
-  moving = true;
-  moveStart = millis();
-  Serial.println(up ? "Turning UP" : "Turning DOWN");
-  return true;
-}
-
-uint16_t crc16(const uint8_t* d, int n) {
-  uint16_t c = 0xFFFF;
-  for (int i = 0; i < n; i++) {
-    c ^= d[i] << 8;
-    for (int b = 0; b < 8; b++) c = (c & 0x8000) ? (c << 1) ^ 0x1021 : c << 1;
-  }
-  return c;
-}
-
-void ack(uint16_t id, uint8_t type, uint8_t status) {
-  uint8_t a[10] = {1, 0x80, (uint8_t)id, (uint8_t)(id >> 8), 2, 0, type, status, 0, 0};
-  uint16_t c = crc16(a, 8);
-  a[8] = c; a[9] = c >> 8;
-  ackChar->setValue(a, 10);
-  ackChar->notify();
-}
-
-// Acknowledges now when the pin didn't move, else once the turn has finished (see loop).
-void ackWhenStill(uint16_t id, uint8_t type, bool turning) {
-  if (!turning) { ack(id, type, 0x00); return; }
-  ackPending = true;
-  pendingId = id;
-  pendingType = type;
-}
-
-// Write = 4-byte chunk header + message: ver, type, id(2), len(2), payload, crc(2)
-void handle(const uint8_t* w, int n) {
-  if (n < 12 || w[2] != 0 || w[3] != 1) return;  // only single-chunk messages (all a small grid needs)
-  const uint8_t* m = w + 4;
-  int mlen = n - 4;
-  uint8_t type = m[1];
-  uint16_t id = m[2] | (m[3] << 8);
-  if ((m[4] | (m[5] << 8)) + 8 != mlen) { ack(id, type, 0x04); return; }
-  if (crc16(m, mlen - 2) != (m[mlen - 2] | (m[mlen - 1] << 8))) { ack(id, type, 0x01); return; }
-  if (id == lastId) {  // app retry: already done (or still turning: answered when it stops)
-    if (!(ackPending && id == pendingId)) ack(id, type, 0x00);
-    return;
-  }
-  lastId = id;
-  if (type == 0x01 && m[6] == PV_ROWS && m[7] == PV_COLS) {
-    ackWhenStill(id, type, movePin(m[8] & 1));  // pin 0 = top-left
-  } else if (type == 0x01) {
-    ack(id, type, 0x05);  // wrong grid size
-  } else if (type == 0x02) {
-    ackWhenStill(id, type, movePin(false));
-  } else {
-    ack(id, type, 0x03);
-  }
-}
+std::atomic<bool> restartAdv{false};
 
 class Cmd : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* c) override {
-    int n = c->getLength();
-    if (rxLen == 0 && n <= (int)sizeof(rx)) { memcpy(rx, c->getData(), n); rxLen = n; }
+    CommandWrite write{};
+    write.length = c->getLength();
+    if (write.length == 0 || write.length > sizeof(write.bytes)) return;
+    memcpy(write.bytes, c->getData(), write.length);
+    xQueueSend(writes, &write, 0);  // If full, the app retries after its ACK timeout.
   }
 };
+
 class Srv : public BLEServerCallbacks {
-  void onConnect(BLEServer*) override { lastId = 0; ackPending = false; Serial.println("App connected"); }
+  void onConnect(BLEServer*) override { Serial.println("App connected"); }
   void onDisconnect(BLEServer*) override { restartAdv = true; }
 };
+
+}  // namespace
 
 void setup() {
   Serial.begin(115200);
   delay(500);
-  ledcAttach(SERVO_PIN, 50, 16);
-  stopServo();
+  servo.begin();
+  Serial.println("Serial Monitor: s = status, u = up, d = down, t150 = turn time in ms");
 
-  BLEDevice::init("PinVisual-01");
-  BLEServer* s = BLEDevice::createServer();
-  s->setCallbacks(new Srv());
-  BLEService* svc = s->createService(SERVICE_UUID);
-  svc->createCharacteristic(COMMAND_UUID, BLECharacteristic::PROPERTY_WRITE)->setCallbacks(new Cmd());
-  ackChar = svc->createCharacteristic(ACK_UUID, BLECharacteristic::PROPERTY_NOTIFY);
+  writes = xQueueCreate(4, sizeof(CommandWrite));
+  if (!writes) {
+    Serial.println("Could not initialize the Bluetooth command queue");
+    return;
+  }
+
+  BLEDevice::init(PV_DEVICE_NAME);
+  BLEDevice::setMTU(PV_MTU);
+  BLEServer* server = BLEDevice::createServer();
+  server->setCallbacks(new Srv());
+  BLEService* service = server->createService(PV_SERVICE_UUID);
+  service->createCharacteristic(PV_COMMAND_UUID, BLECharacteristic::PROPERTY_WRITE)->setCallbacks(new Cmd());
+  ackChar = service->createCharacteristic(PV_ACK_UUID, BLECharacteristic::PROPERTY_NOTIFY);
   ackChar->addDescriptor(new BLE2902());
-  svc->start();
+  service->start();
 
   BLEAdvertisementData adv, scan;
   adv.setFlags(0x06);
-  adv.setCompleteServices(BLEUUID(SERVICE_UUID));
-  scan.setName("PinVisual-01");
+  adv.setCompleteServices(BLEUUID(PV_SERVICE_UUID));
+  scan.setName(PV_DEVICE_NAME);
   BLEDevice::getAdvertising()->setAdvertisementData(adv);
   BLEDevice::getAdvertising()->setScanResponseData(scan);
   BLEDevice::startAdvertising();
-  Serial.println("Pin DOWN. Advertising as PinVisual-01");
+  Serial.println("Advertising as " PV_DEVICE_NAME);
 }
 
 void loop() {
-  if (rxLen > 0) { handle(rx, rxLen); rxLen = 0; }
-  if (restartAdv) { restartAdv = false; delay(100); BLEDevice::startAdvertising(); Serial.println("App disconnected"); }
-  if (moving && millis() - moveStart >= TURN_MS) {
-    stopServo();
-    Serial.println(pinUp ? "Stopped: pin UP" : "Stopped: pin DOWN");
-    if (ackPending) { ackPending = false; ack(pendingId, pendingType, 0x00); }
+  servo.retryStop();
+  if (restartAdv.exchange(false)) {
+    xQueueReset(writes);
+    board.resetSession();
+    delay(100);
+    BLEDevice::startAdvertising();
+    Serial.println("App disconnected");
   }
+
+  CommandWrite write;
+  uint8_t ack[pinvisual::kAckSize];
+  if (writes && xQueueReceive(writes, &write, 0) == pdTRUE &&
+      board.receive(write.bytes, write.length, millis(), ack) && !restartAdv) {
+    ackChar->setValue(ack, sizeof(ack));
+    ackChar->notify();
+  }
+
   if (Serial.available()) {
     String line = Serial.readStringUntil('\n');
     line.trim();
-    if (line == "u") movePin(true);
-    if (line == "d") movePin(false);
-    if (line.startsWith("t") && line.length() > 1) { TURN_MS = line.substring(1).toInt(); Serial.printf("Turn time %lu ms\n", TURN_MS); }
+    servo.serialCommand(line);
   }
   delay(5);
 }

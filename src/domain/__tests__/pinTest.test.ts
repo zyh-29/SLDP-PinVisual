@@ -30,8 +30,8 @@ describe('Pin Test: one pin at a time', () => {
     expect(pinRaisedIn(singlePin(5, true), 6)).toBe(false);
   });
 
-  it('the tab tests the top-left pin, whose servo is on the ESP32’s D18', () => {
-    expect(pinInfo(TEST_PIN)).toMatchObject({ row: 1, col: 1, gpio: 18 });
+  it('the tab tests the top-left pin on PCA9685 channel 0', () => {
+    expect(pinInfo(TEST_PIN)).toEqual({ row: 1, col: 1, gpio: null, servo: { board: 0, i2cAddress: 0x40, channel: 0 } });
   });
 
   it('reaches the board as an ordinary pattern: that one pin up, then all down', async () => {

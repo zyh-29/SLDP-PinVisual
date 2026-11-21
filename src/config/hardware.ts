@@ -73,13 +73,11 @@ export const SERVO_LAYOUT = {
   firstI2cAddress: 0x40,
 } as const;
 
-/**
- * A servo plugged straight into an ESP32 GPIO, for testing without the servo boards (the Pin Test tab moves this
- * pin). Must match PV_DIRECT_PIN and PV_DIRECT_GPIO in firmware/pinvisual-esp32/config.h; a test checks.
- */
-export const DIRECT_SERVO = {
+/** The single servo exercised by Pin Test. Match the test pin and output settings in firmware config.h. */
+export const PIN_TEST = {
   /** Grid pin index (0 = top-left). */
   pinIndex: 0,
-  /** ESP32 GPIO number; "D18" on DevKit boards. */
-  gpio: 18,
+  usesPca9685: true,
+  /** ESP32 GPIO used for a direct connection when the PCA9685 is disabled. */
+  directGpio: 18,
 } as const;

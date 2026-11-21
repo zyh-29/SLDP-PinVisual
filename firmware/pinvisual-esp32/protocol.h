@@ -72,6 +72,9 @@ class Board {
   // (a broken chunk; the app retries).
   bool receive(const uint8_t* chunk, size_t length, uint32_t nowMs, uint8_t ack[kAckSize]);
 
+  // A reconnect can reuse command IDs from the previous connection.
+  void resetSession();
+
   // Commands that moved the pins (retries don't count). For tests and the serial log.
   uint32_t applied() const { return applied_; }
 

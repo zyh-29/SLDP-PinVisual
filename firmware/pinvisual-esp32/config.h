@@ -30,34 +30,13 @@
 #define PV_I2C_SCL 22
 // Hobby servos expect a pulse every 20 ms (50 Hz).
 #define PV_SERVO_HZ 50
-// The PCA9685's own clock, roughly 25-27 MHz depending on the chip. Measure it for exact pulses (see README).
-#define PV_OSCILLATOR_HZ 27000000
+// Nominal PCA9685 oscillator frequency. Adjust if measured pulses differ from the requested widths.
+#define PV_OSCILLATOR_HZ 25000000
 
-// ---- Testing with one servo, no servo boards ----
-// One grid pin can drive a servo plugged straight into an ESP32 GPIO (signal wire to the GPIO, power from the 5 V
-// supply, GND shared), for testing before the PCA9685 boards are wired. The app's Pin Test tab moves pin 0.
-// PV_DIRECT_PIN: that grid pin (0 = top-left), or -1 for none. Must match DIRECT_SERVO in src/config/hardware.ts.
-#define PV_DIRECT_PIN 0
+// ---- Single continuous-rotation servo prototype ----
+// PV_TEST_PIN is the grid pin controlled by the sketch (0 = top-left).
+// Match PIN_TEST in src/config/hardware.ts so the app shows the correct wiring.
+#define PV_TEST_PIN 0
 #define PV_DIRECT_GPIO 18
-// 1 = PCA9685 servo boards are connected (every other pin moves through them). 0 = no boards yet: only the direct
-// pin moves, and patterns aren't refused because the boards don't answer. Set to 1 once the boards are wired.
-#define PV_SERVO_BOARDS 0
-
-// ---- Pin positions (pulse width, microseconds) ----
-// Where a servo holds a pin down and up. Typical SG90 range is 500-2500 us; find yours by testing
-// one pin from the serial monitor (see README, "Calibrating").
-#define PV_LOWERED_US 1000
-#define PV_RAISED_US 1600
-// Per-pin corrections, in microseconds, added to both positions (row-major, PV_ROWS * PV_COLS values).
-// For servos mounted a little off. Leave at 0 until a pin sits visibly higher or lower than the others.
-static const int16_t PV_PIN_TRIM_US[PV_ROWS * PV_COLS] = {0};
-
-// ---- Power ----
-// Moving every servo at once can draw more current than the supply gives, and the ESP32 resets.
-// Pins are moved in groups of this many, with a pause between groups.
-#define PV_MOVE_GROUP 6
-#define PV_MOVE_PAUSE_MS 25
-// On power-up, lower every pin (a known starting state).
-#define PV_LOWER_ON_START 1
-// When the app disconnects: 1 = lower every pin, 0 = leave the last pattern up.
-#define PV_LOWER_ON_DISCONNECT 0
+// 1 = drive the test servo through the PCA9685. 0 = drive it through GPIO18.
+#define PV_SERVO_BOARDS 1

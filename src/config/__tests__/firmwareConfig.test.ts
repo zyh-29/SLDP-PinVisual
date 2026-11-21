@@ -5,7 +5,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-import { BLE, DIRECT_SERVO, GRID, SERVO_LAYOUT } from '../hardware';
+import { BLE, GRID, PIN_TEST, SERVO_LAYOUT } from '../hardware';
 
 const config = readFileSync(join(__dirname, '../../../firmware/pinvisual-esp32/config.h'), 'utf8');
 const define = (name: string) => {
@@ -33,8 +33,9 @@ describe('firmware config matches the app', () => {
     expect(Number(define('PV_FIRST_I2C_ADDRESS'))).toBe(SERVO_LAYOUT.firstI2cAddress);
   });
 
-  it('the test servo on an ESP32 pin (Pin Test tab)', () => {
-    expect(Number(define('PV_DIRECT_PIN'))).toBe(DIRECT_SERVO.pinIndex);
-    expect(Number(define('PV_DIRECT_GPIO'))).toBe(DIRECT_SERVO.gpio);
+  it('the test servo output (Pin Test tab)', () => {
+    expect(Number(define('PV_TEST_PIN'))).toBe(PIN_TEST.pinIndex);
+    expect(Number(define('PV_SERVO_BOARDS'))).toBe(Number(PIN_TEST.usesPca9685));
+    expect(Number(define('PV_DIRECT_GPIO'))).toBe(PIN_TEST.directGpio);
   });
 });

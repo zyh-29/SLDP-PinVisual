@@ -29,6 +29,11 @@ void encodeAck(uint16_t commandId, uint8_t ackedType, uint8_t status, uint8_t ou
 
 Board::Board(uint8_t rows, uint8_t cols, PinOutput& out) : rows_(rows), cols_(cols), out_(out) {}
 
+void Board::resetSession() {
+  dropPartial();
+  haveLast_ = false;
+}
+
 void Board::dropPartial() {
   active_ = false;
   used_ = 0;

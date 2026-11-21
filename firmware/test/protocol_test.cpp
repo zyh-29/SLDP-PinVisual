@@ -145,6 +145,16 @@ int main() {
     CHECK(out.moves == 1 && b.applied() == 1);
   });
 
+  test("a reconnect can reuse the last command ID", [] {
+    FakeServos out;
+    Board b(3, 3, out);
+    CHECK(!send(b, chunks(1, message(kSetPattern, 1, pattern(3, 3, {0})))).empty());
+    CHECK(out.pins[0]);
+    b.resetSession();
+    CHECK(!send(b, chunks(1, message(kSetPattern, 1, pattern(3, 3, {})))).empty());
+    CHECK(!out.pins[0] && out.moves == 2);
+  });
+
   test("a big grid in several chunks (default 20-byte writes)", [] {
     FakeServos out;
     Board b(10, 10, out);
